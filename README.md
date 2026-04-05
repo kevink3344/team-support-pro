@@ -133,6 +133,10 @@ Notes:
 
 See [docs/API.md](docs/API.md) for a mini API reference with authentication requirements, request payloads, and response shapes.
 
+## Railway Guide
+
+See [docs/RAILWAY.md](docs/RAILWAY.md) for a step-by-step Railway deployment checklist, required environment variables, and post-deploy verification steps.
+
 ## Deployment
 
 ### GitHub
