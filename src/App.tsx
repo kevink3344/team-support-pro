@@ -136,6 +136,18 @@ type DashboardWidgetId =
   | 'queue'
   | 'notes'
 
+const dashboardWidgetOrder: DashboardWidgetId[] = [
+  'metric-total',
+  'metric-open',
+  'metric-progress',
+  'metric-pending',
+  'metric-critical',
+  'trends',
+  'status',
+  'queue',
+  'notes',
+]
+
 const defaultDashboardLayouts: DashboardLayouts = {
   lg: [
     { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
@@ -152,12 +164,12 @@ const defaultDashboardLayouts: DashboardLayouts = {
     { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
     { i: 'metric-open', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
     { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-pending', x: 0, y: 2, w: 3, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-critical', x: 3, y: 2, w: 3, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 4, w: 6, h: 7, minW: 4, minH: 5, static: false },
-    { i: 'status', x: 0, y: 11, w: 6, h: 5, minW: 3, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 16, w: 6, h: 9, minW: 4, minH: 6, static: false },
-    { i: 'notes', x: 0, y: 25, w: 6, h: 7, minW: 3, minH: 5, static: false },
+    { i: 'metric-pending', x: 6, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-critical', x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 2, w: 6, h: 7, minW: 4, minH: 5, static: false },
+    { i: 'status', x: 6, y: 2, w: 4, h: 7, minW: 3, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 9, w: 6, h: 9, minW: 4, minH: 6, static: false },
+    { i: 'notes', x: 6, y: 9, w: 4, h: 9, minW: 3, minH: 5, static: false },
   ],
   sm: [
     { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
@@ -183,14 +195,42 @@ const defaultDashboardLayouts: DashboardLayouts = {
   ],
 }
 
+const legacyMediumDashboardLayout = [
+  { i: 'metric-total', x: 0, y: 0, w: 2, h: 2 },
+  { i: 'metric-open', x: 2, y: 0, w: 2, h: 2 },
+  { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2 },
+  { i: 'metric-pending', x: 0, y: 2, w: 3, h: 2 },
+  { i: 'metric-critical', x: 3, y: 2, w: 3, h: 2 },
+  { i: 'trends', x: 0, y: 4, w: 6, h: 7 },
+  { i: 'status', x: 0, y: 11, w: 6, h: 5 },
+  { i: 'queue', x: 0, y: 16, w: 6, h: 9 },
+  { i: 'notes', x: 0, y: 25, w: 6, h: 7 },
+] as const
+
+const matchesLegacyMediumDashboardLayout = (layout: readonly LayoutItem[]) =>
+  legacyMediumDashboardLayout.every((legacyItem) => {
+    const candidate = layout.find((layoutItem) => layoutItem.i === legacyItem.i)
+
+    return (
+      candidate?.x === legacyItem.x &&
+      candidate?.y === legacyItem.y &&
+      candidate?.w === legacyItem.w &&
+      candidate?.h === legacyItem.h
+    )
+  }) && layout.length === dashboardWidgetOrder.length
+
 const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
   const breakpoints = Object.keys(defaultDashboardLayouts) as Array<keyof DashboardLayouts>
 
   return breakpoints.reduce<DashboardLayouts>((merged, breakpoint) => {
     const defaultLayout = defaultDashboardLayouts[breakpoint] ?? []
     const storedLayout = storedLayouts?.[breakpoint] ?? []
+    const normalizedStoredLayout =
+      breakpoint === 'md' && matchesLegacyMediumDashboardLayout(storedLayout)
+        ? []
+        : storedLayout
     const storedById = new Map<string, LayoutItem>(
-      storedLayout.map((layoutItem): [string, LayoutItem] => [layoutItem.i, layoutItem]),
+      normalizedStoredLayout.map((layoutItem): [string, LayoutItem] => [layoutItem.i, layoutItem]),
     )
 
     merged[breakpoint] = defaultLayout.map((defaultItem): LayoutItem => ({
@@ -2078,14 +2118,14 @@ function App() {
             </div>
           </div>
           <div className="flex items-start justify-between gap-3">
-            <div className={`flex h-11 w-11 items-center justify-center rounded-[2px] ${metricCard.accent}`}>
-              <Icon className="h-5 w-5" />
+            <div className={`flex h-10 w-10 items-center justify-center rounded-[2px] ${metricCard.accent}`}>
+              <Icon className="h-4.5 w-4.5" />
             </div>
             <div className="text-right">
-              <div className="font-mono text-4xl font-semibold text-[color:var(--text)]">
+              <div className="font-mono text-3xl font-semibold text-[color:var(--text)]">
                 {metricCard.value}
               </div>
-              <div className="text-sm uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
                 {metricCard.label}
               </div>
             </div>
@@ -3332,7 +3372,7 @@ function App() {
                   className="dashboard-grid"
                   layouts={dashboardLayouts}
                   breakpoints={{ lg: 1280, md: 1024, sm: 640, xs: 0 }}
-                  cols={{ lg: 10, md: 6, sm: 2, xs: 1 }}
+                  cols={{ lg: 10, md: 10, sm: 2, xs: 1 }}
                   rowHeight={56}
                   margin={[16, 16]}
                   containerPadding={[0, 0]}
