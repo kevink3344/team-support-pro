@@ -1552,6 +1552,11 @@ function App() {
   const currentViewLabel =
     visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
 
+  const resetDashboardLayout = () => {
+    window.localStorage.removeItem(dashboardLayoutStorageKey)
+    setDashboardLayouts(mergeDashboardLayouts(null))
+  }
+
   const renderDashboardWidget = (widgetId: DashboardWidgetId) => {
     const metricCard = metricCards.find((card) => card.id === widgetId)
 
@@ -2468,6 +2473,17 @@ function App() {
               <div className="flex flex-wrap items-center gap-2">
                 {activeView !== 'settings' && (
                   <>
+                    {activeView === 'dashboard' && (
+                      <button
+                        type="button"
+                        className="dashboard-reset-button"
+                        onClick={resetDashboardLayout}
+                        title="Reset dashboard layout"
+                      >
+                        Reset layout
+                      </button>
+                    )}
+
                     <div className="flex items-center overflow-hidden rounded-[2px] border border-[color:var(--border)]">
                       <button
                         type="button"
