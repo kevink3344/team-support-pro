@@ -94,14 +94,27 @@ const groupTicketsWithActivity = (
 const insertActivityEntries = async (
   request: sql.Request,
   entries: Array<{ ticketId: string; actor: string; message: string; at: Date }>,
-) => {
+): Promise<TicketActivityRecord[]> => {
+  const insertedEntries: TicketActivityRecord[] = []
+
   for (const entry of entries) {
+    const id = `activity-${crypto.randomUUID()}`
     await request
       .batch(`
         INSERT INTO dbo.TicketActivity (Id, TicketId, Actor, Message, ActivityAt)
-        VALUES (N'${`activity-${crypto.randomUUID()}`}', N'${entry.ticketId.replace(/'/g, "''")}', N'${entry.actor.replace(/'/g, "''")}', N'${entry.message.replace(/'/g, "''")}', '${entry.at.toISOString()}');
+        VALUES (N'${id}', N'${entry.ticketId.replace(/'/g, "''")}', N'${entry.actor.replace(/'/g, "''")}', N'${entry.message.replace(/'/g, "''")}', '${entry.at.toISOString()}');
       `)
+
+    insertedEntries.push({
+      id,
+      ticketId: entry.ticketId,
+      actor: entry.actor,
+      message: entry.message,
+      at: entry.at.toISOString(),
+    })
   }
+
+  return insertedEntries
 }
 
 const getEntityName = async (
@@ -429,6 +442,7 @@ export const updateTicket = async (
 
   const transaction = new sql.Transaction(pool)
   await transaction.begin()
+  let insertedActivityEntries: TicketActivityRecord[] = []
 
   try {
     await transaction
@@ -455,7 +469,7 @@ export const updateTicket = async (
       `)
 
     if (changeMessages.length > 0) {
-      await insertActivityEntries(transaction.request(), changeMessages)
+      insertedActivityEntries = await insertActivityEntries(transaction.request(), changeMessages)
     }
 
     await transaction.commit()
@@ -464,7 +478,28 @@ export const updateTicket = async (
     throw error
   }
 
-  return getTicketById(ticketId)
+  try {
+    const updatedTicket = await getTicketById(ticketId)
+    if (updatedTicket) {
+      return updatedTicket
+    }
+  } catch {
+    // Fall back to the committed values below if the follow-up read fails.
+  }
+
+  return {
+    ...existing,
+    title: input.title.trim(),
+    description: input.description.trim(),
+    status: input.status,
+    priority: input.priority,
+    categoryId: input.categoryId,
+    assignedToId: input.assignedToId,
+    updatedAt: activityAt.toISOString(),
+    activity: [...existing.activity, ...insertedActivityEntries].sort(
+      (left, right) => new Date(left.at).getTime() - new Date(right.at).getTime(),
+    ),
+  }
 }
 
 export const createTicket = async (
