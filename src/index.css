@@ -305,6 +305,70 @@ button {
   width: min(28rem, 100vw);
 }
 
+.dashboard-grid {
+  min-height: 12rem;
+}
+
+.dashboard-grid .react-grid-item {
+  transition: box-shadow 0.18s ease;
+}
+
+.dashboard-grid .react-grid-item.react-grid-placeholder {
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, white);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 2px;
+}
+
+.dashboard-grid .react-grid-item.react-draggable-dragging {
+  z-index: 15;
+}
+
+.dashboard-widget-shell {
+  height: 100%;
+}
+
+.dashboard-widget-panel {
+  display: flex;
+  height: 100%;
+  min-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dashboard-chart-body {
+  height: 100%;
+  min-height: 18rem;
+}
+
+.dashboard-widget-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.dashboard-grid .react-grid-item.react-draggable-dragging .dashboard-widget-handle {
+  cursor: grabbing;
+}
+
+.dashboard-grid .react-resizable-handle {
+  right: 6px;
+  bottom: 6px;
+  width: 16px;
+  height: 16px;
+  background-image: none;
+}
+
+.dashboard-grid .react-resizable-handle::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  border-right: 2px solid color-mix(in srgb, var(--accent) 70%, white);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 70%, white);
+}
+
 @media (max-width: 768px) {
   .login-card {
     width: 100%;
@@ -317,6 +381,10 @@ button {
 
   .app-shell {
     overflow-x: clip;
+  }
+
+  .dashboard-grid .react-resizable-handle {
+    display: none;
   }
 
   .detail-panel {

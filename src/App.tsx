@@ -10,6 +10,7 @@ import {
   Clock3,
   Download,
   FileUp,
+  Grip,
   LogOut,
   Folder,
   GraduationCap,
@@ -35,6 +36,15 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
+import {
+  Responsive,
+  WidthProvider,
+  type Layout,
+  type LayoutItem,
+  type ResponsiveLayouts,
+} from 'react-grid-layout/legacy'
+import 'react-grid-layout/css/styles.css'
+import 'react-resizable/css/styles.css'
 import {
   CartesianGrid,
   Legend,
@@ -72,10 +82,95 @@ import type {
 
 const STORAGE_KEYS = {
   auth: 'team-support-pro-auth',
+  dashboardLayout: 'team-support-pro-dashboard-layout',
   mode: 'team-support-pro-mode',
   theme: 'team-support-pro-theme',
   sidebar: 'team-support-pro-sidebar',
 } as const
+
+const ResponsiveDashboardGrid = WidthProvider(Responsive)
+type DashboardLayouts = ResponsiveLayouts<string>
+
+type DashboardWidgetId =
+  | 'metric-total'
+  | 'metric-open'
+  | 'metric-progress'
+  | 'metric-pending'
+  | 'metric-critical'
+  | 'trends'
+  | 'status'
+  | 'queue'
+  | 'notes'
+
+const defaultDashboardLayouts: DashboardLayouts = {
+  lg: [
+    { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-open', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-pending', x: 6, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-critical', x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 2, w: 6, h: 7, minW: 4, minH: 5, static: false },
+    { i: 'status', x: 6, y: 2, w: 4, h: 7, minW: 3, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 9, w: 6, h: 9, minW: 4, minH: 6, static: false },
+    { i: 'notes', x: 6, y: 9, w: 4, h: 9, minW: 3, minH: 5, static: false },
+  ],
+  md: [
+    { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-open', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-pending', x: 0, y: 2, w: 3, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'metric-critical', x: 3, y: 2, w: 3, h: 2, minW: 2, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 4, w: 6, h: 7, minW: 4, minH: 5, static: false },
+    { i: 'status', x: 0, y: 11, w: 6, h: 5, minW: 3, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 16, w: 6, h: 9, minW: 4, minH: 6, static: false },
+    { i: 'notes', x: 0, y: 25, w: 6, h: 7, minW: 3, minH: 5, static: false },
+  ],
+  sm: [
+    { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-open', x: 1, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-progress', x: 0, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-pending', x: 1, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-critical', x: 0, y: 4, w: 2, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 6, w: 2, h: 7, minW: 2, minH: 5, static: false },
+    { i: 'status', x: 0, y: 13, w: 2, h: 5, minW: 2, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 18, w: 2, h: 8, minW: 2, minH: 6, static: false },
+    { i: 'notes', x: 0, y: 26, w: 2, h: 6, minW: 2, minH: 5, static: false },
+  ],
+  xs: [
+    { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-open', x: 0, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-progress', x: 0, y: 4, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-pending', x: 0, y: 6, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-critical', x: 0, y: 8, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 10, w: 1, h: 7, minW: 1, minH: 5, static: false },
+    { i: 'status', x: 0, y: 17, w: 1, h: 5, minW: 1, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 22, w: 1, h: 8, minW: 1, minH: 6, static: false },
+    { i: 'notes', x: 0, y: 30, w: 1, h: 6, minW: 1, minH: 5, static: false },
+  ],
+}
+
+const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
+  const breakpoints = Object.keys(defaultDashboardLayouts) as Array<keyof DashboardLayouts>
+
+  return breakpoints.reduce<DashboardLayouts>((merged, breakpoint) => {
+    const defaultLayout = defaultDashboardLayouts[breakpoint] ?? []
+    const storedLayout = storedLayouts?.[breakpoint] ?? []
+    const storedById = new Map<string, LayoutItem>(
+      storedLayout.map((layoutItem): [string, LayoutItem] => [layoutItem.i, layoutItem]),
+    )
+
+    merged[breakpoint] = defaultLayout.map((defaultItem): LayoutItem => ({
+      ...defaultItem,
+      ...(storedById.get(defaultItem.i) ?? {}),
+      i: defaultItem.i,
+      minW: defaultItem.minW,
+      minH: defaultItem.minH,
+      static: false,
+    }))
+
+    return merged
+  }, {})
+}
 
 const statusOptions: TicketStatus[] = [
   'Open',
@@ -284,6 +379,12 @@ function App() {
   const [authSession, setAuthSession] = useState<AuthSession | null>(() =>
     readStoredValue<AuthSession | null>(STORAGE_KEYS.auth, null),
   )
+  const dashboardLayoutStorageKey = authSession
+    ? `${STORAGE_KEYS.dashboardLayout}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.dashboardLayout
+  const [dashboardLayouts, setDashboardLayouts] = useState<DashboardLayouts>(() =>
+    mergeDashboardLayouts(readStoredValue<DashboardLayouts | null>(dashboardLayoutStorageKey, null)),
+  )
   const [activeView, setActiveView] = useState<AppView>('dashboard')
   const [listMode, setListMode] = useState<ListViewMode>('table')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
@@ -380,6 +481,16 @@ function App() {
 
     window.localStorage.removeItem(STORAGE_KEYS.auth)
   }, [authSession])
+
+  useEffect(() => {
+    setDashboardLayouts(
+      mergeDashboardLayouts(readStoredValue<DashboardLayouts | null>(dashboardLayoutStorageKey, null)),
+    )
+  }, [dashboardLayoutStorageKey])
+
+  useEffect(() => {
+    window.localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(dashboardLayouts))
+  }, [dashboardLayoutStorageKey, dashboardLayouts])
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.sidebar, JSON.stringify(sidebarCollapsed))
@@ -1378,32 +1489,43 @@ function App() {
     )
   }
 
-  const metricCards = [
+  const metricCards: Array<{
+    id: DashboardWidgetId
+    label: string
+    value: number
+    accent: string
+    icon: LucideIcon
+  }> = [
     {
+      id: 'metric-total',
       label: 'Total Tickets',
       value: dashboardStats.total,
       accent: 'bg-blue-50 text-sky-700',
       icon: Ticket,
     },
     {
+      id: 'metric-open',
       label: 'Open',
       value: dashboardStats.open,
       accent: 'bg-blue-50 text-sky-700',
       icon: RefreshCw,
     },
     {
+      id: 'metric-progress',
       label: 'In Progress',
       value: dashboardStats.inProgress,
       accent: 'bg-amber-50 text-amber-700',
       icon: Clock3,
     },
     {
+      id: 'metric-pending',
       label: 'Pending',
       value: dashboardStats.pending,
       accent: 'bg-orange-50 text-orange-700',
       icon: TriangleAlert,
     },
     {
+      id: 'metric-critical',
       label: 'Critical',
       value: dashboardStats.critical,
       accent: 'bg-red-50 text-red-700',
@@ -1429,6 +1551,207 @@ function App() {
 
   const currentViewLabel =
     visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
+
+  const renderDashboardWidget = (widgetId: DashboardWidgetId) => {
+    const metricCard = metricCards.find((card) => card.id === widgetId)
+
+    if (metricCard) {
+      const Icon = metricCard.icon
+
+      return (
+        <section className="surface dashboard-widget-panel p-4">
+          <div className="mb-3 flex items-center justify-between gap-3 text-[color:var(--text-muted)]">
+            <div className="text-xs font-semibold uppercase tracking-[0.12em]">Metric Card</div>
+            <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em]">
+              <Grip className="h-4 w-4" />
+              Move
+            </div>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <div className={`flex h-11 w-11 items-center justify-center rounded-[2px] ${metricCard.accent}`}>
+              <Icon className="h-5 w-5" />
+            </div>
+            <div className="text-right">
+              <div className="font-mono text-4xl font-semibold text-[color:var(--text)]">
+                {metricCard.value}
+              </div>
+              <div className="text-sm uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                {metricCard.label}
+              </div>
+            </div>
+          </div>
+        </section>
+      )
+    }
+
+    if (widgetId === 'trends') {
+      return (
+        <section className="surface dashboard-widget-panel p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Ticket Trend by Team</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Daily ticket volume over the last 21 days.
+              </div>
+            </div>
+            <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+              <Grip className="h-4 w-4" />
+              Move / Resize
+            </div>
+          </div>
+          <div className="dashboard-chart-body min-h-0 flex-1">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
+                <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 12 }} allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: 2,
+                    border: '1px solid var(--border)',
+                    background: 'var(--panel-bg)',
+                    color: 'var(--text)',
+                  }}
+                />
+                <Legend />
+                {teams.map((team) => (
+                  <Line
+                    key={team.id}
+                    type="monotone"
+                    dataKey={team.id}
+                    stroke={team.accent}
+                    strokeWidth={2.5}
+                    dot={false}
+                    name={team.name}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+      )
+    }
+
+    if (widgetId === 'status') {
+      return (
+        <section className="surface dashboard-widget-panel p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Status Overview</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Live mix across all support teams.
+              </div>
+            </div>
+            <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+              <Grip className="h-4 w-4" />
+              Move / Resize
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 space-y-4 overflow-auto pr-1">
+            {statusCounts.map(({ status, count }) => {
+              const max = Math.max(...statusCounts.map((item) => item.count), 1)
+              return (
+                <div key={status}>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className={getStatusBadgeClass(status)}>{status}</span>
+                    <span className="font-mono text-sm text-[color:var(--text)]">{count}</span>
+                  </div>
+                  <div className="h-2 rounded-[2px] bg-black/[0.06]">
+                    <div
+                      className="h-2 rounded-[2px] bg-[color:var(--accent)]"
+                      style={{ width: `${(count / max) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )
+    }
+
+    if (widgetId === 'queue') {
+      return (
+        <section className="surface dashboard-widget-panel p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Current Team Queue</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                {currentTeam.name} categories only. Reassignment is limited to {currentTeam.name} staff.
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                <Grip className="h-4 w-4" />
+                Move / Resize
+              </div>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setActiveView('team-tickets')}
+              >
+                Open Queue
+              </button>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            {renderTicketCollection()}
+          </div>
+        </section>
+      )
+    }
+
+    return (
+      <section className="surface dashboard-widget-panel p-4">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-xl font-semibold">Operational Notes</div>
+            <div className="text-sm text-[color:var(--text-muted)]">
+              Short operational context for the signed-in support team.
+            </div>
+          </div>
+          <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+            <Grip className="h-4 w-4" />
+            Move / Resize
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1 text-sm text-[color:var(--text-muted)]">
+          <div className="surface-muted p-3">
+            <div className="mb-1 font-semibold text-[color:var(--text)]">
+              Team isolation
+            </div>
+            Categories, queues, and assignee lists are filtered to the logged-in user&apos;s team.
+          </div>
+          <div className="surface-muted p-3">
+            <div className="mb-1 font-semibold text-[color:var(--text)]">
+              Future integrations
+            </div>
+            Mock data is active today. The state model is ready to swap to Railway-hosted services, Azure SQL, and Google OAuth later.
+          </div>
+          <div className="surface-muted p-3">
+            <div className="mb-1 font-semibold text-[color:var(--text)]">
+              Team workload
+            </div>
+            <div className="space-y-2">
+              {teams.map((team) => {
+                const total = teamWorkload.find((entry) => entry.teamId === team.id)?.count ?? 0
+                const Icon = teamIcons[team.id] ?? Building2
+                return (
+                  <div key={team.id} className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-[color:var(--text)]">
+                      <Icon className="h-4 w-4" style={{ color: team.accent }} />
+                      {team.name}
+                    </div>
+                    <div className="font-mono">{total}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+    )
+  }
 
   const renderAdminSettingsPage = () => (
     <div className="space-y-4">
@@ -2190,152 +2513,39 @@ function App() {
           <main className="flex-1 px-4 py-4 lg:px-6 lg:py-5">
             {activeView === 'dashboard' && (
               <div className="space-y-4">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-                  {metricCards.map(({ label, value, accent, icon: Icon }) => (
-                    <div key={label} className="surface p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className={`flex h-11 w-11 items-center justify-center rounded-[2px] ${accent}`}>
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <div className="text-right">
-                          <div className="font-mono text-4xl font-semibold text-[color:var(--text)]">
-                            {value}
-                          </div>
-                          <div className="text-sm uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                            {label}
-                          </div>
-                        </div>
-                      </div>
+                <ResponsiveDashboardGrid
+                  className="dashboard-grid"
+                  layouts={dashboardLayouts}
+                  breakpoints={{ lg: 1280, md: 1024, sm: 640, xs: 0 }}
+                  cols={{ lg: 10, md: 6, sm: 2, xs: 1 }}
+                  rowHeight={56}
+                  margin={[16, 16]}
+                  containerPadding={[0, 0]}
+                  draggableHandle=".dashboard-widget-handle"
+                  isDraggable={!isMobileViewport}
+                  isResizable={!isMobileViewport}
+                  onLayoutChange={(_currentLayout: Layout, allLayouts: DashboardLayouts) => {
+                    startTransition(() => {
+                      setDashboardLayouts(mergeDashboardLayouts(allLayouts))
+                    })
+                  }}
+                >
+                  {([
+                    'metric-total',
+                    'metric-open',
+                    'metric-progress',
+                    'metric-pending',
+                    'metric-critical',
+                    'trends',
+                    'status',
+                    'queue',
+                    'notes',
+                  ] as DashboardWidgetId[]).map((widgetId) => (
+                    <div key={widgetId} className="dashboard-widget-shell">
+                      {renderDashboardWidget(widgetId)}
                     </div>
                   ))}
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-[1.8fr_0.9fr]">
-                  <div className="surface p-4">
-                    <div className="mb-4">
-                      <div className="text-xl font-semibold">Ticket Trend by Team</div>
-                      <div className="text-sm text-[color:var(--text-muted)]">
-                        Daily ticket volume over the last 21 days.
-                      </div>
-                    </div>
-                    <div className="h-[18rem] sm:h-[22rem] xl:h-[26rem]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
-                          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="date" tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
-                          <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 12 }} allowDecimals={false} axisLine={false} tickLine={false} />
-                          <Tooltip
-                            contentStyle={{
-                              borderRadius: 2,
-                              border: '1px solid var(--border)',
-                              background: 'var(--panel-bg)',
-                              color: 'var(--text)',
-                            }}
-                          />
-                          <Legend />
-                          {teams.map((team) => (
-                            <Line
-                              key={team.id}
-                              type="monotone"
-                              dataKey={team.id}
-                              stroke={team.accent}
-                              strokeWidth={2.5}
-                              dot={false}
-                              name={team.name}
-                            />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </div>
-
-                  <div className="surface p-4">
-                    <div className="mb-4">
-                      <div className="text-xl font-semibold">Status Overview</div>
-                      <div className="text-sm text-[color:var(--text-muted)]">
-                        Live mix across all support teams.
-                      </div>
-                    </div>
-                    <div className="space-y-4">
-                      {statusCounts.map(({ status, count }) => {
-                        const max = Math.max(...statusCounts.map((item) => item.count), 1)
-                        return (
-                          <div key={status}>
-                            <div className="mb-2 flex items-center justify-between">
-                              <span className={getStatusBadgeClass(status)}>{status}</span>
-                              <span className="font-mono text-sm text-[color:var(--text)]">{count}</span>
-                            </div>
-                            <div className="h-2 rounded-[2px] bg-black/[0.06]">
-                              <div
-                                className="h-2 rounded-[2px] bg-[color:var(--accent)]"
-                                style={{ width: `${(count / max) * 100}%` }}
-                              />
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-                  <div className="surface p-4">
-                    <div className="mb-4 flex items-center justify-between">
-                      <div>
-                        <div className="text-xl font-semibold">Current Team Queue</div>
-                        <div className="text-sm text-[color:var(--text-muted)]">
-                          {currentTeam.name} categories only. Reassignment is limited to {currentTeam.name} staff.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => setActiveView('team-tickets')}
-                      >
-                        Open Queue
-                      </button>
-                    </div>
-                    {renderTicketCollection()}
-                  </div>
-
-                  <div className="surface p-4">
-                    <div className="mb-4 text-xl font-semibold">Operational Notes</div>
-                    <div className="space-y-3 text-sm text-[color:var(--text-muted)]">
-                      <div className="surface-muted p-3">
-                        <div className="mb-1 font-semibold text-[color:var(--text)]">
-                          Team isolation
-                        </div>
-                        Categories, queues, and assignee lists are filtered to the logged-in user&apos;s team.
-                      </div>
-                      <div className="surface-muted p-3">
-                        <div className="mb-1 font-semibold text-[color:var(--text)]">
-                          Future integrations
-                        </div>
-                        Mock data is active today. The state model is ready to swap to Railway-hosted services, Azure SQL, and Google OAuth later.
-                      </div>
-                      <div className="surface-muted p-3">
-                        <div className="mb-1 font-semibold text-[color:var(--text)]">
-                          Team workload
-                        </div>
-                        <div className="space-y-2">
-                          {teams.map((team) => {
-                            const total = teamWorkload.find((entry) => entry.teamId === team.id)?.count ?? 0
-                            const Icon = teamIcons[team.id] ?? Building2
-                            return (
-                              <div key={team.id} className="flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-2 text-[color:var(--text)]">
-                                  <Icon className="h-4 w-4" style={{ color: team.accent }} />
-                                  {team.name}
-                                </div>
-                                <div className="font-mono">{total}</div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                </ResponsiveDashboardGrid>
               </div>
             )}
 
