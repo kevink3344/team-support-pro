@@ -497,6 +497,7 @@ function App() {
   const [searchText, setSearchText] = useState('')
   const [detailTicketId, setDetailTicketId] = useState<string | null>(null)
   const [detailWidth, setDetailWidth] = useState(50)
+  const [detailResizeActive, setDetailResizeActive] = useState(false)
   const [detailPinned, setDetailPinned] = useState(false)
   const [detailTab, setDetailTab] = useState<'details' | 'activity' | 'attachments'>('details')
   const [commentDraft, setCommentDraft] = useState('')
@@ -542,6 +543,10 @@ function App() {
     teamId: 'it',
     role: 'Staff' as User['role'],
   })
+  const [userFormPending, setUserFormPending] = useState(false)
+  const [userSavePendingIds, setUserSavePendingIds] = useState<string[]>([])
+  const [userDirectoryError, setUserDirectoryError] = useState('')
+  const [userDirectoryNotice, setUserDirectoryNotice] = useState('')
   const [newTicketForm, setNewTicketForm] = useState({
     title: '',
     requestorName: '',
@@ -569,6 +574,7 @@ function App() {
   const [createTicketPending, setCreateTicketPending] = useState(false)
   const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
   const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
+  const detailResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const deferredSearch = useDeferredValue(searchText)
   const currentUser = authSession
@@ -584,14 +590,21 @@ function App() {
   const currentTeamMembers = users.some((user) => user.id === currentUser.id)
     ? users.filter((user) => user.teamId === currentUser.teamId)
     : [...users.filter((user) => user.teamId === currentUser.teamId), currentUser]
+  const notificationSourceTickets = useMemo(
+    () =>
+      tickets.filter(
+        (ticket) => ticket.teamId === currentUser.teamId && ticket.assignedToId === currentUser.id,
+      ),
+    [tickets, currentUser.teamId, currentUser.id],
+  )
   const activePalette = themeConfig[themeMode]
   const seededNotificationItems = useMemo(
     () =>
       buildSeedNotificationItems(
-        tickets.filter((ticket) => ticket.teamId === currentUser.teamId),
+        notificationSourceTickets,
         currentUser.name,
       ),
-    [tickets, currentUser.teamId, currentUser.name],
+    [notificationSourceTickets, currentUser.name],
   )
   const seededReadNotificationIds = useMemo(
     () => seededNotificationItems.slice(3).map((item) => item.id),
@@ -638,13 +651,15 @@ function App() {
     }
 
     const migratedReadIds = tickets
-      .filter((ticket) => ticket.teamId === currentUser.teamId)
+      .filter(
+        (ticket) => ticket.teamId === currentUser.teamId && ticket.assignedToId === currentUser.id,
+      )
       .flatMap((ticket) => ticket.activity)
       .filter((entry) => new Date(entry.at).getTime() <= seenAt)
       .map((entry) => entry.id)
 
     setReadNotificationIds(migratedReadIds)
-  }, [notificationReadIdsStorageKey, notificationSeenStorageKey, tickets, currentUser.teamId])
+  }, [notificationReadIdsStorageKey, notificationSeenStorageKey, tickets, currentUser.teamId, currentUser.id])
 
   useEffect(() => {
     const hasSeededSamples = readStoredValue<boolean>(notificationSampleSeedStorageKey, false)
@@ -944,27 +959,25 @@ function App() {
     if (activeView === 'notifications') {
       setReadNotificationIds((current) => {
         const next = new Set(current)
-        tickets
-          .filter((ticket) => ticket.teamId === currentUser.teamId)
+        notificationSourceTickets
           .flatMap((ticket) => ticket.activity)
           .forEach((entry) => next.add(entry.id))
         return Array.from(next)
       })
       setNotificationsPreviewOpen(false)
     }
-  }, [activeView, tickets, currentUser.teamId])
+  }, [activeView, notificationSourceTickets])
 
   useEffect(() => {
     const validNotificationIds = new Set(
       [
-        ...tickets
-          .filter((ticket) => ticket.teamId === currentUser.teamId)
+        ...notificationSourceTickets
           .flatMap((ticket) => ticket.activity.map((entry) => entry.id)),
         ...seededNotificationItems.map((item) => item.id),
       ],
     )
     setReadNotificationIds((current) => current.filter((id) => validNotificationIds.has(id)))
-  }, [tickets, currentUser.teamId, seededNotificationItems])
+  }, [notificationSourceTickets, seededNotificationItems])
 
   useEffect(() => {
     if (!notificationsPreviewOpen) {
@@ -980,6 +993,43 @@ function App() {
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [notificationsPreviewOpen])
+
+  useEffect(() => {
+    if (!detailResizeActive) {
+      return
+    }
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = 'ew-resize'
+    document.body.style.userSelect = 'none'
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const resizeState = detailResizeStateRef.current
+      if (!resizeState) {
+        return
+      }
+
+      const deltaPercent = ((resizeState.startX - event.clientX) / window.innerWidth) * 100
+      const nextWidth = Math.min(80, Math.max(30, resizeState.startWidth + deltaPercent))
+      setDetailWidth(nextWidth)
+    }
+
+    const handlePointerUp = () => {
+      detailResizeStateRef.current = null
+      setDetailResizeActive(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+    }
+  }, [detailResizeActive])
 
   const selectedTicket = tickets.find((ticket) => ticket.id === detailTicketId) ?? null
 
@@ -1146,12 +1196,7 @@ function App() {
 
   const notificationItems = [
     ...seededNotificationItems,
-    ...tickets
-      .filter(
-        (ticket) =>
-          ticket.teamId === currentUser.teamId &&
-          ticket.assignedToId === currentUser.id,
-      )
+    ...notificationSourceTickets
       .flatMap((ticket) =>
         ticket.activity.map((entry) => ({
           id: entry.id,
@@ -1207,6 +1252,34 @@ function App() {
     }))
   }
 
+  const refreshAuthSession = async () => {
+    try {
+      const response = await fetch(apiUrl('/api/auth/me'), {
+        credentials: 'include',
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (!response.ok) {
+        return
+      }
+
+      const payload = (await response.json()) as {
+        authenticated?: boolean
+        user?: SessionApiUser
+      }
+
+      if (payload.authenticated && payload.user) {
+        setAuthSession(mapSessionApiUser(payload.user))
+      }
+    } catch {
+      // Leave the current session in place if the refresh check fails.
+    }
+  }
+
   const openTicket = (ticketId: string) => {
     setDetailTab('details')
     setDetailTicketId(ticketId)
@@ -1236,6 +1309,18 @@ function App() {
       setDetailPinned(false)
     }
     setDetailTicketId(null)
+  }
+
+  const startDetailResize = (clientX: number) => {
+    if (isMobileViewport) {
+      return
+    }
+
+    detailResizeStateRef.current = {
+      startX: clientX,
+      startWidth: detailWidth,
+    }
+    setDetailResizeActive(true)
   }
 
   const toggleSettingsAccordion = (section: SettingsAccordionSection) => {
@@ -1754,27 +1839,73 @@ function App() {
     )
   }
 
-  const addUser = () => {
+  const addUser = async () => {
     if (!userForm.name.trim() || !userForm.email.trim() || !userForm.teamId) {
+      setUserDirectoryError('Name, email, and team are required before adding a user.')
+      setUserDirectoryNotice('')
       return
     }
 
     const normalizedEmail = userForm.email.trim().toLowerCase()
     if (users.some((user) => user.email.toLowerCase() === normalizedEmail)) {
+      setUserDirectoryError('A user with that email already exists.')
+      setUserDirectoryNotice('')
       return
     }
 
-    setUsers((current) => [
-      ...current,
-      {
-        id: `u-${slugify(userForm.name)}-${Math.random().toString(36).slice(2, 6)}`,
-        name: userForm.name.trim(),
-        email: normalizedEmail,
-        teamId: userForm.teamId,
-        role: userForm.role,
-      },
-    ])
-    setUserForm({ name: '', email: '', teamId: currentUser.teamId, role: 'Staff' })
+    setUserDirectoryError('')
+    setUserDirectoryNotice('')
+    setUserFormPending(true)
+
+    try {
+      const response = await fetch(apiUrl('/api/users'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: userForm.name.trim(),
+          email: normalizedEmail,
+          teamId: userForm.teamId,
+          role: userForm.role,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setUserDirectoryError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setUserDirectoryError('Only admins can manage users.')
+        return
+      }
+
+      if (!response.ok) {
+        setUserDirectoryError('User could not be created in SQL Server.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        user?: User
+      }
+
+      if (!payload.user) {
+        setUserDirectoryError('User could not be created in SQL Server.')
+        return
+      }
+
+      setUsers((current) => [...current, payload.user as User])
+      setUserForm({ name: '', email: '', teamId: currentUser.teamId, role: 'Staff' })
+      setUserDirectoryNotice('User added successfully.')
+      await refreshAuthSession()
+    } catch {
+      setUserDirectoryError('User could not be created. Confirm the backend server is running.')
+    } finally {
+      setUserFormPending(false)
+    }
   }
 
   const updateUser = (
@@ -1792,6 +1923,73 @@ function App() {
           : user,
       ),
     )
+  }
+
+  const persistUser = async (user: User) => {
+    const normalizedUser = {
+      ...user,
+      name: user.name.trim(),
+      email: user.email.trim().toLowerCase(),
+      teamId: user.teamId.trim(),
+    }
+
+    if (!normalizedUser.name || !normalizedUser.email || !normalizedUser.teamId) {
+      setUserDirectoryError('Each user needs a name, email, and team before changes can be saved.')
+      setUserDirectoryNotice('')
+      return
+    }
+
+    setUserDirectoryError('')
+    setUserDirectoryNotice('')
+    setUserSavePendingIds((current) =>
+      current.includes(normalizedUser.id) ? current : [...current, normalizedUser.id],
+    )
+
+    try {
+      const response = await fetch(apiUrl(`/api/users/${normalizedUser.id}`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(normalizedUser),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setUserDirectoryError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setUserDirectoryError('Only admins can manage users.')
+        return
+      }
+
+      if (!response.ok) {
+        setUserDirectoryError('User changes could not be saved to SQL Server.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        user?: User
+      }
+
+      if (!payload.user) {
+        setUserDirectoryError('User changes could not be saved to SQL Server.')
+        return
+      }
+
+      setUsers((current) =>
+        current.map((entry) => (entry.id === payload.user?.id ? (payload.user as User) : entry)),
+      )
+      setUserDirectoryNotice('User changes saved.')
+      await refreshAuthSession()
+    } catch {
+      setUserDirectoryError('User changes could not be saved. Confirm the backend server is running.')
+    } finally {
+      setUserSavePendingIds((current) => current.filter((entry) => entry !== normalizedUser.id))
+    }
   }
 
   const metricCards: Array<{
@@ -2204,6 +2402,16 @@ function App() {
         case 'addUser':
           return (
             <div className="settings-accordion-content grid gap-3">
+              {userDirectoryError && (
+                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {userDirectoryError}
+                </div>
+              )}
+              {userDirectoryNotice && (
+                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {userDirectoryNotice}
+                </div>
+              )}
               <input
                 className="input-control"
                 placeholder="Full name"
@@ -2238,29 +2446,54 @@ function App() {
                 <option value="Staff">Staff</option>
               </select>
               <button type="button" className="primary-button" onClick={addUser}>
-                Add User
+                {userFormPending ? 'Adding...' : 'Add User'}
               </button>
             </div>
           )
         case 'manageUsers':
           return (
             <div className="settings-accordion-content space-y-3">
+              {userDirectoryError && (
+                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {userDirectoryError}
+                </div>
+              )}
+              {userDirectoryNotice && (
+                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {userDirectoryNotice}
+                </div>
+              )}
+              <p className="text-sm text-[color:var(--text-muted)]">
+                Changes save automatically when you leave a field.
+              </p>
               {users.map((user) => (
-                <div key={user.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr]">
+                <div
+                  key={user.id}
+                  className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr_auto] md:items-center"
+                >
                   <input
                     className="input-control"
                     value={user.name}
                     onChange={(event) => updateUser(user.id, 'name', event.target.value)}
+                    onBlur={() => void persistUser(user)}
                   />
                   <input
                     className="input-control"
                     value={user.email}
                     onChange={(event) => updateUser(user.id, 'email', event.target.value)}
+                    onBlur={() => void persistUser(user)}
                   />
                   <select
                     className="input-control"
                     value={user.teamId}
-                    onChange={(event) => updateUser(user.id, 'teamId', event.target.value)}
+                    onChange={(event) => {
+                      const nextUser = {
+                        ...user,
+                        teamId: event.target.value,
+                      }
+                      updateUser(user.id, 'teamId', event.target.value)
+                      void persistUser(nextUser)
+                    }}
                   >
                     {teams.map((team) => (
                       <option key={team.id} value={team.id}>
@@ -2271,11 +2504,21 @@ function App() {
                   <select
                     className="input-control"
                     value={user.role}
-                    onChange={(event) => updateUser(user.id, 'role', event.target.value)}
+                    onChange={(event) => {
+                      const nextUser = {
+                        ...user,
+                        role: event.target.value as User['role'],
+                      }
+                      updateUser(user.id, 'role', event.target.value)
+                      void persistUser(nextUser)
+                    }}
                   >
                     <option value="Admin">Admin</option>
                     <option value="Staff">Staff</option>
                   </select>
+                  <div className="text-right text-xs text-[color:var(--text-muted)]">
+                    {userSavePendingIds.includes(user.id) ? 'Saving...' : 'Saved'}
+                  </div>
                 </div>
               ))}
             </div>
@@ -3346,7 +3589,19 @@ function App() {
               exit={{ x: '100%' }}
               transition={{ duration: 0.28, ease: 'easeInOut' }}
             >
-              <div className="flex h-full flex-col">
+              <div className="detail-panel-shell flex h-full flex-col">
+                {!isMobileViewport && (
+                  <div
+                    className="detail-resize-handle"
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      startDetailResize(event.clientX)
+                    }}
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize ticket panel"
+                  />
+                )}
                 <div className="border-b border-[color:var(--border)] px-5 py-4">
                   <div className="mb-3 flex items-start justify-between gap-4">
                     <div>
@@ -3377,18 +3632,6 @@ function App() {
                         <X className="h-4 w-4" />
                       </button>
                     </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3 text-sm text-[color:var(--text-muted)]">
-                    <span>{detailWidth}% width</span>
-                    <input
-                      type="range"
-                      min="30"
-                      max="80"
-                      value={detailWidth}
-                      onChange={(event) => setDetailWidth(Number(event.target.value))}
-                      className="w-40 accent-[color:var(--accent)]"
-                    />
                   </div>
 
                   <div className="mt-4 flex items-center gap-6 border-b border-[color:var(--border)]">

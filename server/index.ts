@@ -590,6 +590,26 @@ app.patch('/api/users/:userId', async (req, res) => {
       return
     }
 
+    if (user && user.id === updatedUser.id) {
+      const updatedTeam = await getTeamById(updatedUser.teamId)
+      const refreshedSessionUser: SessionUser = {
+        ...user,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        teamId: updatedUser.teamId,
+        teamName: updatedTeam?.name ?? user.teamName,
+        teamCode: updatedTeam?.code ?? user.teamCode,
+        teamAccent: updatedTeam?.accent ?? user.teamAccent,
+      }
+
+      res.cookie(
+        SESSION_COOKIE_NAME,
+        createSessionToken(refreshedSessionUser),
+        buildCookieOptions(7 * 24 * 60 * 60 * 1000),
+      )
+    }
+
     res.json({ user: updatedUser })
   } catch (error) {
     console.error('Updating user failed.', error)
