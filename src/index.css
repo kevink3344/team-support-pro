@@ -68,6 +68,12 @@ button {
 }
 
 .login-shell {
+  min-height: 100vh;
+  min-height: 100svh;
+  align-items: center;
+  overflow-y: auto;
+  padding-top: max(1.5rem, env(safe-area-inset-top));
+  padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
   background:
     radial-gradient(circle at top left, rgba(0, 120, 212, 0.15), transparent 28%),
     linear-gradient(180deg, #edf3f9 0%, #f7f9fc 100%);
@@ -607,6 +613,10 @@ button {
 }
 
 @media (max-width: 768px) {
+  .login-shell {
+    align-items: flex-start;
+  }
+
   .login-card {
     width: 100%;
   }
