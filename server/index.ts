@@ -60,7 +60,9 @@ const currentFilePath = fileURLToPath(import.meta.url)
 const currentDirPath = path.dirname(currentFilePath)
 const clientDistPath = path.resolve(currentDirPath, '..')
 const clientIndexPath = path.join(clientDistPath, 'index.html')
+const anonIndexPath = path.join(clientDistPath, 'anon', 'index.html')
 const hasClientBuild = fs.existsSync(clientIndexPath)
+const hasAnonBuild = fs.existsSync(anonIndexPath)
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -292,6 +294,16 @@ app.get('/api/directory', async (req, res) => {
   } catch (error) {
     console.error('Loading directory data failed.', error)
     res.status(500).json({ error: 'directory_load_failed' })
+  }
+})
+
+app.get('/api/public/directory', async (_req, res) => {
+  try {
+    const [teams, categories] = await Promise.all([listTeams(), listCategories()])
+    res.json({ teams, categories })
+  } catch (error) {
+    console.error('Loading public directory data failed.', error)
+    res.status(500).json({ error: 'public_directory_load_failed' })
   }
 })
 
@@ -705,6 +717,48 @@ app.post('/api/tickets', async (req, res) => {
   }
 })
 
+app.post('/api/public/tickets', async (req, res) => {
+  const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : ''
+  const categoryId = typeof req.body?.categoryId === 'string' ? req.body.categoryId.trim() : ''
+  const title = typeof req.body?.title === 'string' ? req.body.title : ''
+  const description = typeof req.body?.description === 'string' ? req.body.description : ''
+  const requestorName = typeof req.body?.requestorName === 'string' ? req.body.requestorName : ''
+  const requestorEmail = typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : ''
+  const location = typeof req.body?.location === 'string' ? req.body.location : ''
+
+  if (!teamId || !categoryId) {
+    res.status(400).json({ error: 'invalid_public_ticket_scope' })
+    return
+  }
+
+  try {
+    const ticket = await createTicket(
+      {
+        title,
+        description,
+        priority: 'Medium',
+        teamId,
+        categoryId,
+        assignedToId: null,
+        requestorName,
+        requestorEmail,
+        location,
+      },
+      'Anonymous Request',
+    )
+
+    if (!ticket) {
+      res.status(400).json({ error: 'public_ticket_create_failed' })
+      return
+    }
+
+    res.status(201).json({ ticket })
+  } catch (error) {
+    console.error('Creating anonymous ticket failed.', error)
+    res.status(500).json({ error: 'public_ticket_create_failed' })
+  }
+})
+
 app.get('/api/tickets/:ticketId', async (req, res) => {
   const user = readSessionUserFromRequest(req)
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
@@ -971,6 +1025,16 @@ app.post('/api/auth/logout', (_req, res) => {
 
 if (hasClientBuild) {
   app.use(express.static(clientDistPath))
+
+  if (hasAnonBuild) {
+    app.get('/anon', (_req, res) => {
+      res.sendFile(anonIndexPath)
+    })
+
+    app.get('/anon/', (_req, res) => {
+      res.sendFile(anonIndexPath)
+    })
+  }
 
   app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$)).*/, (_req, res) => {
     res.sendFile(clientIndexPath)
