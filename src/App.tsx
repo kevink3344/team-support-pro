@@ -7,6 +7,7 @@ import {
 import {
   Bell,
   Building2,
+  ChevronDown,
   Clock3,
   Download,
   FileUp,
@@ -87,9 +88,39 @@ const STORAGE_KEYS = {
   notificationsReadIds: 'team-support-pro-notifications-read-ids',
   notificationsSampleSeeded: 'team-support-pro-notifications-sample-seeded',
   notificationsSeenAt: 'team-support-pro-notifications-seen-at',
+  settingsAccordionOrder: 'team-support-pro-settings-accordion-order',
   theme: 'team-support-pro-theme',
   sidebar: 'team-support-pro-sidebar',
 } as const
+
+type SettingsAccordionSection =
+  | 'appearance'
+  | 'addUser'
+  | 'manageUsers'
+  | 'manageTeams'
+  | 'categories'
+
+type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
+
+const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
+  'appearance',
+  'addUser',
+  'manageUsers',
+  'manageTeams',
+  'categories',
+]
+
+const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefined) => {
+  const validSections = new Set(defaultSettingsAccordionOrder)
+  const sanitized = (storedOrder ?? []).filter(
+    (section): section is SettingsAccordionSection => validSections.has(section as SettingsAccordionSection),
+  )
+
+  return [
+    ...sanitized,
+    ...defaultSettingsAccordionOrder.filter((section) => !sanitized.includes(section)),
+  ]
+}
 
 const ResponsiveDashboardGrid = WidthProvider(Responsive)
 type DashboardLayouts = ResponsiveLayouts<string>
@@ -434,6 +465,9 @@ function App() {
     mergeDashboardLayouts(readStoredValue<DashboardLayouts | null>(dashboardLayoutStorageKey, null)),
   )
   const [activeView, setActiveView] = useState<AppView>('dashboard')
+  const settingsAccordionOrderStorageKey = authSession
+    ? `${STORAGE_KEYS.settingsAccordionOrder}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.settingsAccordionOrder
   const notificationReadIdsStorageKey = authSession
     ? `${STORAGE_KEYS.notificationsReadIds}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.notificationsReadIds
@@ -475,6 +509,23 @@ function App() {
   const [attachmentUploadPending, setAttachmentUploadPending] = useState(false)
   const [attachmentDeletePendingId, setAttachmentDeletePendingId] = useState<string | null>(null)
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
+  const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
+    appearance: true,
+    addUser: false,
+    manageUsers: false,
+    manageTeams: false,
+    categories: false,
+  })
+  const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
+    normalizeSettingsAccordionOrder(
+      readStoredValue<SettingsAccordionSection[]>(
+        settingsAccordionOrderStorageKey,
+        defaultSettingsAccordionOrder,
+      ),
+    ),
+  )
+  const [draggedSettingsSection, setDraggedSettingsSection] = useState<SettingsAccordionSection | null>(null)
+  const [settingsDragOverSection, setSettingsDragOverSection] = useState<SettingsAccordionSection | null>(null)
   const [teamForm, setTeamForm] = useState({
     name: '',
     code: '',
@@ -563,6 +614,17 @@ function App() {
   }, [dashboardLayoutStorageKey])
 
   useEffect(() => {
+    setSettingsAccordionOrder(
+      normalizeSettingsAccordionOrder(
+        readStoredValue<SettingsAccordionSection[]>(
+          settingsAccordionOrderStorageKey,
+          defaultSettingsAccordionOrder,
+        ),
+      ),
+    )
+  }, [settingsAccordionOrderStorageKey])
+
+  useEffect(() => {
     const storedReadIds = readStoredValue<string[]>(notificationReadIdsStorageKey, [])
     if (storedReadIds.length > 0) {
       setReadNotificationIds(storedReadIds)
@@ -597,6 +659,13 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(dashboardLayouts))
   }, [dashboardLayoutStorageKey, dashboardLayouts])
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      settingsAccordionOrderStorageKey,
+      JSON.stringify(settingsAccordionOrder),
+    )
+  }, [settingsAccordionOrderStorageKey, settingsAccordionOrder])
 
   useEffect(() => {
     window.localStorage.setItem(notificationReadIdsStorageKey, JSON.stringify(readNotificationIds))
@@ -1167,6 +1236,46 @@ function App() {
       setDetailPinned(false)
     }
     setDetailTicketId(null)
+  }
+
+  const toggleSettingsAccordion = (section: SettingsAccordionSection) => {
+    setSettingsAccordions((current) => ({
+      ...current,
+      [section]: !current[section],
+    }))
+  }
+
+  const reorderSettingsAccordions = (
+    draggedSection: SettingsAccordionSection,
+    targetSection: SettingsAccordionSection,
+  ) => {
+    if (draggedSection === targetSection) {
+      return
+    }
+
+    setSettingsAccordionOrder((current) => {
+      const next = [...current]
+      const draggedIndex = next.indexOf(draggedSection)
+      const targetIndex = next.indexOf(targetSection)
+
+      if (draggedIndex === -1 || targetIndex === -1) {
+        return current
+      }
+
+      next.splice(draggedIndex, 1)
+      next.splice(targetIndex, 0, draggedSection)
+      return next
+    })
+  }
+
+  const startSettingsAccordionDrag = (section: SettingsAccordionSection) => {
+    setDraggedSettingsSection(section)
+    setSettingsDragOverSection(section)
+  }
+
+  const endSettingsAccordionDrag = () => {
+    setDraggedSettingsSection(null)
+    setSettingsDragOverSection(null)
   }
 
   const signOut = async () => {
@@ -2034,242 +2143,83 @@ function App() {
     )
   }
 
-  const renderAdminSettingsPage = () => (
-    <div className="space-y-4">
-      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
-        <section className="surface p-4">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <div className="text-xl font-semibold">Administrator Settings</div>
-              <div className="text-sm text-[color:var(--text-muted)]">
-                Add and modify users, teams, categories, and application theme settings.
+  const renderSettingsAccordionSection = (section: SettingsAccordionSection) => {
+    const isOpen = settingsAccordions[section]
+
+    const renderAccordionBody = () => {
+      switch (section) {
+        case 'appearance':
+          return (
+            <div className="settings-accordion-content">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(
+                  [
+                    ['appBg', 'App'],
+                    ['headerBg', 'Header'],
+                    ['menuBg', 'Menu'],
+                    ['cardBg', 'Cards'],
+                    ['buttonBg', 'Buttons'],
+                    ['accent', 'Accent'],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="field">
+                    <span className="field-label">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        className="h-10 w-14 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                        value={themeConfig[settingsMode][key]}
+                        onChange={(event) => updateThemeColor(settingsMode, key, event.target.value)}
+                      />
+                      <input
+                        className="input-control font-mono"
+                        value={themeConfig[settingsMode][key]}
+                        onChange={(event) => updateThemeColor(settingsMode, key, event.target.value)}
+                      />
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              <div className="mt-4 flex w-fit items-center overflow-hidden rounded-[2px] border border-[color:var(--border)]">
+                <button
+                  type="button"
+                  className="view-toggle"
+                  data-active={settingsMode === 'light'}
+                  onClick={() => setSettingsMode('light')}
+                >
+                  Light
+                </button>
+                <button
+                  type="button"
+                  className="view-toggle"
+                  data-active={settingsMode === 'dark'}
+                  onClick={() => setSettingsMode('dark')}
+                >
+                  Dark
+                </button>
               </div>
             </div>
-            <div className="rounded-[2px] border border-[color:var(--border)] px-3 py-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-              {currentUser.role}
-            </div>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            {(
-              [
-                ['appBg', 'App'],
-                ['headerBg', 'Header'],
-                ['menuBg', 'Menu'],
-                ['cardBg', 'Cards'],
-                ['buttonBg', 'Buttons'],
-                ['accent', 'Accent'],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="field">
-                <span className="field-label">{label}</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="color"
-                    className="h-10 w-14 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
-                    value={themeConfig[settingsMode][key]}
-                    onChange={(event) => updateThemeColor(settingsMode, key, event.target.value)}
-                  />
-                  <input
-                    className="input-control font-mono"
-                    value={themeConfig[settingsMode][key]}
-                    onChange={(event) => updateThemeColor(settingsMode, key, event.target.value)}
-                  />
-                </div>
-              </label>
-            ))}
-          </div>
-
-          <div className="mt-4 flex items-center overflow-hidden rounded-[2px] border border-[color:var(--border)] w-fit">
-            <button
-              type="button"
-              className="view-toggle"
-              data-active={settingsMode === 'light'}
-              onClick={() => setSettingsMode('light')}
-            >
-              Light
-            </button>
-            <button
-              type="button"
-              className="view-toggle"
-              data-active={settingsMode === 'dark'}
-              onClick={() => setSettingsMode('dark')}
-            >
-              Dark
-            </button>
-          </div>
-        </section>
-
-        <section className="surface p-4">
-          <div className="mb-4 text-xl font-semibold">Add User</div>
-          <div className="grid gap-3">
-            <input
-              className="input-control"
-              placeholder="Full name"
-              value={userForm.name}
-              onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))}
-            />
-            <input
-              className="input-control"
-              placeholder="Email"
-              value={userForm.email}
-              onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
-            />
-            <select
-              className="input-control"
-              value={userForm.teamId}
-              onChange={(event) => setUserForm((current) => ({ ...current, teamId: event.target.value }))}
-            >
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
-            <select
-              className="input-control"
-              value={userForm.role}
-              onChange={(event) =>
-                setUserForm((current) => ({ ...current, role: event.target.value as User['role'] }))
-              }
-            >
-              <option value="Admin">Admin</option>
-              <option value="Staff">Staff</option>
-            </select>
-            <button type="button" className="primary-button" onClick={addUser}>
-              Add User
-            </button>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <section className="surface p-4">
-          <div className="mb-4 text-xl font-semibold">Manage Users</div>
-          <div className="space-y-3">
-            {users.map((user) => (
-              <div key={user.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr]">
-                <input
-                  className="input-control"
-                  value={user.name}
-                  onChange={(event) => updateUser(user.id, 'name', event.target.value)}
-                />
-                <input
-                  className="input-control"
-                  value={user.email}
-                  onChange={(event) => updateUser(user.id, 'email', event.target.value)}
-                />
-                <select
-                  className="input-control"
-                  value={user.teamId}
-                  onChange={(event) => updateUser(user.id, 'teamId', event.target.value)}
-                >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="input-control"
-                  value={user.role}
-                  onChange={(event) => updateUser(user.id, 'role', event.target.value)}
-                >
-                  <option value="Admin">Admin</option>
-                  <option value="Staff">Staff</option>
-                </select>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="surface p-4">
-          <div className="mb-4 text-xl font-semibold">Manage Teams</div>
-          <div className="mb-4 grid gap-3 sm:grid-cols-[1.4fr_0.8fr_0.6fr_auto]">
-            <input
-              className="input-control"
-              placeholder="Team name"
-              value={teamForm.name}
-              onChange={(event) => setTeamForm((current) => ({ ...current, name: event.target.value }))}
-            />
-            <input
-              className="input-control"
-              placeholder="Code"
-              value={teamForm.code}
-              onChange={(event) => setTeamForm((current) => ({ ...current, code: event.target.value }))}
-            />
-            <input
-              type="color"
-              className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
-              value={teamForm.accent}
-              onChange={(event) => setTeamForm((current) => ({ ...current, accent: event.target.value }))}
-            />
-            <button type="button" className="primary-button" onClick={addTeam}>
-              Add Team
-            </button>
-          </div>
-          <div className="space-y-3">
-            {teams.map((team) => (
-              <div key={team.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.4fr_0.7fr_0.4fr]">
-                <input
-                  className="input-control"
-                  value={team.name}
-                  onChange={(event) => updateTeam(team.id, 'name', event.target.value)}
-                />
-                <input
-                  className="input-control font-mono"
-                  value={team.code}
-                  onChange={(event) => updateTeam(team.id, 'code', event.target.value)}
-                />
-                <input
-                  type="color"
-                  className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
-                  value={team.accent}
-                  onChange={(event) => updateTeam(team.id, 'accent', event.target.value)}
-                />
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <section className="surface p-4">
-        <div className="mb-4 text-xl font-semibold">Categories</div>
-        <div className="mb-4 grid gap-3 md:grid-cols-[0.8fr_1fr_1.6fr_auto]">
-          <select
-            className="input-control"
-            value={categoryForm.teamId}
-            onChange={(event) => setCategoryForm((current) => ({ ...current, teamId: event.target.value }))}
-          >
-            {teams.map((team) => (
-              <option key={team.id} value={team.id}>
-                {team.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="input-control"
-            placeholder="Category name"
-            value={categoryForm.name}
-            onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
-          />
-          <input
-            className="input-control"
-            placeholder="Category description"
-            value={categoryForm.description}
-            onChange={(event) => setCategoryForm((current) => ({ ...current, description: event.target.value }))}
-          />
-          <button type="button" className="primary-button" onClick={addCategory}>
-            Add Category
-          </button>
-        </div>
-        <div className="grid gap-3 xl:grid-cols-2">
-          {categories.map((category) => (
-            <div key={category.id} className="surface-muted grid gap-3 p-3 text-sm md:grid-cols-[0.85fr_1fr_1.4fr]">
+          )
+        case 'addUser':
+          return (
+            <div className="settings-accordion-content grid gap-3">
+              <input
+                className="input-control"
+                placeholder="Full name"
+                value={userForm.name}
+                onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))}
+              />
+              <input
+                className="input-control"
+                placeholder="Email"
+                value={userForm.email}
+                onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
+              />
               <select
                 className="input-control"
-                value={category.teamId}
-                onChange={(event) => updateCategory(category.id, 'teamId', event.target.value)}
+                value={userForm.teamId}
+                onChange={(event) => setUserForm((current) => ({ ...current, teamId: event.target.value }))}
               >
                 {teams.map((team) => (
                   <option key={team.id} value={team.id}>
@@ -2277,20 +2227,275 @@ function App() {
                   </option>
                 ))}
               </select>
-              <input
+              <select
                 className="input-control"
-                value={category.name}
-                onChange={(event) => updateCategory(category.id, 'name', event.target.value)}
-              />
-              <input
-                className="input-control"
-                value={category.description}
-                onChange={(event) => updateCategory(category.id, 'description', event.target.value)}
-              />
+                value={userForm.role}
+                onChange={(event) =>
+                  setUserForm((current) => ({ ...current, role: event.target.value as User['role'] }))
+                }
+              >
+                <option value="Admin">Admin</option>
+                <option value="Staff">Staff</option>
+              </select>
+              <button type="button" className="primary-button" onClick={addUser}>
+                Add User
+              </button>
             </div>
-          ))}
+          )
+        case 'manageUsers':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {users.map((user) => (
+                <div key={user.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr]">
+                  <input
+                    className="input-control"
+                    value={user.name}
+                    onChange={(event) => updateUser(user.id, 'name', event.target.value)}
+                  />
+                  <input
+                    className="input-control"
+                    value={user.email}
+                    onChange={(event) => updateUser(user.id, 'email', event.target.value)}
+                  />
+                  <select
+                    className="input-control"
+                    value={user.teamId}
+                    onChange={(event) => updateUser(user.id, 'teamId', event.target.value)}
+                  >
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    className="input-control"
+                    value={user.role}
+                    onChange={(event) => updateUser(user.id, 'role', event.target.value)}
+                  >
+                    <option value="Admin">Admin</option>
+                    <option value="Staff">Staff</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+          )
+        case 'manageTeams':
+          return (
+            <div className="settings-accordion-content">
+              <div className="mb-4 grid gap-3 sm:grid-cols-[1.4fr_0.8fr_0.6fr_auto]">
+                <input
+                  className="input-control"
+                  placeholder="Team name"
+                  value={teamForm.name}
+                  onChange={(event) => setTeamForm((current) => ({ ...current, name: event.target.value }))}
+                />
+                <input
+                  className="input-control"
+                  placeholder="Code"
+                  value={teamForm.code}
+                  onChange={(event) => setTeamForm((current) => ({ ...current, code: event.target.value }))}
+                />
+                <input
+                  type="color"
+                  className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                  value={teamForm.accent}
+                  onChange={(event) => setTeamForm((current) => ({ ...current, accent: event.target.value }))}
+                />
+                <button type="button" className="primary-button" onClick={addTeam}>
+                  Add Team
+                </button>
+              </div>
+              <div className="space-y-3">
+                {teams.map((team) => (
+                  <div key={team.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.4fr_0.7fr_0.4fr]">
+                    <input
+                      className="input-control"
+                      value={team.name}
+                      onChange={(event) => updateTeam(team.id, 'name', event.target.value)}
+                    />
+                    <input
+                      className="input-control font-mono"
+                      value={team.code}
+                      onChange={(event) => updateTeam(team.id, 'code', event.target.value)}
+                    />
+                    <input
+                      type="color"
+                      className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                      value={team.accent}
+                      onChange={(event) => updateTeam(team.id, 'accent', event.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        case 'categories':
+          return (
+            <div className="settings-accordion-content">
+              <div className="mb-4 grid gap-3 md:grid-cols-[0.8fr_1fr_1.6fr_auto]">
+                <select
+                  className="input-control"
+                  value={categoryForm.teamId}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, teamId: event.target.value }))}
+                >
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="input-control"
+                  placeholder="Category name"
+                  value={categoryForm.name}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
+                />
+                <input
+                  className="input-control"
+                  placeholder="Category description"
+                  value={categoryForm.description}
+                  onChange={(event) => setCategoryForm((current) => ({ ...current, description: event.target.value }))}
+                />
+                <button type="button" className="primary-button" onClick={addCategory}>
+                  Add Category
+                </button>
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2">
+                {categories.map((category) => (
+                  <div key={category.id} className="surface-muted grid gap-3 p-3 text-sm md:grid-cols-[0.85fr_1fr_1.4fr]">
+                    <select
+                      className="input-control"
+                      value={category.teamId}
+                      onChange={(event) => updateCategory(category.id, 'teamId', event.target.value)}
+                    >
+                      {teams.map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="input-control"
+                      value={category.name}
+                      onChange={(event) => updateCategory(category.id, 'name', event.target.value)}
+                    />
+                    <input
+                      className="input-control"
+                      value={category.description}
+                      onChange={(event) => updateCategory(category.id, 'description', event.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+      }
+    }
+
+    const accordionMetadata: Record<
+      SettingsAccordionSection,
+      { title: string; description: string }
+    > = {
+      appearance: {
+        title: 'Appearance',
+        description: 'Theme colors and light or dark mode defaults.',
+      },
+      addUser: {
+        title: 'Add User',
+        description: 'Create a new admin or staff account.',
+      },
+      manageUsers: {
+        title: 'Manage Users',
+        description: 'Update names, emails, teams, and roles.',
+      },
+      manageTeams: {
+        title: 'Manage Teams',
+        description: 'Add or update team names, codes, and accent colors.',
+      },
+      categories: {
+        title: 'Categories',
+        description: 'Add new categories and maintain team mappings.',
+      },
+    }
+
+    const { title, description } = accordionMetadata[section]
+
+    return (
+      <section
+        key={section}
+        className="surface p-4 settings-accordion-shell"
+        data-drag-over={settingsDragOverSection === section && draggedSettingsSection !== section}
+        onDragOver={(event) => {
+          if (!draggedSettingsSection) {
+            return
+          }
+
+          event.preventDefault()
+          if (settingsDragOverSection !== section) {
+            setSettingsDragOverSection(section)
+          }
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          if (draggedSettingsSection) {
+            reorderSettingsAccordions(draggedSettingsSection, section)
+          }
+          endSettingsAccordionDrag()
+        }}
+      >
+        <div className="settings-accordion-header">
+          <button
+            type="button"
+            className="settings-drag-handle"
+            draggable
+            onDragStart={(event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              startSettingsAccordionDrag(section)
+            }}
+            onDragEnd={endSettingsAccordionDrag}
+            aria-label={`Drag ${title}`}
+            title="Drag to reorder"
+          >
+            <Grip className="h-4 w-4" />
+          </button>
+
+          <button
+            type="button"
+            className="settings-accordion-toggle"
+            onClick={() => toggleSettingsAccordion(section)}
+            aria-expanded={isOpen}
+          >
+            <div>
+              <div className="text-xl font-semibold">{title}</div>
+              <div className="text-sm text-[color:var(--text-muted)]">{description}</div>
+            </div>
+            <ChevronDown className="settings-accordion-icon h-5 w-5" data-open={isOpen} />
+          </button>
+        </div>
+
+        {isOpen && renderAccordionBody()}
+      </section>
+    )
+  }
+
+  const renderAdminSettingsPage = () => (
+    <div className="space-y-4">
+      <section className="surface p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xl font-semibold">Administrator Settings</div>
+            <div className="text-sm text-[color:var(--text-muted)]">
+              Drag the handle on the left to move the sections you use most to the top. Your layout is saved per signed-in user.
+            </div>
+          </div>
+          <div className="rounded-[2px] border border-[color:var(--border)] px-3 py-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+            {currentUser.role}
+          </div>
         </div>
       </section>
+
+      {settingsAccordionOrder.map((section) => renderSettingsAccordionSection(section))}
     </div>
   )
 
