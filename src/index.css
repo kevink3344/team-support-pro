@@ -257,7 +257,6 @@ button {
   background: #fff5d6;
   color: #a56c00;
 }
-
 .badge-orange {
   border-color: #ffc28c;
   background: #fff0e2;
@@ -274,6 +273,17 @@ button {
   border-color: #ffb1b8;
   background: #ffe8ea;
   color: #ba3040;
+}
+
+.notification-unread-button {
+  border-color: color-mix(in srgb, #d92d20 38%, var(--border));
+  background: color-mix(in srgb, #d92d20 10%, var(--surface-2));
+  color: #d92d20;
+}
+
+.notification-unread-button:hover {
+  border-color: color-mix(in srgb, #d92d20 62%, var(--border));
+  background: color-mix(in srgb, #d92d20 16%, var(--surface-2));
 }
 
 .badge-slate {
@@ -324,6 +334,36 @@ button {
 .dashboard-reset-button:hover {
   color: var(--text);
   opacity: 1;
+}
+
+.notification-badge {
+  box-shadow: 0 0 0 2px var(--header-bg);
+}
+
+.notification-preview {
+  backdrop-filter: blur(8px);
+}
+
+.notification-preview-item {
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.notification-preview-item:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--card-bg));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  transform: translateY(-1px);
+}
+
+.notification-unread-dot {
+  display: inline-flex;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #d92d20;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #d92d20 18%, transparent);
 }
 
 .dashboard-grid .react-grid-item {

@@ -89,17 +89,45 @@ app.use(
 app.use(express.json())
 app.use(cookieParser())
 
+const readTestApiKeyUserFromRequest = (req: express.Request): SessionUser | null => {
+  if (!serverConfig.testApiKey) {
+    return null
+  }
+
+  const authorizationHeader = req.header('authorization')?.trim() || ''
+  const bearerToken = authorizationHeader.toLowerCase().startsWith('bearer ')
+    ? authorizationHeader.slice(7).trim()
+    : ''
+  const apiKeyHeader = req.header('x-api-key')?.trim() || ''
+  const providedKey = apiKeyHeader || bearerToken
+
+  if (!providedKey || providedKey !== serverConfig.testApiKey) {
+    return null
+  }
+
+  return {
+    id: 'postman-it-staff',
+    name: serverConfig.testApiUserName,
+    email: serverConfig.testApiUserEmail,
+    role: 'Staff',
+    teamId: 'it',
+    teamName: 'IT Support',
+    teamCode: 'IT',
+    teamAccent: '#0078d4',
+  }
+}
+
 const readSessionUserFromRequest = (req: express.Request): SessionUser | null => {
   const token = req.cookies[SESSION_COOKIE_NAME]
 
   if (!token) {
-    return null
+    return readTestApiKeyUserFromRequest(req)
   }
 
   try {
     return readSessionToken(token)
   } catch {
-    return null
+    return readTestApiKeyUserFromRequest(req)
   }
 }
 

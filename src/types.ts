@@ -14,6 +14,7 @@ export type TicketPriority = 'Low' | 'Medium' | 'High' | 'Critical'
 
 export type AppView =
   | 'dashboard'
+  | 'notifications'
   | 'unassigned'
   | 'my-tickets'
   | 'team-tickets'

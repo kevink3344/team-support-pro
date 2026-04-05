@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState, startTransition, type CSSProperties } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties } from 'react'
 import { GoogleLogin, googleLogout } from '@react-oauth/google'
 import {
   AnimatePresence,
@@ -84,6 +84,9 @@ const STORAGE_KEYS = {
   auth: 'team-support-pro-auth',
   dashboardLayout: 'team-support-pro-dashboard-layout',
   mode: 'team-support-pro-mode',
+  notificationsReadIds: 'team-support-pro-notifications-read-ids',
+  notificationsSampleSeeded: 'team-support-pro-notifications-sample-seeded',
+  notificationsSeenAt: 'team-support-pro-notifications-seen-at',
   theme: 'team-support-pro-theme',
   sidebar: 'team-support-pro-sidebar',
 } as const
@@ -354,6 +357,51 @@ const getStatusBadgeClass = (status: TicketStatus) => {
   }
 }
 
+interface NotificationItem {
+  id: string
+  ticketId: string
+  ticketTitle: string
+  actor: string
+  message: string
+  at: string
+  seeded?: boolean
+}
+
+const buildSeedNotificationItems = (
+  sourceTickets: TicketRecord[],
+  currentUserName: string,
+): NotificationItem[] => {
+  if (sourceTickets.length === 0) {
+    return []
+  }
+
+  const baseTime = new Date('2026-04-05T09:00:00.000Z').getTime()
+  const sampleDefinitions = [
+    { actor: 'Avery Chen', message: 'escalated this ticket for same-day follow-up.', hoursAgo: 1 },
+    { actor: 'Morgan Patel', message: 'requested an update before the leadership review.', hoursAgo: 2 },
+    { actor: 'Jordan Brooks', message: 'added a dependency note for vendor coordination.', hoursAgo: 4 },
+    { actor: 'Taylor Nguyen', message: 'confirmed the workaround with the requestor.', hoursAgo: 6 },
+    { actor: 'Reese Kim', message: 'marked the ticket ready for your verification.', hoursAgo: 9 },
+    { actor: 'Parker Diaz', message: 'attached the deployment checklist.', hoursAgo: 13 },
+    { actor: 'Cameron Lee', message: 'captured the root-cause summary.', hoursAgo: 19 },
+    { actor: 'Quinn Rivera', message: 'closed the investigation sub-task.', hoursAgo: 27 },
+  ]
+
+  return sampleDefinitions.map((definition, index) => {
+    const ticket = sourceTickets[index % sourceTickets.length]
+
+    return {
+      id: `sample-notification-${ticket.id}-${index + 1}`,
+      ticketId: ticket.id,
+      ticketTitle: ticket.title,
+      actor: definition.actor === currentUserName ? 'System Queue' : definition.actor,
+      message: definition.message,
+      at: new Date(baseTime - definition.hoursAgo * 60 * 60 * 1000).toISOString(),
+      seeded: true,
+    }
+  })
+}
+
 const getPriorityBadgeClass = (priority: TicketPriority) => {
   switch (priority) {
     case 'Critical':
@@ -386,6 +434,18 @@ function App() {
     mergeDashboardLayouts(readStoredValue<DashboardLayouts | null>(dashboardLayoutStorageKey, null)),
   )
   const [activeView, setActiveView] = useState<AppView>('dashboard')
+  const notificationReadIdsStorageKey = authSession
+    ? `${STORAGE_KEYS.notificationsReadIds}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.notificationsReadIds
+  const notificationSampleSeedStorageKey = authSession
+    ? `${STORAGE_KEYS.notificationsSampleSeeded}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.notificationsSampleSeeded
+  const notificationSeenStorageKey = authSession
+    ? `${STORAGE_KEYS.notificationsSeenAt}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.notificationsSeenAt
+  const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() =>
+    readStoredValue<string[]>(notificationReadIdsStorageKey, []),
+  )
   const [listMode, setListMode] = useState<ListViewMode>('table')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readStoredValue(STORAGE_KEYS.sidebar, false),
@@ -456,6 +516,8 @@ function App() {
   const [detailSavePending, setDetailSavePending] = useState(false)
   const [createTicketError, setCreateTicketError] = useState('')
   const [createTicketPending, setCreateTicketPending] = useState(false)
+  const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
+  const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
 
   const deferredSearch = useDeferredValue(searchText)
   const currentUser = authSession
@@ -472,6 +534,18 @@ function App() {
     ? users.filter((user) => user.teamId === currentUser.teamId)
     : [...users.filter((user) => user.teamId === currentUser.teamId), currentUser]
   const activePalette = themeConfig[themeMode]
+  const seededNotificationItems = useMemo(
+    () =>
+      buildSeedNotificationItems(
+        tickets.filter((ticket) => ticket.teamId === currentUser.teamId),
+        currentUser.name,
+      ),
+    [tickets, currentUser.teamId, currentUser.name],
+  )
+  const seededReadNotificationIds = useMemo(
+    () => seededNotificationItems.slice(3).map((item) => item.id),
+    [seededNotificationItems],
+  )
 
   useEffect(() => {
     if (authSession) {
@@ -489,8 +563,44 @@ function App() {
   }, [dashboardLayoutStorageKey])
 
   useEffect(() => {
+    const storedReadIds = readStoredValue<string[]>(notificationReadIdsStorageKey, [])
+    if (storedReadIds.length > 0) {
+      setReadNotificationIds(storedReadIds)
+      return
+    }
+
+    const seenAt = readStoredValue<number>(notificationSeenStorageKey, 0)
+    if (!seenAt) {
+      setReadNotificationIds([])
+      return
+    }
+
+    const migratedReadIds = tickets
+      .filter((ticket) => ticket.teamId === currentUser.teamId)
+      .flatMap((ticket) => ticket.activity)
+      .filter((entry) => new Date(entry.at).getTime() <= seenAt)
+      .map((entry) => entry.id)
+
+    setReadNotificationIds(migratedReadIds)
+  }, [notificationReadIdsStorageKey, notificationSeenStorageKey, tickets, currentUser.teamId])
+
+  useEffect(() => {
+    const hasSeededSamples = readStoredValue<boolean>(notificationSampleSeedStorageKey, false)
+    if (hasSeededSamples || seededReadNotificationIds.length === 0) {
+      return
+    }
+
+    setReadNotificationIds((current) => Array.from(new Set([...current, ...seededReadNotificationIds])))
+    window.localStorage.setItem(notificationSampleSeedStorageKey, JSON.stringify(true))
+  }, [notificationSampleSeedStorageKey, seededReadNotificationIds])
+
+  useEffect(() => {
     window.localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(dashboardLayouts))
   }, [dashboardLayoutStorageKey, dashboardLayouts])
+
+  useEffect(() => {
+    window.localStorage.setItem(notificationReadIdsStorageKey, JSON.stringify(readNotificationIds))
+  }, [notificationReadIdsStorageKey, readNotificationIds])
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.sidebar, JSON.stringify(sidebarCollapsed))
@@ -761,6 +871,47 @@ function App() {
     }
   }, [activeView, currentUser.role])
 
+  useEffect(() => {
+    if (activeView === 'notifications') {
+      setReadNotificationIds((current) => {
+        const next = new Set(current)
+        tickets
+          .filter((ticket) => ticket.teamId === currentUser.teamId)
+          .flatMap((ticket) => ticket.activity)
+          .forEach((entry) => next.add(entry.id))
+        return Array.from(next)
+      })
+      setNotificationsPreviewOpen(false)
+    }
+  }, [activeView, tickets, currentUser.teamId])
+
+  useEffect(() => {
+    const validNotificationIds = new Set(
+      [
+        ...tickets
+          .filter((ticket) => ticket.teamId === currentUser.teamId)
+          .flatMap((ticket) => ticket.activity.map((entry) => entry.id)),
+        ...seededNotificationItems.map((item) => item.id),
+      ],
+    )
+    setReadNotificationIds((current) => current.filter((id) => validNotificationIds.has(id)))
+  }, [tickets, currentUser.teamId, seededNotificationItems])
+
+  useEffect(() => {
+    if (!notificationsPreviewOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!notificationsPreviewRef.current?.contains(event.target as Node)) {
+        setNotificationsPreviewOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [notificationsPreviewOpen])
+
   const selectedTicket = tickets.find((ticket) => ticket.id === detailTicketId) ?? null
 
   useEffect(() => {
@@ -924,6 +1075,32 @@ function App() {
       .includes(query)
   })
 
+  const notificationItems = [
+    ...seededNotificationItems,
+    ...tickets
+      .filter(
+        (ticket) =>
+          ticket.teamId === currentUser.teamId &&
+          ticket.assignedToId === currentUser.id,
+      )
+      .flatMap((ticket) =>
+        ticket.activity.map((entry) => ({
+          id: entry.id,
+          ticketId: ticket.id,
+          ticketTitle: ticket.title,
+          actor: entry.actor,
+          message: entry.message,
+          at: entry.at,
+        } satisfies NotificationItem)),
+      )
+      .filter((item) => item.actor !== currentUser.name),
+  ].sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())
+
+  const readNotificationIdSet = new Set(readNotificationIds)
+  const unreadNotifications = notificationItems.filter((item) => !readNotificationIdSet.has(item.id))
+  const unreadNotificationCount = unreadNotifications.length
+  const notificationPreviewItems = notificationItems.slice(0, 3)
+
   const fallbackDashboardStats = {
     total: tickets.length,
     open: tickets.filter((ticket) => ticket.status === 'Open').length,
@@ -964,6 +1141,25 @@ function App() {
   const openTicket = (ticketId: string) => {
     setDetailTab('details')
     setDetailTicketId(ticketId)
+  }
+
+  const openNotificationsPage = () => {
+    setActiveView('notifications')
+    setNotificationsPreviewOpen(false)
+  }
+
+  const toggleNotificationReadState = (notificationId: string, shouldBeUnread: boolean) => {
+    setReadNotificationIds((current) => {
+      const next = new Set(current)
+
+      if (shouldBeUnread) {
+        next.delete(notificationId)
+      } else {
+        next.add(notificationId)
+      }
+
+      return Array.from(next)
+    })
   }
 
   const closePanel = () => {
@@ -1550,7 +1746,9 @@ function App() {
   } as CSSProperties
 
   const currentViewLabel =
-    visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
+    activeView === 'notifications'
+      ? 'Notifications'
+      : visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
 
   const resetDashboardLayout = () => {
     window.localStorage.removeItem(dashboardLayoutStorageKey)
@@ -1755,6 +1953,84 @@ function App() {
           </div>
         </div>
       </section>
+    )
+  }
+
+  const renderNotificationsPage = () => {
+    if (notificationItems.length === 0) {
+      return (
+        <div className="surface flex min-h-56 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
+          No notifications yet for tickets assigned to you.
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4 md:p-5">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Recent Activity Notifications</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Activity on tickets assigned to you. Opening this page marks visible items as read.
+              </div>
+            </div>
+            <div className="rounded-[2px] border border-[color:var(--border)] px-3 py-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+              {unreadNotificationCount} unread
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {notificationItems.map((item) => {
+              const isUnread = !readNotificationIdSet.has(item.id)
+
+              return (
+                <div
+                  key={item.id}
+                  className="surface-muted flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between"
+                  data-unread={isUnread}
+                >
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                        {item.ticketId}
+                      </span>
+                      {isUnread && (
+                        <span className="badge badge-red">Unread</span>
+                      )}
+                    </div>
+                    <div className="text-base font-semibold text-[color:var(--text)]">{item.ticketTitle}</div>
+                    <div className="text-sm text-[color:var(--text-muted)]">
+                      <span className="font-semibold text-[color:var(--text)]">{item.actor}</span> {item.message}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-start gap-3 md:items-end">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      {formatDateTime(item.at)}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                      <button
+                        type="button"
+                        className={isUnread ? 'dashboard-reset-button' : 'notification-unread-button'}
+                        onClick={() => toggleNotificationReadState(item.id, !isUnread)}
+                      >
+                        {isUnread ? 'Mark as read' : 'Mark as unread'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => openTicket(item.ticketId)}
+                      >
+                        Open Ticket
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      </div>
     )
   }
 
@@ -2421,10 +2697,83 @@ function App() {
                   )}
                 </button>
 
-                <button type="button" className="icon-button relative text-white">
-                  <Bell className="h-5 w-5" />
-                  <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-red-500" />
-                </button>
+                <div
+                  className="notification-bell relative"
+                  ref={notificationsPreviewRef}
+                >
+                  <button
+                    type="button"
+                    className="icon-button relative text-white"
+                    onClick={() => setNotificationsPreviewOpen((current) => !current)}
+                    aria-label={`Notifications${unreadNotificationCount ? ` (${unreadNotificationCount} unread)` : ''}`}
+                    aria-expanded={notificationsPreviewOpen}
+                    aria-haspopup="dialog"
+                  >
+                    <Bell className="h-5 w-5" />
+                    {unreadNotificationCount > 0 && (
+                      <span className="notification-badge absolute -right-1 -top-1 min-w-5 rounded-full bg-red-500 px-1.5 py-0.5 text-center text-[10px] font-bold leading-none text-white">
+                        {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
+                      </span>
+                    )}
+                  </button>
+
+                  {notificationsPreviewOpen && (
+                    <div className="notification-preview surface absolute right-0 top-full z-40 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] p-3 text-[color:var(--text)] shadow-[0_20px_60px_rgba(13,47,79,0.18)]">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold">Recent notifications</div>
+                        <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                          {unreadNotificationCount} unread
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        {notificationPreviewItems.length > 0 ? (
+                          notificationPreviewItems.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="notification-preview-item surface-muted block w-full p-3 text-left"
+                              onClick={() => {
+                                openTicket(item.ticketId)
+                                setNotificationsPreviewOpen(false)
+                              }}
+                            >
+                              <div className="mb-1 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                  {!readNotificationIdSet.has(item.id) && (
+                                    <span className="notification-unread-dot" aria-hidden="true" />
+                                  )}
+                                  <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                                    {item.ticketId}
+                                  </span>
+                                </div>
+                                <span className="text-xs text-[color:var(--text-muted)]">{formatDateTime(item.at)}</span>
+                              </div>
+                              <div className="text-sm font-semibold text-[color:var(--text)]">{item.ticketTitle}</div>
+                              <div className="mt-1 text-sm text-[color:var(--text-muted)] line-clamp-2">
+                                <span className="font-semibold text-[color:var(--text)]">{item.actor}</span> {item.message}
+                              </div>
+                            </button>
+                          ))
+                        ) : (
+                          <div className="surface-muted p-3 text-sm text-[color:var(--text-muted)]">
+                            No recent messages.
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex justify-end border-t border-[color:var(--border)] pt-3">
+                        <button
+                          type="button"
+                          className="dashboard-reset-button"
+                          onClick={openNotificationsPage}
+                        >
+                          View all
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {currentUser.role === 'Admin' && (
                   <button
@@ -2464,6 +2813,8 @@ function App() {
                 <div className="text-sm text-[color:var(--text-muted)]">
                   {activeView === 'dashboard'
                     ? `${tickets.length} total tickets`
+                    : activeView === 'notifications'
+                      ? `${unreadNotificationCount} unread items assigned to you`
                     : activeView === 'settings'
                       ? `${users.length} users across ${teams.length} teams`
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
@@ -2471,7 +2822,7 @@ function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {activeView !== 'settings' && (
+                {activeView !== 'settings' && activeView !== 'notifications' && (
                   <>
                     {activeView === 'dashboard' && (
                       <button
@@ -2568,6 +2919,8 @@ function App() {
             {(activeView === 'unassigned' ||
               activeView === 'my-tickets' ||
               activeView === 'team-tickets') && renderTicketCollection()}
+
+            {activeView === 'notifications' && renderNotificationsPage()}
 
             {activeView === 'settings' && currentUser.role === 'Admin' && renderAdminSettingsPage()}
 
