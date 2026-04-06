@@ -2940,6 +2940,7 @@ function App() {
             <div>
               <div className="text-sm font-semibold">{currentUser.name}</div>
               <div className="text-xs text-white/70">{currentTeam?.name}</div>
+              <div className="text-xs uppercase tracking-[0.12em] text-white/55">{currentUser.role}</div>
             </div>
           )}
         </div>
