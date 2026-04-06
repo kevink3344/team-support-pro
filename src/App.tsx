@@ -621,6 +621,8 @@ function App() {
   const [detailSavePending, setDetailSavePending] = useState(false)
   const [createTicketError, setCreateTicketError] = useState('')
   const [createTicketPending, setCreateTicketPending] = useState(false)
+  const [quickActionPendingTicketId, setQuickActionPendingTicketId] = useState<string | null>(null)
+  const [quickActionError, setQuickActionError] = useState('')
   const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
   const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
   const detailResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -1661,6 +1663,87 @@ function App() {
       setDetailSaveError('Ticket changes could not be saved. Confirm the backend server is running.')
     } finally {
       setDetailSavePending(false)
+    }
+  }
+
+  const applyQuickTicketAction = async (
+    ticket: TicketRecord,
+    action: 'assign-to-me' | 'mark-in-progress' | 'mark-resolved',
+  ) => {
+    if (quickActionPendingTicketId) {
+      return
+    }
+
+    let nextAssignedToId = ticket.assignedToId
+    let nextStatus = ticket.status
+
+    if (action === 'assign-to-me') {
+      nextAssignedToId = currentUser.id
+    }
+
+    if (action === 'mark-in-progress') {
+      nextStatus = 'In Progress'
+      nextAssignedToId = nextAssignedToId ?? currentUser.id
+    }
+
+    if (action === 'mark-resolved') {
+      nextStatus = 'Resolved'
+      nextAssignedToId = nextAssignedToId ?? currentUser.id
+    }
+
+    if (nextAssignedToId === ticket.assignedToId && nextStatus === ticket.status) {
+      return
+    }
+
+    setQuickActionPendingTicketId(ticket.id)
+    setQuickActionError('')
+
+    try {
+      const response = await fetch(apiUrl(`/api/tickets/${ticket.id}`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: ticket.title,
+          description: ticket.description,
+          status: nextStatus,
+          priority: ticket.priority,
+          categoryId: ticket.categoryId,
+          assignedToId: nextAssignedToId,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setQuickActionError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (!response.ok) {
+        setQuickActionError('Quick action failed. Please try again.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        ticket?: TicketRecord
+      }
+
+      if (!payload.ticket) {
+        setQuickActionError('Quick action failed. Please try again.')
+        return
+      }
+
+      setTickets((current) =>
+        current.map((item) =>
+          item.id === payload.ticket?.id ? payload.ticket : item,
+        ),
+      )
+    } catch {
+      setQuickActionError('Quick action failed because the backend server is unavailable.')
+    } finally {
+      setQuickActionPendingTicketId(null)
     }
   }
 
@@ -2939,55 +3022,108 @@ function App() {
       )
     }
 
+    const renderQuickActions = (ticket: TicketRecord) => {
+      const isPending = quickActionPendingTicketId === ticket.id
+      const disableAssign = isPending || ticket.assignedToId === currentUser.id
+      const disableInProgress = isPending || ticket.status === 'In Progress'
+      const disableResolve = isPending || ticket.status === 'Resolved'
+
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disableAssign}
+            onClick={() => applyQuickTicketAction(ticket, 'assign-to-me')}
+          >
+            {isPending ? 'Updating...' : 'Assign to me'}
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disableInProgress}
+            onClick={() => applyQuickTicketAction(ticket, 'mark-in-progress')}
+          >
+            In Progress
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disableResolve}
+            onClick={() => applyQuickTicketAction(ticket, 'mark-resolved')}
+          >
+            Resolve
+          </button>
+        </div>
+      )
+    }
+
     if (listMode === 'cards') {
       return (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {visibleTickets.map((ticket) => {
-            const category = getCategoryById(ticket.categoryId)
-            const assignee = getUserById(ticket.assignedToId)
-            const team = getTeamById(ticket.teamId)
+        <div className="space-y-3">
+          {quickActionError && (
+            <div className="rounded-[2px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {quickActionError}
+            </div>
+          )}
+          <div className="grid gap-3 xl:grid-cols-2">
+            {visibleTickets.map((ticket) => {
+              const category = getCategoryById(ticket.categoryId)
+              const assignee = getUserById(ticket.assignedToId)
+              const team = getTeamById(ticket.teamId)
 
-            return (
-              <button
-                key={ticket.id}
-                type="button"
-                className="surface text-left transition hover:-translate-y-0.5"
-                onClick={() => openTicket(ticket.id)}
-              >
-                <div className="flex items-start justify-between gap-4 p-4">
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
-                        {ticket.id}
-                      </span>
-                      <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
-                      <span className={getPriorityBadgeClass(ticket.priority)}>{ticket.priority}</span>
+              return (
+                <div
+                  key={ticket.id}
+                  className="surface text-left transition hover:-translate-y-0.5"
+                >
+                  <button
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() => openTicket(ticket.id)}
+                  >
+                    <div className="flex items-start justify-between gap-4 p-4">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
+                            {ticket.id}
+                          </span>
+                          <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
+                          <span className={getPriorityBadgeClass(ticket.priority)}>{ticket.priority}</span>
+                        </div>
+                        <h3 className="text-base font-semibold text-[color:var(--text)]">
+                          {ticket.title}
+                        </h3>
+                        <p className="text-sm text-[color:var(--text-muted)]">
+                          {ticket.requestorName} • {category?.name ?? 'Unmapped category'} •{' '}
+                          {team?.name ?? 'Unknown team'}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-[color:var(--text-muted)]">
+                        <div>{ticket.dueLabel}</div>
+                        <div>{formatDateTime(ticket.updatedAt)}</div>
+                      </div>
                     </div>
-                    <h3 className="text-base font-semibold text-[color:var(--text)]">
-                      {ticket.title}
-                    </h3>
-                    <p className="text-sm text-[color:var(--text-muted)]">
-                      {ticket.requestorName} • {category?.name ?? 'Unmapped category'} •{' '}
-                      {team?.name ?? 'Unknown team'}
-                    </p>
-                  </div>
-                  <div className="text-right text-xs text-[color:var(--text-muted)]">
-                    <div>{ticket.dueLabel}</div>
-                    <div>{formatDateTime(ticket.updatedAt)}</div>
+                  </button>
+                  <div className="border-t border-[color:var(--border)] px-4 py-3 text-sm text-[color:var(--text-muted)]">
+                    <div className="mb-3">Assigned to {assignee?.name ?? 'Unassigned'}</div>
+                    {renderQuickActions(ticket)}
                   </div>
                 </div>
-                <div className="border-t border-[color:var(--border)] px-4 py-3 text-sm text-[color:var(--text-muted)]">
-                  Assigned to {assignee?.name ?? 'Unassigned'}
-                </div>
-              </button>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       )
     }
 
     return (
       <div className="surface overflow-hidden">
+        {quickActionError && (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {quickActionError}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-black/[0.02] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
@@ -2998,6 +3134,7 @@ function App() {
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Assigned To</th>
                 <th className="px-4 py-3 font-semibold">Updated</th>
+                <th className="px-4 py-3 font-semibold">Quick Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -3031,6 +3168,7 @@ function App() {
                   <td className="px-4 py-3 align-top text-[color:var(--text-muted)]">
                     {formatDateTime(ticket.updatedAt)}
                   </td>
+                  <td className="px-4 py-3 align-top">{renderQuickActions(ticket)}</td>
                 </tr>
               ))}
             </tbody>
