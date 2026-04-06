@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
 import { GoogleLogin, googleLogout } from '@react-oauth/google'
 import {
   AnimatePresence,
@@ -606,6 +606,15 @@ function App() {
     assignedToId: string
   } | null>(null)
   const [authError, setAuthError] = useState('')
+  const [localAuthError, setLocalAuthError] = useState('')
+  const [localAuthNotice, setLocalAuthNotice] = useState('')
+  const [localRegisterName, setLocalRegisterName] = useState('')
+  const [localRegisterEmail, setLocalRegisterEmail] = useState('')
+  const [localRegisterPassword, setLocalRegisterPassword] = useState('')
+  const [localLoginEmail, setLocalLoginEmail] = useState('')
+  const [localLoginPassword, setLocalLoginPassword] = useState('')
+  const [localRegisterPending, setLocalRegisterPending] = useState(false)
+  const [localLoginPending, setLocalLoginPending] = useState(false)
   const [authReady, setAuthReady] = useState(false)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null)
   const [commentPending, setCommentPending] = useState(false)
@@ -1415,6 +1424,8 @@ function App() {
     googleLogout()
     setAuthSession(null)
     setAuthError('')
+    setLocalAuthError('')
+    setLocalAuthNotice('')
     setDetailTicketId(null)
     setActiveView('dashboard')
   }
@@ -1452,10 +1463,147 @@ function App() {
 
       setAuthSession(mapSessionApiUser(payload.user))
       setAuthError('')
+      setLocalAuthError('')
+      setLocalAuthNotice('')
       setBackendAvailable(true)
     } catch {
       setBackendAvailable(false)
       setAuthError('Google login failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+    }
+  }
+
+  const handleLocalRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const name = localRegisterName.trim()
+    const email = localRegisterEmail.trim().toLowerCase()
+    const password = localRegisterPassword
+
+    if (name.length < 2) {
+      setLocalAuthError('Enter your full name to create an account.')
+      return
+    }
+
+    if (!email || !email.includes('@')) {
+      setLocalAuthError('Enter a valid work email address.')
+      return
+    }
+
+    if (password.length < 8) {
+      setLocalAuthError('Use at least 8 characters for your password.')
+      return
+    }
+
+    setLocalRegisterPending(true)
+    setLocalAuthError('')
+    setLocalAuthNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/auth/register'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name, email, password }),
+      })
+
+      if (response.status === 409) {
+        setLocalAuthError('That email is already registered. Use Email Sign-In below.')
+        return
+      }
+
+      if (!response.ok) {
+        setLocalAuthError('Registration failed. Check your details and try again.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        authenticated?: boolean
+        user?: SessionApiUser
+      }
+
+      if (!payload.authenticated || !payload.user) {
+        setLocalAuthError('Registration succeeded, but session creation failed. Try signing in.')
+        return
+      }
+
+      setAuthSession(mapSessionApiUser(payload.user))
+      setAuthError('')
+      setLocalAuthError('')
+      setLocalAuthNotice('Account created successfully.')
+      setBackendAvailable(true)
+      setLocalRegisterPassword('')
+      setLocalLoginPassword('')
+    } catch {
+      setBackendAvailable(false)
+      setLocalAuthError('Registration failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+    } finally {
+      setLocalRegisterPending(false)
+    }
+  }
+
+  const handleLocalLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const email = localLoginEmail.trim().toLowerCase()
+    const password = localLoginPassword
+
+    if (!email || !email.includes('@')) {
+      setLocalAuthError('Enter the email address you registered with.')
+      return
+    }
+
+    if (!password) {
+      setLocalAuthError('Enter your password.')
+      return
+    }
+
+    setLocalLoginPending(true)
+    setLocalAuthError('')
+    setLocalAuthNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/auth/local/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      })
+
+      if (response.status === 401) {
+        setLocalAuthError('Email or password is incorrect.')
+        return
+      }
+
+      if (!response.ok) {
+        setLocalAuthError('Email sign-in failed. Please try again.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        authenticated?: boolean
+        user?: SessionApiUser
+      }
+
+      if (!payload.authenticated || !payload.user) {
+        setLocalAuthError('Email sign-in could not create a persistent session.')
+        return
+      }
+
+      setAuthSession(mapSessionApiUser(payload.user))
+      setAuthError('')
+      setLocalAuthError('')
+      setLocalAuthNotice('')
+      setBackendAvailable(true)
+      setLocalLoginPassword('')
+    } catch {
+      setBackendAvailable(false)
+      setLocalAuthError('Email sign-in failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+    } finally {
+      setLocalLoginPending(false)
     }
   }
 
@@ -3010,7 +3158,7 @@ function App() {
                   </h1>
                 </div>
                 <p className="max-w-xl text-sm leading-7 text-white/75">
-                  Use your Google account to test authentication against the current mock support workspace. Existing mock staff accounts retain their team and role. New Google accounts are provisioned into a temporary IT staff session for this frontend-only build.
+                  Use Google Sign-In or register with email and password to access the support workspace. Existing mock staff accounts retain their team and role. New sign-ins are provisioned into a temporary IT staff session for this build.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
@@ -3074,14 +3222,109 @@ function App() {
                   </div>
                 )}
 
+                <div className="relative py-2">
+                  <div className="absolute inset-0 flex items-center" aria-hidden>
+                    <div className="w-full border-t border-[color:var(--border)]" />
+                  </div>
+                  <div className="relative flex justify-center">
+                    <span className="bg-[color:var(--card-bg)] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
+                      No Google Account?
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid gap-4">
+                  <form className="surface-muted space-y-3 p-4" onSubmit={handleLocalRegistration}>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[color:var(--text)]">Register New Account</h3>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                        Create a local login saved on this server.
+                      </p>
+                    </div>
+                    <input
+                      className="input-control"
+                      placeholder="Full name"
+                      value={localRegisterName}
+                      onChange={(event) => setLocalRegisterName(event.target.value)}
+                      autoComplete="name"
+                    />
+                    <input
+                      className="input-control"
+                      placeholder="Work email"
+                      type="email"
+                      value={localRegisterEmail}
+                      onChange={(event) => setLocalRegisterEmail(event.target.value)}
+                      autoComplete="email"
+                    />
+                    <input
+                      className="input-control"
+                      placeholder="Password (minimum 8 characters)"
+                      type="password"
+                      value={localRegisterPassword}
+                      onChange={(event) => setLocalRegisterPassword(event.target.value)}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="submit"
+                      className="primary-button w-full"
+                      disabled={localRegisterPending || localLoginPending}
+                    >
+                      {localRegisterPending ? 'Creating account...' : 'Register and Sign In'}
+                    </button>
+                  </form>
+
+                  <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      Email Sign-In
+                    </div>
+                    <div className="space-y-3">
+                      <input
+                        className="input-control"
+                        placeholder="Email"
+                        type="email"
+                        value={localLoginEmail}
+                        onChange={(event) => setLocalLoginEmail(event.target.value)}
+                        autoComplete="email"
+                      />
+                      <input
+                        className="input-control"
+                        placeholder="Password"
+                        type="password"
+                        value={localLoginPassword}
+                        onChange={(event) => setLocalLoginPassword(event.target.value)}
+                        autoComplete="current-password"
+                      />
+                      <button
+                        type="submit"
+                        className="secondary-button w-full"
+                        disabled={localLoginPending || localRegisterPending}
+                      >
+                        {localLoginPending ? 'Signing in...' : 'Sign In with Email'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
                 {authError && (
                   <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     {authError}
                   </div>
                 )}
 
+                {localAuthError && (
+                  <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {localAuthError}
+                  </div>
+                )}
+
+                {localAuthNotice && (
+                  <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                    {localAuthNotice}
+                  </div>
+                )}
+
                 <div className="text-xs leading-6 text-[color:var(--text-muted)]">
-                  Google client: {appConfig.googleClientId ? 'configured in the browser' : 'missing VITE_GOOGLE_CLIENT_ID'}.
+                  Google client: {appConfig.googleClientId ? 'configured in the browser' : 'missing VITE_GOOGLE_CLIENT_ID'}. Local accounts persist in a server file at .local-auth-accounts.json.
                 </div>
               </div>
             </div>

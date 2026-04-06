@@ -54,6 +54,10 @@ import {
   ticketBelongsToTeam,
   updateTicket,
 } from './tickets.js'
+import {
+  authenticateLocalAccountPersisted,
+  registerLocalAccountPersisted,
+} from './local-auth.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -261,6 +265,78 @@ app.get('/api/auth/me', (req, res) => {
   }
 
   res.json({ authenticated: true, user })
+})
+
+app.post('/api/auth/register', async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name : ''
+  const email = typeof req.body?.email === 'string' ? req.body.email : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const registration = await registerLocalAccountPersisted(name, email, password)
+
+  if ('error' in registration) {
+    if (registration.error === 'email_exists') {
+      res.status(409).json({ error: registration.error })
+      return
+    }
+
+    res.status(400).json({ error: registration.error })
+    return
+  }
+
+  try {
+    const appUser = await resolveAuthenticatedUser({
+      subject: `local-${registration.account.email}`,
+      email: registration.account.email,
+      name: registration.account.name,
+    })
+
+    const sessionToken = createSessionToken(appUser)
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
+    res.status(201).json({
+      authenticated: true,
+      user: {
+        subject: `local-${registration.account.email}`,
+        name: appUser.name,
+        email: appUser.email,
+      },
+    })
+  } catch (error) {
+    console.error('Local registration session creation failed.', error)
+    res.status(500).json({ error: 'local_registration_failed' })
+  }
+})
+
+app.post('/api/auth/local/login', async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const login = await authenticateLocalAccountPersisted(email, password)
+
+  if ('error' in login) {
+    res.status(login.error === 'invalid_email' ? 400 : 401).json({ error: login.error })
+    return
+  }
+
+  try {
+    const appUser = await resolveAuthenticatedUser({
+      subject: `local-${login.account.email}`,
+      email: login.account.email,
+      name: login.account.name,
+    })
+
+    const sessionToken = createSessionToken(appUser)
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
+    res.json({
+      authenticated: true,
+      user: {
+        subject: `local-${login.account.email}`,
+        name: appUser.name,
+        email: appUser.email,
+      },
+    })
+  } catch (error) {
+    console.error('Local login session creation failed.', error)
+    res.status(500).json({ error: 'local_login_failed' })
+  }
 })
 
 app.get('/api/tickets', async (req, res) => {
