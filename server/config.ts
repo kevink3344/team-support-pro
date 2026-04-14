@@ -11,10 +11,12 @@ const envSchema = z.object({
   TEST_API_KEY: z.string().optional(),
   TEST_API_USER_NAME: z.string().default('Postman IT Staff'),
   TEST_API_USER_EMAIL: z.string().email().default('postman.it.staff@local.test'),
-  GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required').optional(),
-  VITE_GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_REDIRECT_URI: z.string().url().default('http://localhost:3001/auth/google/callback'),
+  OIDC_CLIENT_ID: z.string().min(1, 'OIDC_CLIENT_ID is required'),
+  OIDC_CLIENT_SECRET: z.string().min(1, 'OIDC_CLIENT_SECRET is required'),
+  OIDC_AUTHORIZATION_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/auth'),
+  OIDC_TOKEN_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/token'),
+  OIDC_USERINFO_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/userinfo'),
+  OIDC_REDIRECT_URI: z.string().url().default('http://localhost:3001/auth/oidc/callback'),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
   DB_SERVER: z.string().optional(),
   DB_PORT: z.coerce.number().int().positive().optional(),
@@ -47,9 +49,12 @@ export const serverConfig = {
   testApiKey: parsed.TEST_API_KEY?.trim() || '',
   testApiUserName: parsed.TEST_API_USER_NAME,
   testApiUserEmail: parsed.TEST_API_USER_EMAIL.toLowerCase(),
-  googleClientId: parsed.GOOGLE_CLIENT_ID || parsed.VITE_GOOGLE_CLIENT_ID || '',
-  googleClientSecret: parsed.GOOGLE_CLIENT_SECRET || '',
-  googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
+  oidcClientId: parsed.OIDC_CLIENT_ID,
+  oidcClientSecret: parsed.OIDC_CLIENT_SECRET,
+  oidcAuthorizationUrl: parsed.OIDC_AUTHORIZATION_URL,
+  oidcTokenUrl: parsed.OIDC_TOKEN_URL,
+  oidcUserinfoUrl: parsed.OIDC_USERINFO_URL,
+  oidcRedirectUri: parsed.OIDC_REDIRECT_URI,
   jwtSecret: parsed.JWT_SECRET,
   db: {
     server: parsed.DB_SERVER || '',
@@ -68,6 +73,3 @@ export const serverConfig = {
   fallbackRole: parsed.AUTH_FALLBACK_ROLE,
 }
 
-if (!serverConfig.googleClientId) {
-  throw new Error('GOOGLE_CLIENT_ID or VITE_GOOGLE_CLIENT_ID must be configured for backend auth.')
-}

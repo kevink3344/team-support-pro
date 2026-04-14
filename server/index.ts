@@ -1,7 +1,6 @@
 import express from 'express'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
-import { OAuth2Client } from 'google-auth-library'
 import multer from 'multer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -73,11 +72,6 @@ const attachmentUpload = multer({
     fileSize: 10 * 1024 * 1024,
   },
 })
-const oauthClient = new OAuth2Client({
-  clientId: serverConfig.googleClientId,
-  clientSecret: serverConfig.googleClientSecret || undefined,
-  redirectUri: serverConfig.googleRedirectUri,
-})
 
 app.use(
   cors({
@@ -143,73 +137,21 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/auth/google/client', async (req, res) => {
-  const credential = typeof req.body?.credential === 'string' ? req.body.credential : ''
-
-  if (!credential) {
-    res.status(400).json({ error: 'missing_credential' })
-    return
-  }
-
-  try {
-    const ticket = await oauthClient.verifyIdToken({
-      idToken: credential,
-      audience: serverConfig.googleClientId,
-    })
-    const payload = ticket.getPayload()
-
-    if (!payload?.sub || !payload.email || !payload.name) {
-      res.status(400).json({ error: 'invalid_google_payload' })
-      return
-    }
-
-    const appUser = await resolveAuthenticatedUser({
-      subject: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
-    })
-
-    const sessionToken = createSessionToken(appUser)
-    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
-    res.json({
-      authenticated: true,
-      user: {
-        subject: payload.sub,
-        name: appUser.name,
-        email: appUser.email,
-        picture: appUser.picture,
-      },
-    })
-  } catch (error) {
-    console.error('Client Google authentication failed.', error)
-    res.status(401).json({ error: 'google_auth_failed' })
-  }
-})
-
-app.get('/auth/google', (_req, res) => {
-  if (!serverConfig.googleClientSecret) {
-    res.status(400).json({ error: 'oauth_redirect_not_configured' })
-    return
-  }
-
+app.get('/auth/oidc', (_req, res) => {
   const state = createOAuthState()
   const params = new URLSearchParams({
-    client_id: serverConfig.googleClientId,
-    redirect_uri: serverConfig.googleRedirectUri,
+    client_id: serverConfig.oidcClientId,
+    redirect_uri: serverConfig.oidcRedirectUri,
     response_type: 'code',
-    scope: 'openid email profile',
-    access_type: 'offline',
-    include_granted_scopes: 'true',
-    prompt: 'select_account',
+    scope: 'openid',
     state,
   })
 
   res.cookie(OAUTH_STATE_COOKIE_NAME, state, buildCookieOptions(10 * 60 * 1000))
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
+  res.redirect(`${serverConfig.oidcAuthorizationUrl}?${params.toString()}`)
 })
 
-app.get('/auth/google/callback', async (req, res) => {
+app.get('/auth/oidc/callback', async (req, res) => {
   const state = typeof req.query.state === 'string' ? req.query.state : ''
   const code = typeof req.query.code === 'string' ? req.query.code : ''
   const storedState = req.cookies[OAUTH_STATE_COOKIE_NAME]
@@ -222,37 +164,70 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 
   try {
-    const { tokens } = await oauthClient.getToken(code)
+    const tokenResponse = await fetch(serverConfig.oidcTokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: serverConfig.oidcRedirectUri,
+        client_id: serverConfig.oidcClientId,
+        client_secret: serverConfig.oidcClientSecret,
+      }),
+    })
 
-    if (!tokens.id_token) {
-      res.redirect(`${serverConfig.clientUrl}?authError=missing_id_token`)
+    if (!tokenResponse.ok) {
+      console.error('OIDC token exchange failed.', await tokenResponse.text())
+      res.redirect(`${serverConfig.clientUrl}?authError=token_exchange_failed`)
       return
     }
 
-    const ticket = await oauthClient.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: serverConfig.googleClientId,
-    })
-    const payload = ticket.getPayload()
+    const tokens = (await tokenResponse.json()) as { access_token?: string }
 
-    if (!payload?.sub || !payload.email || !payload.name) {
-      res.redirect(`${serverConfig.clientUrl}?authError=invalid_google_payload`)
+    if (!tokens.access_token) {
+      res.redirect(`${serverConfig.clientUrl}?authError=missing_access_token`)
+      return
+    }
+
+    const userinfoResponse = await fetch(serverConfig.oidcUserinfoUrl, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    })
+
+    if (!userinfoResponse.ok) {
+      console.error('OIDC userinfo fetch failed.', await userinfoResponse.text())
+      res.redirect(`${serverConfig.clientUrl}?authError=userinfo_failed`)
+      return
+    }
+
+    const userinfo = (await userinfoResponse.json()) as {
+      sub?: string
+      email?: string
+      name?: string
+      given_name?: string
+      family_name?: string
+    }
+
+    const sub = userinfo.sub || ''
+    const email = userinfo.email || ''
+    const name = userinfo.name || [userinfo.given_name, userinfo.family_name].filter(Boolean).join(' ') || email
+
+    if (!sub || !email) {
+      res.redirect(`${serverConfig.clientUrl}?authError=invalid_userinfo`)
       return
     }
 
     const appUser = await resolveAuthenticatedUser({
-      subject: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
+      subject: sub,
+      email,
+      name,
     })
 
     const sessionToken = createSessionToken(appUser)
     res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
     res.redirect(serverConfig.clientUrl)
   } catch (error) {
-    console.error('Google authentication failed.', error)
-    res.redirect(`${serverConfig.clientUrl}?authError=google_auth_failed`)
+    console.error('OIDC authentication failed.', error)
+    res.redirect(`${serverConfig.clientUrl}?authError=oidc_auth_failed`)
   }
 })
 

@@ -1,5 +1,4 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
-import { GoogleLogin, googleLogout } from '@react-oauth/google'
 import {
   AnimatePresence,
   motion,
@@ -56,7 +55,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { apiUrl, appConfig, hasGoogleClientId } from './config'
+import { apiUrl, appConfig } from './config'
 import {
   currentUserId,
   initialCategories,
@@ -323,7 +322,7 @@ const slugify = (value: string) =>
     .replace(/^-+|-+$/g, '')
 
 const createMockSessionUser = (session: AuthSession): User => ({
-  id: `google-${session.subject}`,
+  id: `oidc-${session.subject}`,
   name: session.name,
   email: session.email,
   teamId: 'it',
@@ -1423,55 +1422,12 @@ function App() {
     } catch {
       // Clear local session even if the backend is unavailable.
     }
-    googleLogout()
     setAuthSession(null)
     setAuthError('')
     setLocalAuthError('')
     setLocalAuthNotice('')
     setDetailTicketId(null)
     setActiveView('dashboard')
-  }
-
-  const handleGoogleCredential = async (credential?: string) => {
-    if (!credential) {
-      setAuthError('Google login did not return a credential.')
-      return
-    }
-
-    try {
-      const response = await fetch(apiUrl('/api/auth/google/client'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ credential }),
-      })
-
-      if (!response.ok) {
-        setAuthError('Google login could not create a persistent session.')
-        return
-      }
-
-      const payload = (await response.json()) as {
-        authenticated?: boolean
-        user?: SessionApiUser
-      }
-
-      if (!payload.authenticated || !payload.user) {
-        setAuthError('Google login could not create a persistent session.')
-        return
-      }
-
-      setAuthSession(mapSessionApiUser(payload.user))
-      setAuthError('')
-      setLocalAuthError('')
-      setLocalAuthNotice('')
-      setBackendAvailable(true)
-    } catch {
-      setBackendAvailable(false)
-      setAuthError('Google login failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
-    }
   }
 
   const handleLocalRegistration = async (event: FormEvent<HTMLFormElement>) => {
@@ -2507,7 +2463,7 @@ function App() {
             <div className="mb-1 font-semibold text-[color:var(--text)]">
               Future integrations
             </div>
-            Mock data is active today. The state model is ready to swap to Railway-hosted services, Azure SQL, and Google OAuth later.
+            Mock data is active today. The state model is ready to swap to hosted services and Azure SQL later.
           </div>
           <div className="surface-muted p-3">
             <div className="mb-1 font-semibold text-[color:var(--text)]">
@@ -3296,7 +3252,7 @@ function App() {
                   </h1>
                 </div>
                 <p className="max-w-xl text-sm leading-7 text-white/75">
-                  Use Google Sign-In or register with email and password to access the support workspace. Existing mock staff accounts retain their team and role. New sign-ins are provisioned into a temporary IT staff session for this build.
+                  Sign in with your WCPSS Rapid Identity account or register with email and password to access the support workspace.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
@@ -3322,43 +3278,27 @@ function App() {
                     <LockKeyhole className="h-4 w-4" />
                     Authentication
                   </div>
-                  <h2 className="text-2xl font-semibold">Google Sign-In</h2>
+                  <h2 className="text-2xl font-semibold">Rapid Identity Sign-In</h2>
                   <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
-                    This sign-in uses the Google browser credential flow, verifies it on the backend, and restores your session from a signed cookie after refresh.
+                    Sign in with your WCPSS Rapid Identity account. You will be redirected to authenticate and then returned to this app.
                   </p>
                 </div>
 
-                {hasGoogleClientId ? (
-                  <div className="space-y-4">
-                    {backendAvailable === false && (
-                      <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                        The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
-                      </div>
-                    )}
-                    <div className="surface-muted flex justify-center p-5">
-                      <GoogleLogin
-                        onSuccess={(response) => handleGoogleCredential(response.credential)}
-                        onError={() => setAuthError('Google login was cancelled or failed.')}
-                        theme="outline"
-                        text="signin_with"
-                        shape="rectangular"
-                        size="large"
-                        width="320"
-                      />
+                <div className="space-y-4">
+                  {backendAvailable === false && (
+                    <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
                     </div>
-
-                    <div className="rounded-[2px] border border-[color:var(--border)] bg-black/[0.02] p-4 text-sm text-[color:var(--text-muted)]">
-                      Signed-in users matching an existing mock email keep their seeded team. All other Google users are mapped to temporary IT Support access for testing, and the authenticated session is restored after refresh.
-                    </div>
+                  )}
+                  <div className="surface-muted flex justify-center p-5">
+                    <a
+                      href={apiUrl('/auth/oidc')}
+                      className="primary-button inline-block w-full max-w-xs text-center"
+                    >
+                      Sign in with Rapid Identity
+                    </a>
                   </div>
-                ) : (
-                  <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                    <div className="font-semibold">Google client ID is missing.</div>
-                    <div className="mt-1">
-                      Add <span className="font-mono">VITE_GOOGLE_CLIENT_ID</span> to your local env file and restart the Vite dev server.
-                    </div>
-                  </div>
-                )}
+                </div>
 
                 <div className="relative py-2">
                   <div className="absolute inset-0 flex items-center" aria-hidden>
@@ -3366,7 +3306,7 @@ function App() {
                   </div>
                   <div className="relative flex justify-center">
                     <span className="bg-[color:var(--card-bg)] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
-                      No Google Account?
+                      Or use email
                     </span>
                   </div>
                 </div>
@@ -3462,7 +3402,7 @@ function App() {
                 )}
 
                 <div className="text-xs leading-6 text-[color:var(--text-muted)]">
-                  Google client: {appConfig.googleClientId ? 'configured in the browser' : 'missing VITE_GOOGLE_CLIENT_ID'}. Local accounts persist in a server file at .local-auth-accounts.json.
+                  Local accounts persist in a server file at .local-auth-accounts.json.
                 </div>
               </div>
             </div>
