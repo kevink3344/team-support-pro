@@ -92,14 +92,20 @@ const groupTicketsWithActivity = (
 }
 
 const insertActivityEntries = async (
-  request: sql.Request,
+  transaction: sql.Transaction,
   entries: Array<{ ticketId: string; actor: string; message: string; at: Date }>,
 ) => {
   for (const entry of entries) {
-    await request
-      .batch(`
+    await transaction
+      .request()
+      .input('id', sql.NVarChar(300), `activity-${crypto.randomUUID()}`)
+      .input('ticketId', sql.NVarChar(50), entry.ticketId)
+      .input('actor', sql.NVarChar(120), entry.actor)
+      .input('message', sql.NVarChar(500), entry.message)
+      .input('activityAt', sql.DateTime2, entry.at)
+      .query(`
         INSERT INTO dbo.TicketActivity (Id, TicketId, Actor, Message, ActivityAt)
-        VALUES (N'${`activity-${crypto.randomUUID()}`}', N'${entry.ticketId.replace(/'/g, "''")}', N'${entry.actor.replace(/'/g, "''")}', N'${entry.message.replace(/'/g, "''")}', '${entry.at.toISOString()}');
+        VALUES (@id, @ticketId, @actor, @message, @activityAt);
       `)
   }
 }
@@ -455,7 +461,7 @@ export const updateTicket = async (
       `)
 
     if (changeMessages.length > 0) {
-      await insertActivityEntries(transaction.request(), changeMessages)
+      await insertActivityEntries(transaction, changeMessages)
     }
 
     await transaction.commit()
@@ -548,7 +554,7 @@ export const createTicket = async (
         )
       `)
 
-    await insertActivityEntries(transaction.request(), [
+    await insertActivityEntries(transaction, [
       {
         ticketId,
         actor,
