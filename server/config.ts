@@ -11,13 +11,13 @@ const envSchema = z.object({
   TEST_API_KEY: z.string().optional(),
   TEST_API_USER_NAME: z.string().default('Postman IT Staff'),
   TEST_API_USER_EMAIL: z.string().email().default('postman.it.staff@local.test'),
-  OIDC_CLIENT_ID: z.string().min(1, 'OIDC_CLIENT_ID is required'),
-  OIDC_CLIENT_SECRET: z.string().min(1, 'OIDC_CLIENT_SECRET is required'),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
   OIDC_AUTHORIZATION_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/auth'),
   OIDC_TOKEN_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/token'),
   OIDC_USERINFO_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/userinfo'),
   OIDC_REDIRECT_URI: z.string().url().default('http://localhost:3001/auth/oidc/callback'),
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  JWT_SECRET: z.string().min(16).optional(),
   DB_SERVER: z.string().optional(),
   DB_PORT: z.coerce.number().int().positive().optional(),
   PORT: z.coerce.number().int().positive().optional(),
@@ -43,6 +43,14 @@ const allowedOrigins = (parsed.ALLOWED_ORIGINS || parsed.CLIENT_URL)
   .map((origin) => origin.trim())
   .filter(Boolean)
 
+// Generate a default JWT secret for development if not provided
+const defaultJwtSecret = () => {
+  if (parsed.NODE_ENV === 'production') {
+    console.warn('WARNING: JWT_SECRET not set in production. Using insecure fallback for development only.')
+  }
+  return 'dev-insecure-jwt-key-change-in-production'
+}
+
 export const serverConfig = {
   nodeEnv: parsed.NODE_ENV,
   isProduction: parsed.NODE_ENV === 'production',
@@ -53,13 +61,14 @@ export const serverConfig = {
   testApiKey: parsed.TEST_API_KEY?.trim() || '',
   testApiUserName: parsed.TEST_API_USER_NAME,
   testApiUserEmail: parsed.TEST_API_USER_EMAIL.toLowerCase(),
-  oidcClientId: parsed.OIDC_CLIENT_ID,
-  oidcClientSecret: parsed.OIDC_CLIENT_SECRET,
+  oidcEnabled: !!(parsed.OIDC_CLIENT_ID && parsed.OIDC_CLIENT_SECRET),
+  oidcClientId: parsed.OIDC_CLIENT_ID || '',
+  oidcClientSecret: parsed.OIDC_CLIENT_SECRET || '',
   oidcAuthorizationUrl: parsed.OIDC_AUTHORIZATION_URL,
   oidcTokenUrl: parsed.OIDC_TOKEN_URL,
   oidcUserinfoUrl: parsed.OIDC_USERINFO_URL,
   oidcRedirectUri: parsed.OIDC_REDIRECT_URI,
-  jwtSecret: parsed.JWT_SECRET,
+  jwtSecret: parsed.JWT_SECRET || defaultJwtSecret(),
   db: {
     server: parsed.DB_SERVER || '',
     port: parsed.DB_PORT || 1433,

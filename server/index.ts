@@ -192,6 +192,11 @@ app.patch('/api/settings/auth', (req, res) => {
 })
 
 app.get('/auth/oidc', (_req, res) => {
+  if (!serverConfig.oidcEnabled) {
+    res.status(503).json({ error: 'OIDC authentication is not configured' })
+    return
+  }
+
   const state = createOAuthState()
   const params = new URLSearchParams({
     client_id: serverConfig.oidcClientId,
@@ -206,6 +211,11 @@ app.get('/auth/oidc', (_req, res) => {
 })
 
 app.get('/auth/oidc/callback', async (req, res) => {
+  if (!serverConfig.oidcEnabled) {
+    res.status(503).json({ error: 'OIDC authentication is not configured' })
+    return
+  }
+
   const state = typeof req.query.state === 'string' ? req.query.state : ''
   const code = typeof req.query.code === 'string' ? req.query.code : ''
   const storedState = req.cookies[OAUTH_STATE_COOKIE_NAME]
