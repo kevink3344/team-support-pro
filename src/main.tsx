@@ -6,7 +6,6 @@ import '@fontsource/work-sans/600.css'
 import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/600.css'
 import './index.css'
-import App from './App.tsx'
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false }
@@ -45,10 +44,65 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: bo
   }
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-  </StrictMode>,
-)
+const rootElement = document.getElementById('root')
+
+if (!rootElement) {
+  throw new Error('Missing root element for TeamSupportPro bootstrap.')
+}
+
+const root = createRoot(rootElement)
+
+const renderBootError = (error: unknown) => {
+  const errorMessage = error instanceof Error ? error.message : String(error)
+
+  root.render(
+    <div style={{
+      minHeight: '100vh',
+      display: 'grid',
+      placeItems: 'center',
+      padding: '24px',
+      fontFamily: 'Work Sans, sans-serif',
+      background: '#0d1d2a',
+      color: '#f3f8fb',
+    }}>
+      <div style={{ maxWidth: '760px', textAlign: 'center' }}>
+        <h1 style={{ marginBottom: '12px', fontSize: '28px' }}>TeamSupportPro failed to start</h1>
+        <p style={{ opacity: 0.9, lineHeight: 1.5 }}>
+          A module or bundle failed to load. This usually means stale or missing deploy assets.
+        </p>
+        <pre style={{
+          marginTop: '16px',
+          overflowX: 'auto',
+          whiteSpace: 'pre-wrap',
+          border: '1px solid rgba(255,255,255,0.2)',
+          background: 'rgba(0,0,0,0.25)',
+          padding: '12px',
+          textAlign: 'left',
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '12px',
+          color: '#ffb8b8',
+        }}>
+          {errorMessage}
+        </pre>
+      </div>
+    </div>,
+  )
+}
+
+const bootstrap = async () => {
+  try {
+    const { default: App } = await import('./App.tsx')
+    root.render(
+      <StrictMode>
+        <AppErrorBoundary>
+          <App />
+        </AppErrorBoundary>
+      </StrictMode>,
+    )
+  } catch (error) {
+    console.error('Frontend boot error:', error)
+    renderBootError(error)
+  }
+}
+
+void bootstrap()

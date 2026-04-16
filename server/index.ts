@@ -1208,7 +1208,7 @@ if (hasClientBuild) {
     })
   }
 
-  app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$)).*/, (_req, res) => {
+  app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$))(?!\/assets(?:\/|$))(?!.*\.[a-z0-9]+$).*/i, (_req, res) => {
     res.sendFile(clientIndexPath)
   })
 }
