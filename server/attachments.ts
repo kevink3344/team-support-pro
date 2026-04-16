@@ -1,8 +1,6 @@
 import crypto from 'node:crypto'
 
-import sql from 'mssql'
-
-import { getPool, hasDatabaseConfig } from './db.js'
+import { getDb } from './db.js'
 
 export interface TicketAttachmentRecord {
   id: string
@@ -45,156 +43,54 @@ const mapAttachmentBlobRecord = (record: Record<string, unknown>): TicketAttachm
   fileContent: Buffer.from(record.fileContent as Buffer),
 })
 
-const createTicketActivity = async (
-  request: sql.Request,
-  ticketId: string,
-  actor: string,
-  message: string,
-  activityAt: Date,
-) => {
-  await request
-    .input('activityId', sql.NVarChar(120), `attachment-${crypto.randomUUID()}`)
-    .input('activityTicketId', sql.NVarChar(50), ticketId)
-    .input('activityActor', sql.NVarChar(120), actor)
-    .input('activityMessage', sql.NVarChar(500), message)
-    .input('activityAt', sql.DateTime2, activityAt)
-    .query(`
-      INSERT INTO dbo.TicketActivity (Id, TicketId, Actor, Message, ActivityAt)
-      VALUES (@activityId, @activityTicketId, @activityActor, @activityMessage, @activityAt)
-    `)
-}
-
 export const listTicketAttachments = async (ticketId: string): Promise<TicketAttachmentRecord[]> => {
-  if (!hasDatabaseConfig()) {
-    return []
-  }
-
-  const pool = await getPool()
-  const result = await pool.request().input('ticketId', sql.NVarChar(50), ticketId).query<Record<string, unknown>>(`
-    SELECT
-      Id AS id,
-      TicketId AS ticketId,
-      FileName AS fileName,
-      ContentType AS contentType,
-      FileSizeBytes AS fileSizeBytes,
-      UploadedByUserId AS uploadedByUserId,
-      UploadedByName AS uploadedByName,
-      UploadedAt AS uploadedAt
-    FROM dbo.TicketAttachments
-    WHERE TicketId = @ticketId AND IsDeleted = 0
-    ORDER BY UploadedAt DESC
-  `)
-
-  return result.recordset.map(mapAttachmentRecord)
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT Id AS id, TicketId AS ticketId, FileName AS fileName, ContentType AS contentType,
+      FileSizeBytes AS fileSizeBytes, UploadedByUserId AS uploadedByUserId,
+      UploadedByName AS uploadedByName, UploadedAt AS uploadedAt
+    FROM TicketAttachments WHERE TicketId = ? AND IsDeleted = 0 ORDER BY UploadedAt DESC
+  `).all(ticketId) as Record<string, unknown>[]
+  return rows.map(mapAttachmentRecord)
 }
 
 export const getTicketAttachmentById = async (
   ticketId: string,
   attachmentId: string,
 ): Promise<TicketAttachmentBlobRecord | null> => {
-  if (!hasDatabaseConfig()) {
-    return null
-  }
-
-  const pool = await getPool()
-  const result = await pool
-    .request()
-    .input('ticketId', sql.NVarChar(50), ticketId)
-    .input('attachmentId', sql.NVarChar(100), attachmentId)
-    .query<Record<string, unknown>>(`
-      SELECT
-        Id AS id,
-        TicketId AS ticketId,
-        FileName AS fileName,
-        ContentType AS contentType,
-        FileSizeBytes AS fileSizeBytes,
-        FileContent AS fileContent,
-        UploadedByUserId AS uploadedByUserId,
-        UploadedByName AS uploadedByName,
-        UploadedAt AS uploadedAt
-      FROM dbo.TicketAttachments
-      WHERE TicketId = @ticketId AND Id = @attachmentId AND IsDeleted = 0
-    `)
-
-  return result.recordset[0] ? mapAttachmentBlobRecord(result.recordset[0]) : null
+  const db = getDb()
+  const row = db.prepare(`
+    SELECT Id AS id, TicketId AS ticketId, FileName AS fileName, ContentType AS contentType,
+      FileSizeBytes AS fileSizeBytes, FileContent AS fileContent,
+      UploadedByUserId AS uploadedByUserId, UploadedByName AS uploadedByName, UploadedAt AS uploadedAt
+    FROM TicketAttachments WHERE TicketId = ? AND Id = ? AND IsDeleted = 0
+  `).get(ticketId, attachmentId) as Record<string, unknown> | undefined
+  return row ? mapAttachmentBlobRecord(row) : null
 }
 
-export const createTicketAttachment = async (
-  input: CreateAttachmentInput,
-): Promise<TicketAttachmentRecord | null> => {
-  if (!hasDatabaseConfig() || !input.fileContent.length || !input.fileName.trim()) {
-    return null
-  }
-
-  const pool = await getPool()
-  const transaction = new sql.Transaction(pool)
+export const createTicketAttachment = async (input: CreateAttachmentInput): Promise<TicketAttachmentRecord | null> => {
+  if (!input.fileContent.length || !input.fileName.trim()) return null
+  const db = getDb()
   const attachmentId = `att-${crypto.randomUUID()}`
-  const uploadedAt = new Date()
+  const uploadedAt = new Date().toISOString()
 
-  await transaction.begin()
+  const tx = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO TicketAttachments (Id, TicketId, FileName, ContentType, FileSizeBytes, FileContent, UploadedByUserId, UploadedByName, UploadedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(attachmentId, input.ticketId, input.fileName.trim(), input.contentType || 'application/octet-stream', input.fileSizeBytes, input.fileContent, input.uploadedByUserId, input.uploadedByName, uploadedAt)
 
-  try {
-    await transaction
-      .request()
-      .input('id', sql.NVarChar(100), attachmentId)
-      .input('ticketId', sql.NVarChar(50), input.ticketId)
-      .input('fileName', sql.NVarChar(255), input.fileName.trim())
-      .input('contentType', sql.NVarChar(150), input.contentType || 'application/octet-stream')
-      .input('fileSizeBytes', sql.BigInt, input.fileSizeBytes)
-      .input('fileContent', sql.VarBinary(sql.MAX), input.fileContent)
-      .input('uploadedByUserId', sql.NVarChar(100), input.uploadedByUserId)
-      .input('uploadedByName', sql.NVarChar(120), input.uploadedByName)
-      .input('uploadedAt', sql.DateTime2, uploadedAt)
-      .query(`
-        INSERT INTO dbo.TicketAttachments (
-          Id,
-          TicketId,
-          FileName,
-          ContentType,
-          FileSizeBytes,
-          FileContent,
-          UploadedByUserId,
-          UploadedByName,
-          UploadedAt
-        )
-        VALUES (
-          @id,
-          @ticketId,
-          @fileName,
-          @contentType,
-          @fileSizeBytes,
-          @fileContent,
-          @uploadedByUserId,
-          @uploadedByName,
-          @uploadedAt
-        )
-      `)
+    db.prepare('UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?').run(uploadedAt, input.ticketId)
 
-    await transaction
-      .request()
-      .input('ticketId', sql.NVarChar(50), input.ticketId)
-      .input('updatedAt', sql.DateTime2, uploadedAt)
-      .query('UPDATE dbo.Tickets SET UpdatedAt = @updatedAt WHERE Id = @ticketId')
-
-    await createTicketActivity(
-      transaction.request(),
-      input.ticketId,
-      input.uploadedByName,
-      `Uploaded attachment: ${input.fileName.trim()}.`,
-      uploadedAt,
+    db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(
+      `attachment-${crypto.randomUUID()}`, input.ticketId, input.uploadedByName,
+      `Uploaded attachment: ${input.fileName.trim()}.`, uploadedAt,
     )
-
-    await transaction.commit()
-  } catch (error) {
-    await transaction.rollback()
-    throw error
-  }
+  })
+  tx()
 
   const created = await getTicketAttachmentById(input.ticketId, attachmentId)
-  if (!created) {
-    return null
-  }
-
+  if (!created) return null
   const { fileContent: _fileContent, ...metadata } = created
   return metadata
 }
@@ -205,57 +101,23 @@ export const deleteTicketAttachment = async (
   deletedByUserId: string,
   deletedByName: string,
 ): Promise<boolean> => {
-  if (!hasDatabaseConfig()) {
-    return false
-  }
-
   const existing = await getTicketAttachmentById(ticketId, attachmentId)
-  if (!existing) {
-    return false
-  }
+  if (!existing) return false
 
-  const pool = await getPool()
-  const transaction = new sql.Transaction(pool)
-  const deletedAt = new Date()
+  const db = getDb()
+  const deletedAt = new Date().toISOString()
 
-  await transaction.begin()
+  const tx = db.transaction(() => {
+    const result = db.prepare('UPDATE TicketAttachments SET IsDeleted = 1, DeletedAt = ?, DeletedByUserId = ? WHERE TicketId = ? AND Id = ? AND IsDeleted = 0').run(deletedAt, deletedByUserId, ticketId, attachmentId)
+    if (result.changes === 0) return false
 
-  try {
-    const result = await transaction
-      .request()
-      .input('ticketId', sql.NVarChar(50), ticketId)
-      .input('attachmentId', sql.NVarChar(100), attachmentId)
-      .input('deletedAt', sql.DateTime2, deletedAt)
-      .input('deletedByUserId', sql.NVarChar(100), deletedByUserId)
-      .query(`
-        UPDATE dbo.TicketAttachments
-        SET IsDeleted = 1, DeletedAt = @deletedAt, DeletedByUserId = @deletedByUserId
-        WHERE TicketId = @ticketId AND Id = @attachmentId AND IsDeleted = 0
-      `)
-
-    if (result.rowsAffected[0] === 0) {
-      await transaction.rollback()
-      return false
-    }
-
-    await transaction
-      .request()
-      .input('ticketId', sql.NVarChar(50), ticketId)
-      .input('updatedAt', sql.DateTime2, deletedAt)
-      .query('UPDATE dbo.Tickets SET UpdatedAt = @updatedAt WHERE Id = @ticketId')
-
-    await createTicketActivity(
-      transaction.request(),
-      ticketId,
-      deletedByName,
-      `Removed attachment: ${existing.fileName}.`,
-      deletedAt,
+    db.prepare('UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?').run(deletedAt, ticketId)
+    db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(
+      `attachment-${crypto.randomUUID()}`, ticketId, deletedByName,
+      `Removed attachment: ${existing.fileName}.`, deletedAt,
     )
-
-    await transaction.commit()
     return true
-  } catch (error) {
-    await transaction.rollback()
-    throw error
-  }
+  })
+
+  return tx() as boolean
 }

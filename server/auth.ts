@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 
 import jwt from 'jsonwebtoken'
+import type { SignOptions } from 'jsonwebtoken'
 
 import { serverConfig } from './config.js'
 
@@ -29,9 +30,12 @@ export const buildCookieOptions = (maxAge: number) => ({
 
 export const createOAuthState = () => crypto.randomBytes(24).toString('hex')
 
-export const createSessionToken = (user: SessionUser) =>
+export const createSessionToken = (
+  user: SessionUser,
+  expiresIn: SignOptions['expiresIn'] = '7d',
+) =>
   jwt.sign(user, serverConfig.jwtSecret, {
-    expiresIn: '7d',
+    expiresIn,
     issuer: 'teamsupportpro',
     audience: 'teamsupportpro-web',
   })

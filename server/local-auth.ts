@@ -189,3 +189,44 @@ export const authenticateLocalAccountPersisted = async (
 
   return authenticateLocalAccount(email, password)
 }
+
+export const upsertLocalAccountPersisted = async (
+  name: string,
+  email: string,
+  password: string,
+): Promise<
+  | { account: LocalAuthAccount }
+  | { error: 'invalid_name' | 'invalid_email' | 'invalid_password' }
+> => {
+  await loadLocalAccounts()
+
+  const normalizedName = normalizeName(name)
+  const normalizedEmail = normalizeEmail(email)
+
+  if (normalizedName.length < 2) {
+    return { error: 'invalid_name' }
+  }
+
+  if (!emailPattern.test(normalizedEmail)) {
+    return { error: 'invalid_email' }
+  }
+
+  if (password.length < 8) {
+    return { error: 'invalid_password' }
+  }
+
+  const existing = localAccountsByEmail.get(normalizedEmail)
+  const passwordSalt = crypto.randomBytes(16).toString('hex')
+  const account: LocalAuthAccount = {
+    name: normalizedName,
+    email: normalizedEmail,
+    passwordSalt,
+    passwordHash: hashPassword(password, passwordSalt),
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  }
+
+  localAccountsByEmail.set(normalizedEmail, account)
+  await queueLocalAccountsPersist()
+
+  return { account }
+}

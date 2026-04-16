@@ -1,4 +1,4 @@
-import { getPool, hasDatabaseConfig } from './db.js'
+import { getDb } from './db.js'
 
 export interface DashboardSummaryRecord {
   stats: {
@@ -21,47 +21,27 @@ export interface DashboardSummaryRecord {
 const statusOrder = ['Open', 'In Progress', 'Pending', 'Resolved', 'Closed']
 
 export const getDashboardSummary = async (): Promise<DashboardSummaryRecord> => {
-  if (!hasDatabaseConfig()) {
-    return {
-      stats: {
-        total: 0,
-        open: 0,
-        inProgress: 0,
-        pending: 0,
-        critical: 0,
-      },
-      statusCounts: statusOrder.map((status) => ({ status, count: 0 })),
-      teamWorkload: [],
-    }
-  }
+  const db = getDb()
 
-  const pool = await getPool()
-  const [statsResult, statusResult, workloadResult] = await Promise.all([
-    pool.request().query<Record<string, unknown>>(`
-      SELECT
-        COUNT(*) AS total,
-        SUM(CASE WHEN Status = 'Open' THEN 1 ELSE 0 END) AS open,
-        SUM(CASE WHEN Status = 'In Progress' THEN 1 ELSE 0 END) AS inProgress,
-        SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending,
-        SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
-      FROM dbo.Tickets
-    `),
-    pool.request().query<Record<string, unknown>>(`
-      SELECT Status AS status, COUNT(*) AS count
-      FROM dbo.Tickets
-      GROUP BY Status
-    `),
-    pool.request().query<Record<string, unknown>>(`
-      SELECT TeamId AS teamId, COUNT(*) AS count
-      FROM dbo.Tickets
-      GROUP BY TeamId
-    `),
-  ])
+  const statsRow = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN Status = 'Open' THEN 1 ELSE 0 END) AS open,
+      SUM(CASE WHEN Status = 'In Progress' THEN 1 ELSE 0 END) AS inProgress,
+      SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
+    FROM Tickets
+  `).get() as Record<string, unknown>
 
-  const statsRow = statsResult.recordset[0] ?? {}
-  const statusMap = new Map(
-    statusResult.recordset.map((row) => [String(row.status), Number(row.count ?? 0)]),
-  )
+  const statusRows = db.prepare(`
+    SELECT Status AS status, COUNT(*) AS count FROM Tickets GROUP BY Status
+  `).all() as Array<{ status: string; count: number }>
+
+  const workloadRows = db.prepare(`
+    SELECT TeamId AS teamId, COUNT(*) AS count FROM Tickets GROUP BY TeamId
+  `).all() as Array<{ teamId: string; count: number }>
+
+  const statusMap = new Map(statusRows.map((row) => [row.status, row.count]))
 
   return {
     stats: {
@@ -75,9 +55,9 @@ export const getDashboardSummary = async (): Promise<DashboardSummaryRecord> => 
       status,
       count: statusMap.get(status) ?? 0,
     })),
-    teamWorkload: workloadResult.recordset.map((row) => ({
-      teamId: String(row.teamId),
-      count: Number(row.count ?? 0),
+    teamWorkload: workloadRows.map((row) => ({
+      teamId: row.teamId,
+      count: row.count,
     })),
   }
 }

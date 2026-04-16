@@ -24,6 +24,10 @@ const envSchema = z.object({
   DB_DATABASE: z.string().optional(),
   DB_USER: z.string().optional(),
   DB_PASSWORD: z.string().optional(),
+  DB_SQLITE_PATH: z.string().optional(),
+  LOCAL_ADMIN_NAME: z.string().optional(),
+  LOCAL_ADMIN_EMAIL: z.string().email().optional(),
+  LOCAL_ADMIN_PASSWORD: z.string().min(8).optional(),
   AUTH_USER_LOOKUP_QUERY: z.string().optional(),
   AUTH_FALLBACK_TEAM_ID: z.string().default('it'),
   AUTH_FALLBACK_TEAM_NAME: z.string().default('IT Support'),
@@ -62,6 +66,12 @@ export const serverConfig = {
     database: parsed.DB_DATABASE || '',
     user: parsed.DB_USER || '',
     password: parsed.DB_PASSWORD || '',
+    sqlitePath: parsed.DB_SQLITE_PATH || '',
+  },
+  localAdmin: {
+    name: parsed.LOCAL_ADMIN_NAME?.trim() || 'Administrator',
+    email: parsed.LOCAL_ADMIN_EMAIL?.trim().toLowerCase() || '',
+    password: parsed.LOCAL_ADMIN_PASSWORD || '',
   },
   authUserLookupQuery: parsed.AUTH_USER_LOOKUP_QUERY || '',
   fallbackTeam: {

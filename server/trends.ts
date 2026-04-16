@@ -1,45 +1,24 @@
-import { getPool, hasDatabaseConfig } from './db.js'
+import { getDb } from './db.js'
 
-export interface TrendPointRecord {
+export interface TrendRecord {
   date: string
   values: Record<string, number>
 }
 
-const formatTrendDate = (value: Date) =>
-  new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(value)
-
-export const listTeamTicketTrends = async (): Promise<TrendPointRecord[]> => {
-  if (!hasDatabaseConfig()) {
-    return []
-  }
-
-  const pool = await getPool()
-  const result = await pool.request().query<Record<string, unknown>>(`
-    SELECT TrendDate AS trendDate, TeamId AS teamId, TicketCount AS ticketCount
-    FROM dbo.TeamTicketTrends
+export const listTeamTicketTrends = async (): Promise<TrendRecord[]> => {
+  const db = getDb()
+  const rows = db.prepare(`
+    SELECT TrendDate AS date, TeamId AS teamId, TicketCount AS count
+    FROM TeamTicketTrends
     ORDER BY TrendDate ASC, TeamId ASC
-  `)
+  `).all() as Array<{ date: string; teamId: string; count: number }>
 
-  const points = new Map<string, TrendPointRecord>()
-
-  for (const record of result.recordset) {
-    const rawTrendDate = record.trendDate
-    const rawTeamId = record.teamId
-    const rawTicketCount = record.ticketCount
-
-    if (!(rawTrendDate instanceof Date) || typeof rawTeamId !== 'string') {
-      continue
-    }
-
-    const dateKey = formatTrendDate(rawTrendDate)
-    const existing = points.get(dateKey) ?? { date: dateKey, values: {} }
-    existing.values[rawTeamId] = Number(rawTicketCount ?? 0)
-    points.set(dateKey, existing)
+  const trendMap = new Map<string, Record<string, number>>()
+  for (const row of rows) {
+    const existing = trendMap.get(row.date) ?? {}
+    existing[row.teamId] = row.count
+    trendMap.set(row.date, existing)
   }
 
-  return Array.from(points.values())
+  return Array.from(trendMap.entries()).map(([date, values]) => ({ date, values }))
 }

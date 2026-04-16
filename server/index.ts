@@ -56,7 +56,9 @@ import {
 import {
   authenticateLocalAccountPersisted,
   registerLocalAccountPersisted,
+  upsertLocalAccountPersisted,
 } from './local-auth.js'
+import { getDb } from './db.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -133,8 +135,60 @@ const readSessionUserFromRequest = (req: express.Request): SessionUser | null =>
 
 const isAdminUser = (user: SessionUser | null) => user?.role === 'Admin'
 
+const readRapidIdentityEnabled = () => {
+  const db = getDb()
+  const row = db
+    .prepare("SELECT Value AS value FROM AppSettings WHERE Key = 'rapidIdentityEnabled' LIMIT 1")
+    .get() as { value?: string } | undefined
+
+  if (!row?.value) {
+    return true
+  }
+
+  return row.value === 'true'
+}
+
+const writeRapidIdentityEnabled = (isEnabled: boolean) => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
+  ).run(isEnabled ? 'true' : 'false')
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
+})
+
+app.get('/api/public/auth-settings', (_req, res) => {
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
+
+app.get('/api/settings/auth', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
+
+app.patch('/api/settings/auth', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  if (typeof req.body?.rapidIdentityEnabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_auth_settings_payload' })
+    return
+  }
+
+  writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
 })
 
 app.get('/auth/oidc', (_req, res) => {
@@ -246,6 +300,7 @@ app.post('/api/auth/register', async (req, res) => {
   const name = typeof req.body?.name === 'string' ? req.body.name : ''
   const email = typeof req.body?.email === 'string' ? req.body.email : ''
   const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const rememberMe = req.body?.rememberMe === true
   const registration = await registerLocalAccountPersisted(name, email, password)
 
   if ('error' in registration) {
@@ -265,14 +320,18 @@ app.post('/api/auth/register', async (req, res) => {
       name: registration.account.name,
     })
 
-    const sessionToken = createSessionToken(appUser)
-    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
+    const sessionMaxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    const sessionToken = createSessionToken(appUser, rememberMe ? '30d' : '7d')
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(sessionMaxAgeMs))
     res.status(201).json({
       authenticated: true,
       user: {
+        id: appUser.id,
         subject: `local-${registration.account.email}`,
         name: appUser.name,
         email: appUser.email,
+        role: appUser.role,
+        teamId: appUser.teamId,
       },
     })
   } catch (error) {
@@ -284,6 +343,7 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/local/login', async (req, res) => {
   const email = typeof req.body?.email === 'string' ? req.body.email : ''
   const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const rememberMe = req.body?.rememberMe === true
   const login = await authenticateLocalAccountPersisted(email, password)
 
   if ('error' in login) {
@@ -298,14 +358,18 @@ app.post('/api/auth/local/login', async (req, res) => {
       name: login.account.name,
     })
 
-    const sessionToken = createSessionToken(appUser)
-    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
+    const sessionMaxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    const sessionToken = createSessionToken(appUser, rememberMe ? '30d' : '7d')
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(sessionMaxAgeMs))
     res.json({
       authenticated: true,
       user: {
+        id: appUser.id,
         subject: `local-${login.account.email}`,
         name: appUser.name,
         email: appUser.email,
+        role: appUser.role,
+        teamId: appUser.teamId,
       },
     })
   } catch (error) {
@@ -1094,6 +1158,43 @@ app.post('/api/auth/logout', (_req, res) => {
   res.status(204).end()
 })
 
+const ensureBootstrapAdmin = async () => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', 'true', datetime('now')) ON CONFLICT(Key) DO NOTHING",
+  ).run()
+
+  const adminEmail = serverConfig.localAdmin.email
+  const adminPassword = serverConfig.localAdmin.password
+  const adminName = serverConfig.localAdmin.name
+
+  if (!adminEmail || !adminPassword) {
+    return
+  }
+
+  const accountResult = await upsertLocalAccountPersisted(adminName, adminEmail, adminPassword)
+  if ('error' in accountResult) {
+    console.error('LOCAL_ADMIN_* bootstrap failed for local auth account.', accountResult.error)
+    return
+  }
+
+  const teamId = serverConfig.fallbackTeam.id || 'it'
+  const existingUser = db
+    .prepare('SELECT Id AS id FROM Users WHERE LOWER(Email) = LOWER(?) LIMIT 1')
+    .get(adminEmail) as { id: string } | undefined
+
+  if (existingUser?.id) {
+    db.prepare(
+      "UPDATE Users SET Name = ?, DisplayName = ?, TeamId = ?, Role = 'Admin', UpdatedAt = datetime('now') WHERE Id = ?",
+    ).run(adminName, adminName, teamId, existingUser.id)
+    return
+  }
+
+  db.prepare(
+    "INSERT INTO Users (Id, Name, DisplayName, Email, TeamId, Role, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, 'Admin', datetime('now'), datetime('now'))",
+  ).run('u-local-admin', adminName, adminName, adminEmail, teamId)
+}
+
 if (hasClientBuild) {
   app.use(express.static(clientDistPath))
 
@@ -1112,9 +1213,19 @@ if (hasClientBuild) {
   })
 }
 
-app.listen(serverConfig.serverPort, () => {
-  console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)
-})
+const startServer = async () => {
+  try {
+    await ensureBootstrapAdmin()
+  } catch (error) {
+    console.error('Bootstrap admin setup failed.', error)
+  }
+
+  app.listen(serverConfig.serverPort, () => {
+    console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)
+  })
+}
+
+void startServer()
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (error instanceof multer.MulterError) {
