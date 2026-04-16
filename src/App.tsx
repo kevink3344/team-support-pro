@@ -367,6 +367,15 @@ const readStoredValue = <T,>(key: string, fallback: T): T => {
   }
 }
 
+const isThemeConfig = (value: unknown): value is ThemeConfig => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<Record<ThemeMode, Partial<ThemeConfig[ThemeMode]>>>
+  return Boolean(candidate.light?.accent && candidate.dark?.accent)
+}
+
 const formatDateTime = (value: string) => dateFormatter.format(new Date(value))
 
 const formatFileSize = (bytes: number) => {
@@ -602,9 +611,10 @@ function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     readStoredValue(STORAGE_KEYS.mode, 'light'),
   )
-  const [themeConfig, setThemeConfig] = useState<ThemeConfig>(() =>
-    readStoredValue(STORAGE_KEYS.theme, defaultThemeConfig),
-  )
+  const [themeConfig, setThemeConfig] = useState<ThemeConfig>(() => {
+    const stored = readStoredValue<unknown>(STORAGE_KEYS.theme, defaultThemeConfig)
+    return isThemeConfig(stored) ? stored : defaultThemeConfig
+  })
   const [searchText, setSearchText] = useState('')
   const [detailTicketId, setDetailTicketId] = useState<string | null>(null)
   const [detailWidth, setDetailWidth] = useState(50)
@@ -707,19 +717,22 @@ function App() {
 
   const deferredSearch = useDeferredValue(searchText)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const availableTeams = teams.length > 0 ? teams : initialTeams
+  const availableCategories = categories.length > 0 ? categories : initialCategories
+  const availableUsers = users.length > 0 ? users : initialUsers
   const currentUser = authSession
-    ? users.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
+    ? availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
       createMockSessionUser(authSession)
-    : users.find((user) => user.id === currentUserId) ?? users[0]
+    : availableUsers.find((user) => user.id === currentUserId) ?? availableUsers[0]
   const visibleNavItems =
     currentUser.role === 'Admin' ? [...navItems, adminNavItem] : navItems
-  const currentTeam = teams.find((team) => team.id === currentUser.teamId) ?? teams[0]
-  const currentTeamCategories = categories.filter(
+  const currentTeam = availableTeams.find((team) => team.id === currentUser.teamId) ?? availableTeams[0]
+  const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
   )
-  const currentTeamMembers = users.some((user) => user.id === currentUser.id)
-    ? users.filter((user) => user.teamId === currentUser.teamId)
-    : [...users.filter((user) => user.teamId === currentUser.teamId), currentUser]
+  const currentTeamMembers = availableUsers.some((user) => user.id === currentUser.id)
+    ? availableUsers.filter((user) => user.teamId === currentUser.teamId)
+    : [...availableUsers.filter((user) => user.teamId === currentUser.teamId), currentUser]
   const notificationSourceTickets = useMemo(
     () =>
       tickets.filter(
@@ -727,7 +740,9 @@ function App() {
       ),
     [tickets, currentUser.teamId, currentUser.id],
   )
-  const activePalette = themeConfig[themeMode]
+  const activePalette = isThemeConfig(themeConfig)
+    ? themeConfig[themeMode]
+    : defaultThemeConfig[themeMode]
   const seededNotificationItems = useMemo(
     () =>
       buildSeedNotificationItems(
