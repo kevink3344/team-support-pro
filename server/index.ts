@@ -1196,19 +1196,30 @@ const ensureBootstrapAdmin = async () => {
 }
 
 if (hasClientBuild) {
-  app.use(express.static(clientDistPath))
+  app.use(express.static(clientDistPath, {
+    maxAge: '1y',
+    immutable: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
+      }
+    },
+  }))
 
   if (hasAnonBuild) {
     app.get('/anon', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
       res.sendFile(anonIndexPath)
     })
 
     app.get('/anon/', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
       res.sendFile(anonIndexPath)
     })
   }
 
   app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$))(?!\/assets(?:\/|$))(?!.*\.[a-z0-9]+$).*/i, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
     res.sendFile(clientIndexPath)
   })
 }
