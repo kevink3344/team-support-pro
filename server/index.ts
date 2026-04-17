@@ -55,6 +55,7 @@ import {
 } from './tickets.js'
 import {
   authenticateLocalAccountPersisted,
+  changeLocalAccountPasswordPersisted,
   registerLocalAccountPersisted,
   upsertLocalAccountPersisted,
 } from './local-auth.js'
@@ -781,6 +782,43 @@ app.delete('/api/users/:userId', async (req, res) => {
   } catch (error) {
     console.error('Deleting user failed.', error)
     res.status(500).json({ error: 'user_delete_failed' })
+  }
+})
+
+app.post('/api/users/:userId/change-password', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : ''
+  if (newPassword.length < 8) {
+    res.status(400).json({ error: 'invalid_password', message: 'Password must be at least 8 characters.' })
+    return
+  }
+
+  try {
+    const targetUser = await getUserById(req.params.userId)
+    if (!targetUser) {
+      res.status(404).json({ error: 'user_not_found' })
+      return
+    }
+
+    const result = await changeLocalAccountPasswordPersisted(targetUser.email, newPassword)
+    if ('error' in result) {
+      // user_not_found in local-auth means they have no local account yet — that is fine;
+      // the admin may be pre-setting a password before the user first logs in.
+      if (result.error !== 'user_not_found') {
+        res.status(400).json({ error: result.error })
+        return
+      }
+    }
+
+    res.json({ ok: true })
+  } catch (error) {
+    console.error('Changing user password failed.', error)
+    res.status(500).json({ error: 'password_change_failed' })
   }
 })
 

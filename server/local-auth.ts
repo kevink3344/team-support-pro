@@ -230,3 +230,31 @@ export const upsertLocalAccountPersisted = async (
 
   return { account }
 }
+
+export const changeLocalAccountPasswordPersisted = async (
+  email: string,
+  newPassword: string,
+): Promise<{ ok: true } | { error: 'user_not_found' | 'invalid_password' }> => {
+  await loadLocalAccounts()
+
+  const normalizedEmail = normalizeEmail(email)
+  const existing = localAccountsByEmail.get(normalizedEmail)
+
+  if (!existing) {
+    return { error: 'user_not_found' }
+  }
+
+  if (newPassword.length < 8) {
+    return { error: 'invalid_password' }
+  }
+
+  const passwordSalt = crypto.randomBytes(16).toString('hex')
+  localAccountsByEmail.set(normalizedEmail, {
+    ...existing,
+    passwordSalt,
+    passwordHash: hashPassword(newPassword, passwordSalt),
+  })
+
+  await queueLocalAccountsPersist()
+  return { ok: true }
+}

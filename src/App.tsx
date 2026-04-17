@@ -596,7 +596,9 @@ function App() {
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() =>
     readStoredValue<string[]>(notificationReadIdsStorageKey, []),
   )
-  const [listMode, setListMode] = useState<ListViewMode>('table')
+  const [listMode, setListMode] = useState<ListViewMode>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'table',
+  )
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     readStoredValue(STORAGE_KEYS.sidebar, false),
   )
@@ -668,6 +670,10 @@ function App() {
   const [userSavePendingIds, setUserSavePendingIds] = useState<string[]>([])
   const [userDirectoryError, setUserDirectoryError] = useState('')
   const [userDirectoryNotice, setUserDirectoryNotice] = useState('')
+  const [changePasswordModal, setChangePasswordModal] = useState<{ userId: string; userName: string } | null>(null)
+  const [changePasswordValue, setChangePasswordValue] = useState('')
+  const [changePasswordPending, setChangePasswordPending] = useState(false)
+  const [changePasswordError, setChangePasswordError] = useState('')
   const [newTicketForm, setNewTicketForm] = useState({
     title: '',
     requestorName: '',
@@ -2423,6 +2429,37 @@ function App() {
     }
   }
 
+  const handleChangePassword = async () => {
+    if (!changePasswordModal) return
+    if (changePasswordValue.length < 8) {
+      setChangePasswordError('Password must be at least 8 characters.')
+      return
+    }
+    setChangePasswordError('')
+    setChangePasswordPending(true)
+    try {
+      const response = await fetch(apiUrl(`/api/users/${changePasswordModal.userId}/change-password`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ newPassword: changePasswordValue }),
+      })
+      if (response.status === 401) { setAuthSession(null); return }
+      if (!response.ok) {
+        const payload = (await response.json()) as { message?: string }
+        setChangePasswordError(payload.message ?? 'Password change failed.')
+        return
+      }
+      setChangePasswordModal(null)
+      setChangePasswordValue('')
+      setUserDirectoryNotice(`Password updated for ${changePasswordModal.userName}.`)
+    } catch {
+      setChangePasswordError('Could not reach the server. Check your connection.')
+    } finally {
+      setChangePasswordPending(false)
+    }
+  }
+
   const metricCards: Array<{
     id: DashboardWidgetId
     label: string
@@ -2936,7 +2973,7 @@ function App() {
               {users.map((user) => (
                 <div
                   key={user.id}
-                  className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr_auto] md:items-center"
+                  className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr_auto_auto] md:items-center"
                 >
                   <input
                     className="input-control"
@@ -2983,6 +3020,19 @@ function App() {
                     <option value="Admin">Admin</option>
                     <option value="Staff">Staff</option>
                   </select>
+                  {user.name !== 'Administrator' && (
+                  <button
+                    type="button"
+                    className="secondary-button whitespace-nowrap"
+                    onClick={() => {
+                      setChangePasswordValue('')
+                      setChangePasswordError('')
+                      setChangePasswordModal({ userId: user.id, userName: user.name })
+                    }}
+                  >
+                    Change Password
+                  </button>
+                  )}
                   <div className="text-right text-xs text-[color:var(--text-muted)]">
                     {userSavePendingIds.includes(user.id) ? 'Saving...' : 'Saved'}
                   </div>
@@ -3782,60 +3832,78 @@ function App() {
                   </button>
 
                   {notificationsPreviewOpen && (
-                    <div className="notification-preview surface absolute right-0 top-full z-40 mt-2 w-[22rem] max-w-[calc(100vw-2rem)] p-3 text-[color:var(--text)] shadow-[0_20px_60px_rgba(13,47,79,0.18)]">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold">Recent notifications</div>
-                        <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                          {unreadNotificationCount} unread
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        {notificationPreviewItems.length > 0 ? (
-                          notificationPreviewItems.map((item) => (
-                            <button
-                              key={item.id}
-                              type="button"
-                              className="notification-preview-item surface-muted block w-full p-3 text-left"
-                              onClick={() => {
-                                openTicket(item.ticketId)
-                                setNotificationsPreviewOpen(false)
-                              }}
-                            >
-                              <div className="mb-1 flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                  {!readNotificationIdSet.has(item.id) && (
-                                    <span className="notification-unread-dot" aria-hidden="true" />
-                                  )}
-                                  <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
-                                    {item.ticketId}
-                                  </span>
-                                </div>
-                                <span className="text-xs text-[color:var(--text-muted)]">{formatDateTime(item.at)}</span>
-                              </div>
-                              <div className="text-sm font-semibold text-[color:var(--text)]">{item.ticketTitle}</div>
-                              <div className="mt-1 text-sm text-[color:var(--text-muted)] line-clamp-2">
-                                <span className="font-semibold text-[color:var(--text)]">{item.actor}</span> {item.message}
-                              </div>
-                            </button>
-                          ))
-                        ) : (
-                          <div className="surface-muted p-3 text-sm text-[color:var(--text-muted)]">
-                            No recent messages.
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-3 flex justify-end border-t border-[color:var(--border)] pt-3">
+                    <>
+                      {isMobileViewport && (
                         <button
                           type="button"
-                          className="dashboard-reset-button"
-                          onClick={openNotificationsPage}
-                        >
-                          View all
-                        </button>
+                          className="fixed inset-0 z-30 bg-slate-950/35"
+                          aria-label="Close notifications preview"
+                          onClick={() => setNotificationsPreviewOpen(false)}
+                        />
+                      )}
+                      <div
+                        className={`notification-preview surface z-40 p-3 text-[color:var(--text)] shadow-[0_20px_60px_rgba(13,47,79,0.18)] ${
+                          isMobileViewport
+                            ? 'fixed left-1/2 top-1/2 w-[min(22rem,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto'
+                            : 'absolute right-0 top-full mt-2 w-[22rem] max-w-[calc(100vw-2rem)]'
+                        }`}
+                        role="dialog"
+                        aria-modal={isMobileViewport}
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold">Recent notifications</div>
+                          <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                            {unreadNotificationCount} unread
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {notificationPreviewItems.length > 0 ? (
+                            notificationPreviewItems.map((item) => (
+                              <button
+                                key={item.id}
+                                type="button"
+                                className="notification-preview-item surface-muted block w-full p-3 text-left"
+                                onClick={() => {
+                                  openTicket(item.ticketId)
+                                  setNotificationsPreviewOpen(false)
+                                }}
+                              >
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2">
+                                    {!readNotificationIdSet.has(item.id) && (
+                                      <span className="notification-unread-dot" aria-hidden="true" />
+                                    )}
+                                    <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                                      {item.ticketId}
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-[color:var(--text-muted)]">{formatDateTime(item.at)}</span>
+                                </div>
+                                <div className="text-sm font-semibold text-[color:var(--text)]">{item.ticketTitle}</div>
+                                <div className="mt-1 text-sm text-[color:var(--text-muted)] line-clamp-2">
+                                  <span className="font-semibold text-[color:var(--text)]">{item.actor}</span> {item.message}
+                                </div>
+                              </button>
+                            ))
+                          ) : (
+                            <div className="surface-muted p-3 text-sm text-[color:var(--text-muted)]">
+                              No recent messages.
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="mt-3 flex justify-end border-t border-[color:var(--border)] pt-3">
+                          <button
+                            type="button"
+                            className="dashboard-reset-button"
+                            onClick={openNotificationsPage}
+                          >
+                            View all
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    </>
                   )}
                 </div>
 
@@ -4599,6 +4667,62 @@ function App() {
           </>
         )}
       </AnimatePresence>
+
+      {changePasswordModal && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-slate-950/40"
+            aria-label="Close dialog"
+            onClick={() => setChangePasswordModal(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal={true}
+            aria-labelledby="change-pw-title"
+            className="surface fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 p-6 shadow-[0_24px_64px_rgba(13,47,79,0.22)]"
+          >
+            <h2 id="change-pw-title" className="mb-1 text-base font-semibold text-[color:var(--text)]">
+              Change Password
+            </h2>
+            <p className="mb-4 text-sm text-[color:var(--text-muted)]">
+              Set a new password for <strong>{changePasswordModal.userName}</strong>.
+            </p>
+            {changePasswordError && (
+              <div className="mb-3 rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {changePasswordError}
+              </div>
+            )}
+            <input
+              type="password"
+              className="input-control mb-4 w-full"
+              placeholder="New password (min. 8 characters)"
+              value={changePasswordValue}
+              onChange={(e) => setChangePasswordValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleChangePassword() }}
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setChangePasswordModal(null)}
+                disabled={changePasswordPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void handleChangePassword()}
+                disabled={changePasswordPending}
+              >
+                {changePasswordPending ? 'Saving...' : 'Update Password'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
     </div>
   )
