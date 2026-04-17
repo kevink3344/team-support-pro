@@ -63,7 +63,27 @@ import { getDb } from './db.js'
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
 const currentDirPath = path.dirname(currentFilePath)
-const clientDistPath = path.resolve(currentDirPath, '..')
+const resolveClientDistPath = () => {
+  const candidates = [
+    path.resolve(currentDirPath, '..'),
+    path.resolve(currentDirPath, '../dist'),
+    path.resolve(process.cwd(), 'dist'),
+    path.resolve(process.cwd()),
+  ]
+
+  for (const candidate of candidates) {
+    const indexPath = path.join(candidate, 'index.html')
+    const assetsPath = path.join(candidate, 'assets')
+    if (fs.existsSync(indexPath) && fs.existsSync(assetsPath)) {
+      return candidate
+    }
+  }
+
+  // Fall back to the original location if no candidate has both index and assets.
+  return path.resolve(currentDirPath, '..')
+}
+
+const clientDistPath = resolveClientDistPath()
 const clientIndexPath = path.join(clientDistPath, 'index.html')
 const anonIndexPath = path.join(clientDistPath, 'anon', 'index.html')
 const hasClientBuild = fs.existsSync(clientIndexPath)
@@ -1252,6 +1272,10 @@ const startServer = async () => {
   } catch (error) {
     console.error('Bootstrap admin setup failed.', error)
   }
+
+  console.log(`Client build root resolved to: ${clientDistPath}`)
+  console.log(`Client index found: ${hasClientBuild}`)
+  console.log(`Anonymous index found: ${hasAnonBuild}`)
 
   app.listen(serverConfig.serverPort, () => {
     console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)
