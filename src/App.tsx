@@ -16,7 +16,6 @@ import {
   GraduationCap,
   Inbox,
   LayoutDashboard,
-  LockKeyhole,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -1597,7 +1596,7 @@ function App() {
       })
 
       if (response.status === 409) {
-        setLocalAuthError('That email is already registered. Use Email Sign-In below.')
+        setLocalAuthError('That email is already registered. Use SIGN IN above.')
         return
       }
 
@@ -3523,9 +3522,7 @@ function App() {
                   </h1>
                 </div>
                 <p className="max-w-xl text-sm leading-7 text-white/75">
-                  {rapidIdentityEnabled
-                    ? 'Sign in with your WCPSS Rapid Identity account or register with email and password to access the support workspace.'
-                    : 'Sign in with your email and password to access the support workspace.'}
+                  Sign in with your email and password to access the support workspace.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
@@ -3546,54 +3543,73 @@ function App() {
 
             <div className="flex items-center justify-center p-8 md:p-10">
               <div className="w-full max-w-md space-y-5">
-                {rapidIdentityEnabled && (
-                  <>
-                    <div>
-                      <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                        <LockKeyhole className="h-4 w-4" />
-                        Authentication
-                      </div>
-                      <h2 className="text-2xl font-semibold">Rapid Identity Sign-In</h2>
-                      <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
-                        Sign in with your WCPSS Rapid Identity account. You will be redirected to authenticate and then returned to this app.
-                      </p>
-                    </div>
+                <div>
+                  <div className="mb-2 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                    Authentication
+                  </div>
+                  <h2 className="text-2xl font-semibold">SIGN IN</h2>
+                  <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
+                    Sign in with your local TeamSupportPro account credentials.
+                  </p>
+                </div>
 
-                    <div className="space-y-4">
-                      {backendAvailable === false && (
-                        <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                          The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
-                        </div>
-                      )}
-                      <div className="surface-muted flex justify-center p-5">
-                        <a
-                          href={apiUrl('/auth/oidc')}
-                          className="primary-button inline-block w-full max-w-xs text-center"
-                        >
-                          Sign in with Rapid Identity
-                        </a>
-                      </div>
+                <div className="grid gap-4">
+                  {backendAvailable === false && (
+                    <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
                     </div>
-                  </>
-                )}
+                  )}
 
-                {rapidIdentityEnabled && (
-                  <div className="relative py-2">
+                  <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
+                    <div className="space-y-3">
+                      <input
+                        className="input-control"
+                        placeholder="Email"
+                        type="email"
+                        value={localLoginEmail}
+                        onChange={(event) => setLocalLoginEmail(event.target.value)}
+                        autoComplete="email"
+                      />
+                      <input
+                        className="input-control"
+                        placeholder="Password"
+                        type="password"
+                        value={localLoginPassword}
+                        onChange={(event) => setLocalLoginPassword(event.target.value)}
+                        autoComplete="current-password"
+                      />
+                      <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
+                        <input
+                          type="checkbox"
+                          checked={rememberMeNextLogin}
+                          onChange={(event) => setRememberMeNextLogin(event.target.checked)}
+                        />
+                        <span>Remember login</span>
+                      </label>
+                      <button
+                        type="submit"
+                        className="primary-button w-full"
+                        disabled={localLoginPending || localRegisterPending}
+                      >
+                        {localLoginPending ? 'Signing in...' : 'SIGN IN'}
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="relative py-1">
                     <div className="absolute inset-0 flex items-center" aria-hidden>
                       <div className="w-full border-t border-[color:var(--border)]" />
                     </div>
                     <div className="relative flex justify-center">
                       <span className="bg-[color:var(--card-bg)] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
-                        Or use email
+                        REGISTER BELOW
                       </span>
                     </div>
                   </div>
-                )}
 
-                <div className="grid gap-4">
                   <form className="surface-muted space-y-3 p-4" onSubmit={handleLocalRegistration}>
                     <div>
-                      <h3 className="text-sm font-semibold text-[color:var(--text)]">Register New Account</h3>
+                      <h3 className="text-sm font-semibold text-[color:var(--text)]">Create Account</h3>
                       <p className="mt-1 text-xs text-[color:var(--text-muted)]">
                         Create a local login saved on this server.
                       </p>
@@ -3623,50 +3639,11 @@ function App() {
                     />
                     <button
                       type="submit"
-                      className="primary-button w-full"
+                      className="secondary-button w-full"
                       disabled={localRegisterPending || localLoginPending}
                     >
-                      {localRegisterPending ? 'Creating account...' : 'Register and Sign In'}
+                      {localRegisterPending ? 'Creating account...' : 'REGISTER'}
                     </button>
-                  </form>
-
-                  <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
-                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                      Email Sign-In
-                    </div>
-                    <div className="space-y-3">
-                      <input
-                        className="input-control"
-                        placeholder="Email"
-                        type="email"
-                        value={localLoginEmail}
-                        onChange={(event) => setLocalLoginEmail(event.target.value)}
-                        autoComplete="email"
-                      />
-                      <input
-                        className="input-control"
-                        placeholder="Password"
-                        type="password"
-                        value={localLoginPassword}
-                        onChange={(event) => setLocalLoginPassword(event.target.value)}
-                        autoComplete="current-password"
-                      />
-                      <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
-                        <input
-                          type="checkbox"
-                          checked={rememberMeNextLogin}
-                          onChange={(event) => setRememberMeNextLogin(event.target.checked)}
-                        />
-                        <span>Remember me for next login</span>
-                      </label>
-                      <button
-                        type="submit"
-                        className="secondary-button w-full"
-                        disabled={localLoginPending || localRegisterPending}
-                      >
-                        {localLoginPending ? 'Signing in...' : 'Sign In with Email'}
-                      </button>
-                    </div>
                   </form>
                 </div>
 
