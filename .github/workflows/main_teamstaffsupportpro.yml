@@ -29,6 +29,43 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
+      - name: Verify build artifacts
+        run: |
+          set -e
+
+          INDEX="dist/index.html"
+          ASSETS_DIR="dist/assets"
+
+          if [ ! -f "$INDEX" ]; then
+            echo "ERROR: $INDEX not found. Build may have failed silently."
+            exit 1
+          fi
+
+          if [ ! -d "$ASSETS_DIR" ]; then
+            echo "ERROR: $ASSETS_DIR directory not found."
+            exit 1
+          fi
+
+          echo "Checking asset references in $INDEX..."
+          MISSING=0
+          # Extract all /assets/<filename> references from index.html
+          grep -oP '(?<=/assets/)[^\s"'\'']+' "$INDEX" | while IFS= read -r asset; do
+            ASSET_PATH="$ASSETS_DIR/$asset"
+            if [ ! -f "$ASSET_PATH" ]; then
+              echo "MISSING: $ASSET_PATH referenced in index.html but not found on disk."
+              MISSING=1
+            else
+              echo "  OK: $asset"
+            fi
+          done
+
+          if [ "$MISSING" -ne 0 ]; then
+            echo "ERROR: One or more assets referenced in index.html are missing from dist/assets."
+            exit 1
+          fi
+
+          echo "Build verification passed. All referenced assets are present."
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
