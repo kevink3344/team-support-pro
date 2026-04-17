@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import fs from 'node:fs'
 import path from 'node:path'
 
 import { serverConfig } from './config.js'
@@ -7,9 +8,32 @@ let db: Database.Database | null = null
 
 export const hasDatabaseConfig = () => true
 
+const resolveSqlitePath = () => {
+  const configuredPath = serverConfig.db.sqlitePath.trim()
+  if (configuredPath) {
+    return path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath)
+  }
+
+  if (serverConfig.isProduction) {
+    return '/home/data/dev.sqlite3'
+  }
+
+  return path.resolve(process.cwd(), 'dev.sqlite3')
+}
+
+const ensureSqliteDirectory = (sqlitePath: string) => {
+  const directory = path.dirname(sqlitePath)
+  if (!fs.existsSync(directory)) {
+    fs.mkdirSync(directory, { recursive: true })
+  }
+}
+
 export const getDb = (): Database.Database => {
   if (!db) {
-    const dbPath = serverConfig.db.sqlitePath || path.resolve(process.cwd(), 'dev.sqlite3')
+    const dbPath = resolveSqlitePath()
+    ensureSqliteDirectory(dbPath)
     db = new Database(dbPath)
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
