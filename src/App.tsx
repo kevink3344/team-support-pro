@@ -11,7 +11,6 @@ import {
   Download,
   FileUp,
   Grip,
-  LogOut,
   Folder,
   Paperclip,
   GraduationCap,
@@ -94,6 +93,15 @@ const STORAGE_KEYS = {
 } as const
 
 const REMEMBER_LOGIN_EMAIL_COOKIE = 'team-support-pro-remember-login-email'
+
+const DEFAULT_AUTH_SESSION: AuthSession = {
+  id: 'u-kevin',
+  subject: 'no-auth-default',
+  name: 'Kevin Key',
+  email: 'kevin.key@company.com',
+  role: 'Admin',
+  teamId: 'it',
+}
 
 const readCookieValue = (name: string) => {
   if (typeof document === 'undefined') {
@@ -575,9 +583,7 @@ function App() {
   const [tickets, setTickets] = useState(initialTickets)
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>(initialTrendData)
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() =>
-    readStoredValue<AuthSession | null>(STORAGE_KEYS.auth, null),
-  )
+  const [authSession, setAuthSession] = useState<AuthSession | null>(DEFAULT_AUTH_SESSION)
   const dashboardLayoutStorageKey = authSession
     ? `${STORAGE_KEYS.dashboardLayout}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.dashboardLayout
@@ -703,7 +709,7 @@ function App() {
   )
   const [localRegisterPending, setLocalRegisterPending] = useState(false)
   const [localLoginPending, setLocalLoginPending] = useState(false)
-  const [authReady, setAuthReady] = useState(false)
+  const [authReady, setAuthReady] = useState(true)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null)
   const [commentPending, setCommentPending] = useState(false)
   const [detailSavePending, setDetailSavePending] = useState(false)
@@ -1546,7 +1552,7 @@ function App() {
     } catch {
       // Clear local session even if the backend is unavailable.
     }
-    setAuthSession(null)
+    setAuthSession(DEFAULT_AUTH_SESSION)
     setAuthError('')
     setLocalAuthError('')
     setLocalAuthNotice('')
@@ -3876,7 +3882,7 @@ function App() {
                 )}
 
                 <button type="button" className="icon-button text-white" onClick={signOut}>
-                  <LogOut className="h-5 w-5" />
+                  <RefreshCw className="h-5 w-5" />
                 </button>
               </div>
             </div>
