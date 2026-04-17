@@ -93,15 +93,6 @@ const STORAGE_KEYS = {
 
 const REMEMBER_LOGIN_EMAIL_COOKIE = 'team-support-pro-remember-login-email'
 
-const DEFAULT_AUTH_SESSION: AuthSession = {
-  id: 'u-kevin',
-  subject: 'no-auth-default',
-  name: 'Kevin Key',
-  email: 'kevin.key@company.com',
-  role: 'Admin',
-  teamId: 'it',
-}
-
 const readCookieValue = (name: string) => {
   if (typeof document === 'undefined') {
     return ''
@@ -582,7 +573,7 @@ function App() {
   const [tickets, setTickets] = useState(initialTickets)
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>(initialTrendData)
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
-  const [authSession, setAuthSession] = useState<AuthSession | null>(DEFAULT_AUTH_SESSION)
+  const [authSession, setAuthSession] = useState<AuthSession | null>(null)
   const dashboardLayoutStorageKey = authSession
     ? `${STORAGE_KEYS.dashboardLayout}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.dashboardLayout
@@ -1551,7 +1542,7 @@ function App() {
     } catch {
       // Clear local session even if the backend is unavailable.
     }
-    setAuthSession(DEFAULT_AUTH_SESSION)
+    setAuthSession(null)
     setAuthError('')
     setLocalAuthError('')
     setLocalAuthNotice('')
@@ -3858,8 +3849,13 @@ function App() {
                   </button>
                 )}
 
-                <button type="button" className="icon-button text-white" onClick={signOut}>
-                  <RefreshCw className="h-5 w-5" />
+                <button
+                  type="button"
+                  className="secondary-button border-white/20 bg-white/5 px-3 py-2 text-white hover:bg-white/12"
+                  style={{ color: '#ffffff' }}
+                  onClick={signOut}
+                >
+                  Sign Out
                 </button>
               </div>
             </div>

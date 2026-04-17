@@ -139,29 +139,18 @@ const readTestApiKeyUserFromRequest = (req: express.Request): SessionUser | null
   }
 }
 
-const defaultSessionUser: SessionUser = {
-  id: 'u-kevin',
-  name: 'Kevin Key',
-  email: 'kevin.key@company.com',
-  role: 'Admin',
-  teamId: serverConfig.fallbackTeam.id || 'it',
-  teamName: serverConfig.fallbackTeam.name || 'IT Support',
-  teamCode: serverConfig.fallbackTeam.code || 'IT',
-  teamAccent: serverConfig.fallbackTeam.accent || '#0078d4',
-}
-
 const readSessionUserFromRequest = (req: express.Request): SessionUser | null => {
   const token = req.cookies[SESSION_COOKIE_NAME]
   const testApiUser = readTestApiKeyUserFromRequest(req)
 
   if (!token) {
-    return testApiUser || defaultSessionUser
+    return testApiUser || null
   }
 
   try {
     return readSessionToken(token)
   } catch {
-    return testApiUser || defaultSessionUser
+    return testApiUser || null
   }
 }
 
