@@ -51,8 +51,14 @@ if (!rootElement) {
 }
 
 const root = createRoot(rootElement)
+let hasRenderedFatalError = false
 
 const renderBootError = (error: unknown) => {
+  if (hasRenderedFatalError) {
+    return
+  }
+
+  hasRenderedFatalError = true
   const errorMessage = error instanceof Error ? error.message : String(error)
 
   root.render(
@@ -88,6 +94,16 @@ const renderBootError = (error: unknown) => {
     </div>,
   )
 }
+
+window.addEventListener('error', (event) => {
+  console.error('Unhandled window error:', event.error ?? event.message)
+  renderBootError(event.error ?? event.message)
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Unhandled promise rejection:', event.reason)
+  renderBootError(event.reason)
+})
 
 const bootstrap = async () => {
   try {
