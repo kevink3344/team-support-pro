@@ -1,5 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties } from 'react'
-import { GoogleLogin, googleLogout } from '@react-oauth/google'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
 import {
   AnimatePresence,
   motion,
@@ -12,8 +11,8 @@ import {
   Download,
   FileUp,
   Grip,
-  LogOut,
   Folder,
+  Paperclip,
   GraduationCap,
   Inbox,
   LayoutDashboard,
@@ -56,7 +55,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { apiUrl, appConfig, hasGoogleClientId } from './config'
+import { apiUrl, appConfig } from './config'
 import {
   currentUserId,
   initialCategories,
@@ -93,8 +92,55 @@ const STORAGE_KEYS = {
   sidebar: 'team-support-pro-sidebar',
 } as const
 
+const REMEMBER_LOGIN_EMAIL_COOKIE = 'team-support-pro-remember-login-email'
+
+const DEFAULT_AUTH_SESSION: AuthSession = {
+  id: 'u-kevin',
+  subject: 'no-auth-default',
+  name: 'Kevin Key',
+  email: 'kevin.key@company.com',
+  role: 'Admin',
+  teamId: 'it',
+}
+
+const readCookieValue = (name: string) => {
+  if (typeof document === 'undefined') {
+    return ''
+  }
+
+  const encodedName = `${name}=`
+  const pair = document.cookie
+    .split(';')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(encodedName))
+
+  if (!pair) {
+    return ''
+  }
+
+  return decodeURIComponent(pair.slice(encodedName.length))
+}
+
+const setCookieValue = (name: string, value: string, days: number) => {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  const maxAge = Math.max(0, Math.floor(days * 24 * 60 * 60))
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; samesite=lax`
+}
+
+const clearCookieValue = (name: string) => {
+  if (typeof document === 'undefined') {
+    return
+  }
+
+  document.cookie = `${name}=; path=/; max-age=0; samesite=lax`
+}
+
 type SettingsAccordionSection =
   | 'appearance'
+  | 'authentication'
   | 'addUser'
   | 'manageUsers'
   | 'manageTeams'
@@ -104,6 +150,7 @@ type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
 
 const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'appearance',
+  'authentication',
   'addUser',
   'manageUsers',
   'manageTeams',
@@ -174,13 +221,13 @@ const defaultDashboardLayouts: DashboardLayouts = {
   sm: [
     { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
     { i: 'metric-open', x: 1, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-progress', x: 0, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-pending', x: 1, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-critical', x: 0, y: 4, w: 2, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 6, w: 2, h: 7, minW: 2, minH: 5, static: false },
-    { i: 'status', x: 0, y: 13, w: 2, h: 5, minW: 2, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 18, w: 2, h: 8, minW: 2, minH: 6, static: false },
-    { i: 'notes', x: 0, y: 26, w: 2, h: 6, minW: 2, minH: 5, static: false },
+    { i: 'metric-progress', x: 2, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-pending', x: 3, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'metric-critical', x: 4, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
+    { i: 'trends', x: 0, y: 2, w: 5, h: 7, minW: 3, minH: 5, static: false },
+    { i: 'status', x: 0, y: 9, w: 5, h: 5, minW: 3, minH: 5, static: false },
+    { i: 'queue', x: 0, y: 14, w: 5, h: 8, minW: 3, minH: 6, static: false },
+    { i: 'notes', x: 0, y: 22, w: 5, h: 6, minW: 3, minH: 5, static: false },
   ],
   xs: [
     { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
@@ -207,8 +254,32 @@ const legacyMediumDashboardLayout = [
   { i: 'notes', x: 0, y: 25, w: 6, h: 7 },
 ] as const
 
+const legacySmallDashboardLayout = [
+  { i: 'metric-total', x: 0, y: 0, w: 1, h: 2 },
+  { i: 'metric-open', x: 1, y: 0, w: 1, h: 2 },
+  { i: 'metric-progress', x: 0, y: 2, w: 1, h: 2 },
+  { i: 'metric-pending', x: 1, y: 2, w: 1, h: 2 },
+  { i: 'metric-critical', x: 0, y: 4, w: 2, h: 2 },
+  { i: 'trends', x: 0, y: 6, w: 2, h: 7 },
+  { i: 'status', x: 0, y: 13, w: 2, h: 5 },
+  { i: 'queue', x: 0, y: 18, w: 2, h: 8 },
+  { i: 'notes', x: 0, y: 26, w: 2, h: 6 },
+] as const
+
 const matchesLegacyMediumDashboardLayout = (layout: readonly LayoutItem[]) =>
   legacyMediumDashboardLayout.every((legacyItem) => {
+    const candidate = layout.find((layoutItem) => layoutItem.i === legacyItem.i)
+
+    return (
+      candidate?.x === legacyItem.x &&
+      candidate?.y === legacyItem.y &&
+      candidate?.w === legacyItem.w &&
+      candidate?.h === legacyItem.h
+    )
+  }) && layout.length === dashboardWidgetOrder.length
+
+const matchesLegacySmallDashboardLayout = (layout: readonly LayoutItem[]) =>
+  legacySmallDashboardLayout.every((legacyItem) => {
     const candidate = layout.find((layoutItem) => layoutItem.i === legacyItem.i)
 
     return (
@@ -226,7 +297,8 @@ const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
     const defaultLayout = defaultDashboardLayouts[breakpoint] ?? []
     const storedLayout = storedLayouts?.[breakpoint] ?? []
     const normalizedStoredLayout =
-      breakpoint === 'md' && matchesLegacyMediumDashboardLayout(storedLayout)
+      (breakpoint === 'md' && matchesLegacyMediumDashboardLayout(storedLayout)) ||
+      (breakpoint === 'sm' && matchesLegacySmallDashboardLayout(storedLayout))
         ? []
         : storedLayout
     const storedById = new Map<string, LayoutItem>(
@@ -237,6 +309,8 @@ const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
       ...defaultItem,
       ...(storedById.get(defaultItem.i) ?? {}),
       i: defaultItem.i,
+      w: Math.max(storedById.get(defaultItem.i)?.w ?? defaultItem.w, defaultItem.minW ?? 1),
+      h: Math.max(storedById.get(defaultItem.i)?.h ?? defaultItem.h, defaultItem.minH ?? 1),
       minW: defaultItem.minW,
       minH: defaultItem.minH,
       static: false,
@@ -301,6 +375,15 @@ const readStoredValue = <T,>(key: string, fallback: T): T => {
   }
 }
 
+const isThemeConfig = (value: unknown): value is ThemeConfig => {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const candidate = value as Partial<Record<ThemeMode, Partial<ThemeConfig[ThemeMode]>>>
+  return Boolean(candidate.light?.accent && candidate.dark?.accent)
+}
+
 const formatDateTime = (value: string) => dateFormatter.format(new Date(value))
 
 const formatFileSize = (bytes: number) => {
@@ -323,11 +406,11 @@ const slugify = (value: string) =>
     .replace(/^-+|-+$/g, '')
 
 const createMockSessionUser = (session: AuthSession): User => ({
-  id: `google-${session.subject}`,
+  id: session.id ?? session.subject,
   name: session.name,
   email: session.email,
-  teamId: 'it',
-  role: 'Admin',
+  teamId: session.teamId ?? 'it',
+  role: session.role ?? 'Staff',
 })
 
 interface SessionApiUser {
@@ -335,6 +418,8 @@ interface SessionApiUser {
   subject?: string
   email: string
   name: string
+  role?: 'Admin' | 'Staff'
+  teamId?: string
   picture?: string
 }
 
@@ -361,9 +446,12 @@ interface DashboardSummary {
 }
 
 const mapSessionApiUser = (user: SessionApiUser): AuthSession => ({
+  id: user.id,
   subject: user.subject ?? user.id ?? user.email,
   email: user.email,
   name: user.name,
+  role: user.role,
+  teamId: user.teamId,
   picture: user.picture,
 })
 
@@ -495,9 +583,7 @@ function App() {
   const [tickets, setTickets] = useState(initialTickets)
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>(initialTrendData)
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() =>
-    readStoredValue<AuthSession | null>(STORAGE_KEYS.auth, null),
-  )
+  const [authSession, setAuthSession] = useState<AuthSession | null>(DEFAULT_AUTH_SESSION)
   const dashboardLayoutStorageKey = authSession
     ? `${STORAGE_KEYS.dashboardLayout}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.dashboardLayout
@@ -531,9 +617,10 @@ function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     readStoredValue(STORAGE_KEYS.mode, 'light'),
   )
-  const [themeConfig, setThemeConfig] = useState<ThemeConfig>(() =>
-    readStoredValue(STORAGE_KEYS.theme, defaultThemeConfig),
-  )
+  const [themeConfig, setThemeConfig] = useState<ThemeConfig>(() => {
+    const stored = readStoredValue<unknown>(STORAGE_KEYS.theme, defaultThemeConfig)
+    return isThemeConfig(stored) ? stored : defaultThemeConfig
+  })
   const [searchText, setSearchText] = useState('')
   const [detailTicketId, setDetailTicketId] = useState<string | null>(null)
   const [detailWidth, setDetailWidth] = useState(50)
@@ -549,9 +636,13 @@ function App() {
   const [attachmentsError, setAttachmentsError] = useState('')
   const [attachmentUploadPending, setAttachmentUploadPending] = useState(false)
   const [attachmentDeletePendingId, setAttachmentDeletePendingId] = useState<string | null>(null)
+  const [rapidIdentityEnabled, setRapidIdentityEnabled] = useState(true)
+  const [authSettingsPending, setAuthSettingsPending] = useState(false)
+  const [authSettingsError, setAuthSettingsError] = useState('')
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: true,
+    authentication: false,
     addUser: false,
     manageUsers: false,
     manageTeams: false,
@@ -606,30 +697,48 @@ function App() {
     assignedToId: string
   } | null>(null)
   const [authError, setAuthError] = useState('')
-  const [authReady, setAuthReady] = useState(false)
+  const [localAuthError, setLocalAuthError] = useState('')
+  const [localAuthNotice, setLocalAuthNotice] = useState('')
+  const [localRegisterName, setLocalRegisterName] = useState('')
+  const [localRegisterEmail, setLocalRegisterEmail] = useState('')
+  const [localRegisterPassword, setLocalRegisterPassword] = useState('')
+  const [localLoginEmail, setLocalLoginEmail] = useState(() => readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE))
+  const [localLoginPassword, setLocalLoginPassword] = useState('')
+  const [rememberMeNextLogin, setRememberMeNextLogin] = useState(
+    () => Boolean(readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)),
+  )
+  const [localRegisterPending, setLocalRegisterPending] = useState(false)
+  const [localLoginPending, setLocalLoginPending] = useState(false)
+  const [authReady, setAuthReady] = useState(true)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null)
   const [commentPending, setCommentPending] = useState(false)
   const [detailSavePending, setDetailSavePending] = useState(false)
   const [createTicketError, setCreateTicketError] = useState('')
   const [createTicketPending, setCreateTicketPending] = useState(false)
+  const [quickActionPendingTicketId, setQuickActionPendingTicketId] = useState<string | null>(null)
+  const [quickActionError, setQuickActionError] = useState('')
   const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
   const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
   const detailResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
   const deferredSearch = useDeferredValue(searchText)
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const availableTeams = teams.length > 0 ? teams : initialTeams
+  const availableCategories = categories.length > 0 ? categories : initialCategories
+  const availableUsers = users.length > 0 ? users : initialUsers
   const currentUser = authSession
-    ? users.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
+    ? availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
       createMockSessionUser(authSession)
-    : users.find((user) => user.id === currentUserId) ?? users[0]
+    : availableUsers.find((user) => user.id === currentUserId) ?? availableUsers[0]
   const visibleNavItems =
     currentUser.role === 'Admin' ? [...navItems, adminNavItem] : navItems
-  const currentTeam = teams.find((team) => team.id === currentUser.teamId) ?? teams[0]
-  const currentTeamCategories = categories.filter(
+  const currentTeam = availableTeams.find((team) => team.id === currentUser.teamId) ?? availableTeams[0]
+  const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
   )
-  const currentTeamMembers = users.some((user) => user.id === currentUser.id)
-    ? users.filter((user) => user.teamId === currentUser.teamId)
-    : [...users.filter((user) => user.teamId === currentUser.teamId), currentUser]
+  const currentTeamMembers = availableUsers.some((user) => user.id === currentUser.id)
+    ? availableUsers.filter((user) => user.teamId === currentUser.teamId)
+    : [...availableUsers.filter((user) => user.teamId === currentUser.teamId), currentUser]
   const notificationSourceTickets = useMemo(
     () =>
       tickets.filter(
@@ -637,7 +746,9 @@ function App() {
       ),
     [tickets, currentUser.teamId, currentUser.id],
   )
-  const activePalette = themeConfig[themeMode]
+  const activePalette = isThemeConfig(themeConfig)
+    ? themeConfig[themeMode]
+    : defaultThemeConfig[themeMode]
   const seededNotificationItems = useMemo(
     () =>
       buildSeedNotificationItems(
@@ -737,6 +848,35 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themeConfig))
   }, [themeConfig])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadPublicAuthSettings = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/public/auth-settings'))
+        if (!response.ok) {
+          return
+        }
+
+        const payload = (await response.json()) as {
+          rapidIdentityEnabled?: boolean
+        }
+
+        if (!cancelled && typeof payload.rapidIdentityEnabled === 'boolean') {
+          setRapidIdentityEnabled(payload.rapidIdentityEnabled)
+        }
+      } catch {
+        // Keep default visibility if auth settings cannot be loaded.
+      }
+    }
+
+    void loadPublicAuthSettings()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1412,31 +1552,57 @@ function App() {
     } catch {
       // Clear local session even if the backend is unavailable.
     }
-    googleLogout()
-    setAuthSession(null)
+    setAuthSession(DEFAULT_AUTH_SESSION)
     setAuthError('')
+    setLocalAuthError('')
+    setLocalAuthNotice('')
     setDetailTicketId(null)
     setActiveView('dashboard')
   }
 
-  const handleGoogleCredential = async (credential?: string) => {
-    if (!credential) {
-      setAuthError('Google login did not return a credential.')
+  const handleLocalRegistration = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const name = localRegisterName.trim()
+    const email = localRegisterEmail.trim().toLowerCase()
+    const password = localRegisterPassword
+
+    if (name.length < 2) {
+      setLocalAuthError('Enter your full name to create an account.')
       return
     }
 
+    if (!email || !email.includes('@')) {
+      setLocalAuthError('Enter a valid work email address.')
+      return
+    }
+
+    if (password.length < 8) {
+      setLocalAuthError('Use at least 8 characters for your password.')
+      return
+    }
+
+    setLocalRegisterPending(true)
+    setLocalAuthError('')
+    setLocalAuthNotice('')
+
     try {
-      const response = await fetch(apiUrl('/api/auth/google/client'), {
+      const response = await fetch(apiUrl('/api/auth/register'), {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ credential }),
+        body: JSON.stringify({ name, email, password, rememberMe: rememberMeNextLogin }),
       })
 
+      if (response.status === 409) {
+        setLocalAuthError('That email is already registered. Use Email Sign-In below.')
+        return
+      }
+
       if (!response.ok) {
-        setAuthError('Google login could not create a persistent session.')
+        setLocalAuthError('Registration failed. Check your details and try again.')
         return
       }
 
@@ -1446,16 +1612,92 @@ function App() {
       }
 
       if (!payload.authenticated || !payload.user) {
-        setAuthError('Google login could not create a persistent session.')
+        setLocalAuthError('Registration succeeded, but session creation failed. Try signing in.')
         return
       }
 
       setAuthSession(mapSessionApiUser(payload.user))
       setAuthError('')
+      setLocalAuthError('')
+      setLocalAuthNotice('Account created successfully.')
       setBackendAvailable(true)
+      setLocalRegisterPassword('')
+      setLocalLoginPassword('')
     } catch {
       setBackendAvailable(false)
-      setAuthError('Google login failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+      setLocalAuthError('Registration failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+    } finally {
+      setLocalRegisterPending(false)
+    }
+  }
+
+  const handleLocalLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const email = localLoginEmail.trim().toLowerCase()
+    const password = localLoginPassword
+
+    if (!email || !email.includes('@')) {
+      setLocalAuthError('Enter the email address you registered with.')
+      return
+    }
+
+    if (!password) {
+      setLocalAuthError('Enter your password.')
+      return
+    }
+
+    setLocalLoginPending(true)
+    setLocalAuthError('')
+    setLocalAuthNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/auth/local/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password, rememberMe: rememberMeNextLogin }),
+      })
+
+      if (response.status === 401) {
+        setLocalAuthError('Email or password is incorrect.')
+        return
+      }
+
+      if (!response.ok) {
+        setLocalAuthError('Email sign-in failed. Please try again.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        authenticated?: boolean
+        user?: SessionApiUser
+      }
+
+      if (!payload.authenticated || !payload.user) {
+        setLocalAuthError('Email sign-in could not create a persistent session.')
+        return
+      }
+
+      setAuthSession(mapSessionApiUser(payload.user))
+      setAuthError('')
+      setLocalAuthError('')
+      setLocalAuthNotice('')
+      setBackendAvailable(true)
+      setLocalLoginPassword('')
+
+      if (rememberMeNextLogin) {
+        setCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE, email, 30)
+      } else {
+        clearCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)
+      }
+    } catch {
+      setBackendAvailable(false)
+      setLocalAuthError('Email sign-in failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+    } finally {
+      setLocalLoginPending(false)
     }
   }
 
@@ -1516,6 +1758,113 @@ function App() {
     }
   }
 
+  const applyQuickTicketAction = async (
+    ticket: TicketRecord,
+    action: 'assign-to-me' | 'mark-in-progress' | 'mark-resolved',
+  ) => {
+    if (quickActionPendingTicketId) {
+      return
+    }
+
+    let nextAssignedToId = ticket.assignedToId
+    let nextStatus = ticket.status
+
+    if (action === 'assign-to-me') {
+      nextAssignedToId = currentUser.id
+    }
+
+    if (action === 'mark-in-progress') {
+      nextStatus = 'In Progress'
+      nextAssignedToId = nextAssignedToId ?? currentUser.id
+    }
+
+    if (action === 'mark-resolved') {
+      nextStatus = 'Resolved'
+      nextAssignedToId = nextAssignedToId ?? currentUser.id
+    }
+
+    if (nextAssignedToId === ticket.assignedToId && nextStatus === ticket.status) {
+      return
+    }
+
+    setQuickActionPendingTicketId(ticket.id)
+    setQuickActionError('')
+
+    try {
+      // Optimistic update: immediately reflect the change in local state so the
+      // ticket moves out of (or into) the correct queue without waiting for the
+      // full server round-trip.
+      setTickets((current) =>
+        current.map((item) =>
+          item.id === ticket.id
+            ? { ...item, assignedToId: nextAssignedToId, status: nextStatus }
+            : item,
+        ),
+      )
+
+      const response = await fetch(apiUrl(`/api/tickets/${ticket.id}`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: ticket.title,
+          description: ticket.description,
+          status: nextStatus,
+          priority: ticket.priority,
+          categoryId: ticket.categoryId,
+          assignedToId: nextAssignedToId,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setQuickActionError('Your session expired. Please sign in again.')
+        // Revert the optimistic update on auth failure
+        setTickets((current) =>
+          current.map((item) => (item.id === ticket.id ? ticket : item)),
+        )
+        return
+      }
+
+      if (!response.ok) {
+        setQuickActionError('Quick action failed. Please try again.')
+        // Revert the optimistic update on server error
+        setTickets((current) =>
+          current.map((item) => (item.id === ticket.id ? ticket : item)),
+        )
+        return
+      }
+
+      const payload = (await response.json()) as {
+        ticket?: TicketRecord
+      }
+
+      if (!payload.ticket) {
+        setQuickActionError('Quick action failed. Please try again.')
+        // Revert the optimistic update if the server response is unexpected
+        setTickets((current) =>
+          current.map((item) => (item.id === ticket.id ? ticket : item)),
+        )
+        return
+      }
+
+      // Reconcile with the authoritative server response
+      setTickets((current) =>
+        current.map((item) => (item.id === payload.ticket!.id ? payload.ticket! : item)),
+      )
+    } catch {
+      setQuickActionError('Quick action failed because the backend server is unavailable.')
+      // Revert the optimistic update on network error
+      setTickets((current) =>
+        current.map((item) => (item.id === ticket.id ? ticket : item)),
+      )
+    } finally {
+      setQuickActionPendingTicketId(null)
+    }
+  }
+
   const addTicketComment = async () => {
     if (!selectedTicket) {
       return
@@ -1570,7 +1919,12 @@ function App() {
   }
 
   const uploadAttachment = async () => {
-    if (!selectedTicket || !attachmentFile) {
+    if (!selectedTicket) {
+      return
+    }
+
+    if (!attachmentFile) {
+      setAttachmentsError('Select a file before uploading.')
       return
     }
 
@@ -1611,6 +1965,9 @@ function App() {
         setAttachments((current) => [payload.attachment as TicketAttachment, ...current])
       }
       setAttachmentFile(null)
+      if (attachmentInputRef.current) {
+        attachmentInputRef.current.value = ''
+      }
       await refreshTicket(selectedTicket.id)
     } catch {
       setAttachmentsError('Attachment upload failed. Confirm the backend server is running.')
@@ -1689,6 +2046,50 @@ function App() {
       setAttachmentsError('Attachment delete failed. Confirm the backend server is running.')
     } finally {
       setAttachmentDeletePendingId(null)
+    }
+  }
+
+  const updateRapidIdentityVisibility = async (isEnabled: boolean) => {
+    setAuthSettingsPending(true)
+    setAuthSettingsError('')
+
+    try {
+      const response = await fetch(apiUrl('/api/settings/auth'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rapidIdentityEnabled: isEnabled }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setAuthSettingsError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setAuthSettingsError('Only admins can update authentication settings.')
+        return
+      }
+
+      if (!response.ok) {
+        setAuthSettingsError('Authentication setting could not be updated.')
+        return
+      }
+
+      const payload = (await response.json()) as {
+        rapidIdentityEnabled?: boolean
+      }
+
+      if (typeof payload.rapidIdentityEnabled === 'boolean') {
+        setRapidIdentityEnabled(payload.rapidIdentityEnabled)
+      }
+    } catch {
+      setAuthSettingsError('Authentication setting could not be updated. Confirm the backend server is running.')
+    } finally {
+      setAuthSettingsPending(false)
     }
   }
 
@@ -2109,20 +2510,20 @@ function App() {
       const Icon = metricCard.icon
 
       return (
-        <section className="surface dashboard-widget-panel p-4">
-          <div className="mb-3 flex items-center justify-between gap-3 text-[color:var(--text-muted)]">
+        <section className="surface dashboard-widget-panel p-3">
+          <div className="mb-2 flex items-center justify-between gap-2 text-[color:var(--text-muted)]">
             <div className="text-xs font-semibold uppercase tracking-[0.12em]">Metric Card</div>
             <div className="dashboard-widget-handle flex items-center gap-1 text-xs uppercase tracking-[0.12em]">
               <Grip className="h-4 w-4" />
               Move
             </div>
           </div>
-          <div className="flex items-start justify-between gap-3">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-[2px] ${metricCard.accent}`}>
-              <Icon className="h-4.5 w-4.5" />
+          <div className="flex items-start justify-between gap-2">
+            <div className={`flex h-8 w-8 items-center justify-center rounded-[2px] ${metricCard.accent}`}>
+              <Icon className="h-4 w-4" />
             </div>
             <div className="text-right">
-              <div className="font-mono text-3xl font-semibold text-[color:var(--text)]">
+              <div className="font-mono text-2xl font-semibold text-[color:var(--text)]">
                 {metricCard.value}
               </div>
               <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
@@ -2276,7 +2677,7 @@ function App() {
             <div className="mb-1 font-semibold text-[color:var(--text)]">
               Future integrations
             </div>
-            Mock data is active today. The state model is ready to swap to Railway-hosted services, Azure SQL, and Google OAuth later.
+            Mock data is active today. The state model is ready to swap to hosted services and Azure SQL later.
           </div>
           <div className="surface-muted p-3">
             <div className="mb-1 font-semibold text-[color:var(--text)]">
@@ -2437,6 +2838,42 @@ function App() {
                   Dark
                 </button>
               </div>
+            </div>
+          )
+        case 'authentication':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Control whether users can see and use Rapid Identity Sign-In on the login page.
+              </div>
+              <label className="flex items-center gap-3 rounded-[2px] border border-[color:var(--border)] p-3">
+                <input
+                  type="checkbox"
+                  checked={rapidIdentityEnabled}
+                  disabled={authSettingsPending}
+                  onChange={(event) => {
+                    const nextEnabled = event.target.checked
+                    setRapidIdentityEnabled(nextEnabled)
+                    void updateRapidIdentityVisibility(nextEnabled)
+                  }}
+                />
+                <div>
+                  <div className="text-sm font-semibold text-[color:var(--text)]">
+                    Show Rapid Identity Sign-In
+                  </div>
+                  <div className="text-xs text-[color:var(--text-muted)]">
+                    When disabled, the login page will only show local email sign-in.
+                  </div>
+                </div>
+              </label>
+              {authSettingsPending && (
+                <div className="text-xs text-[color:var(--text-muted)]">Saving authentication setting...</div>
+              )}
+              {authSettingsError && (
+                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {authSettingsError}
+                </div>
+              )}
             </div>
           )
         case 'addUser':
@@ -2684,6 +3121,10 @@ function App() {
         title: 'Appearance',
         description: 'Theme colors and light or dark mode defaults.',
       },
+      authentication: {
+        title: 'Authentication',
+        description: 'Configure available login methods.',
+      },
       addUser: {
         title: 'Add User',
         description: 'Create a new admin or staff account.',
@@ -2791,55 +3232,119 @@ function App() {
       )
     }
 
+    const renderQuickActions = (ticket: TicketRecord) => {
+      const isPending = quickActionPendingTicketId === ticket.id
+      const disableAssign = isPending || ticket.assignedToId === currentUser.id
+      const disableInProgress = isPending || ticket.status === 'In Progress'
+      const disableResolve = isPending || ticket.status === 'Resolved'
+      const showAssignAction =
+        activeView !== 'my-tickets' && ticket.assignedToId !== currentUser.id
+
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          {showAssignAction && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={disableAssign}
+              onClick={() => applyQuickTicketAction(ticket, 'assign-to-me')}
+            >
+              {isPending ? 'Updating...' : 'Assign to me'}
+            </button>
+          )}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disableInProgress}
+            onClick={() => applyQuickTicketAction(ticket, 'mark-in-progress')}
+          >
+            In Progress
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={disableResolve}
+            onClick={() => applyQuickTicketAction(ticket, 'mark-resolved')}
+          >
+            Resolve
+          </button>
+        </div>
+      )
+    }
+
     if (listMode === 'cards') {
       return (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {visibleTickets.map((ticket) => {
-            const category = getCategoryById(ticket.categoryId)
-            const assignee = getUserById(ticket.assignedToId)
-            const team = getTeamById(ticket.teamId)
+        <div className="space-y-3">
+          {quickActionError && (
+            <div className="rounded-[2px] border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {quickActionError}
+            </div>
+          )}
+          <div className="grid gap-3 xl:grid-cols-2">
+            {visibleTickets.map((ticket) => {
+              const category = getCategoryById(ticket.categoryId)
+              const assignee = getUserById(ticket.assignedToId)
+              const team = getTeamById(ticket.teamId)
+              const attachmentCount = ticket.attachmentCount ?? 0
 
-            return (
-              <button
-                key={ticket.id}
-                type="button"
-                className="surface text-left transition hover:-translate-y-0.5"
-                onClick={() => openTicket(ticket.id)}
-              >
-                <div className="flex items-start justify-between gap-4 p-4">
-                  <div className="space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
-                        {ticket.id}
-                      </span>
-                      <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
-                      <span className={getPriorityBadgeClass(ticket.priority)}>{ticket.priority}</span>
+              return (
+                <div
+                  key={ticket.id}
+                  className="surface text-left transition hover:-translate-y-0.5"
+                >
+                  <button
+                    type="button"
+                    className="w-full text-left"
+                    onClick={() => openTicket(ticket.id)}
+                  >
+                    <div className="flex items-start justify-between gap-4 p-4">
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
+                            {ticket.id}
+                          </span>
+                          {attachmentCount > 0 && (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2 py-0.5 text-xs text-[color:var(--text-muted)]">
+                              <Paperclip className="h-3.5 w-3.5" />
+                              {attachmentCount}
+                            </span>
+                          )}
+                          <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
+                          <span className={getPriorityBadgeClass(ticket.priority)}>{ticket.priority}</span>
+                        </div>
+                        <h3 className="text-base font-semibold text-[color:var(--text)]">
+                          {ticket.title}
+                        </h3>
+                        <p className="text-sm text-[color:var(--text-muted)]">
+                          {ticket.requestorName} • {category?.name ?? 'Unmapped category'} •{' '}
+                          {team?.name ?? 'Unknown team'}
+                        </p>
+                      </div>
+                      <div className="text-right text-xs text-[color:var(--text-muted)]">
+                        <div>{ticket.dueLabel}</div>
+                        <div>{formatDateTime(ticket.updatedAt)}</div>
+                      </div>
                     </div>
-                    <h3 className="text-base font-semibold text-[color:var(--text)]">
-                      {ticket.title}
-                    </h3>
-                    <p className="text-sm text-[color:var(--text-muted)]">
-                      {ticket.requestorName} • {category?.name ?? 'Unmapped category'} •{' '}
-                      {team?.name ?? 'Unknown team'}
-                    </p>
-                  </div>
-                  <div className="text-right text-xs text-[color:var(--text-muted)]">
-                    <div>{ticket.dueLabel}</div>
-                    <div>{formatDateTime(ticket.updatedAt)}</div>
+                  </button>
+                  <div className="border-t border-[color:var(--border)] px-4 py-3 text-sm text-[color:var(--text-muted)]">
+                    <div className="mb-3">Assigned to {assignee?.name ?? 'Unassigned'}</div>
+                    {renderQuickActions(ticket)}
                   </div>
                 </div>
-                <div className="border-t border-[color:var(--border)] px-4 py-3 text-sm text-[color:var(--text-muted)]">
-                  Assigned to {assignee?.name ?? 'Unassigned'}
-                </div>
-              </button>
-            )
-          })}
+              )
+            })}
+          </div>
         </div>
       )
     }
 
     return (
       <div className="surface overflow-hidden">
+        {quickActionError && (
+          <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {quickActionError}
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-black/[0.02] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
@@ -2850,6 +3355,7 @@ function App() {
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Assigned To</th>
                 <th className="px-4 py-3 font-semibold">Updated</th>
+                <th className="px-4 py-3 font-semibold">Quick Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -2861,10 +3367,11 @@ function App() {
                   <td className="px-4 py-3 align-top">
                     <button
                       type="button"
-                      className="font-mono font-semibold text-[color:var(--accent)]"
+                      className="inline-flex items-center gap-1.5 font-mono font-semibold text-[color:var(--accent)]"
                       onClick={() => openTicket(ticket.id)}
                     >
                       {ticket.id}
+                      {(ticket.attachmentCount ?? 0) > 0 && <Paperclip className="h-3.5 w-3.5" />}
                     </button>
                   </td>
                   <td className="px-4 py-3 align-top">
@@ -2883,6 +3390,7 @@ function App() {
                   <td className="px-4 py-3 align-top text-[color:var(--text-muted)]">
                     {formatDateTime(ticket.updatedAt)}
                   </td>
+                  <td className="px-4 py-3 align-top">{renderQuickActions(ticket)}</td>
                 </tr>
               ))}
             </tbody>
@@ -2928,6 +3436,11 @@ function App() {
       </nav>
 
       <div className="border-t border-white/10 p-3">
+        {!collapsed && (
+          <div className="mb-3 rounded-[2px] border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] uppercase tracking-[0.14em] text-white/55">
+            Version {appConfig.appVersion}
+          </div>
+        )}
         <div className="flex items-center gap-3 rounded-[2px] border border-white/10 bg-white/5 px-3 py-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-[color:var(--accent)] text-sm font-semibold">
             {currentUser.name
@@ -3010,7 +3523,9 @@ function App() {
                   </h1>
                 </div>
                 <p className="max-w-xl text-sm leading-7 text-white/75">
-                  Use your Google account to test authentication against the current mock support workspace. Existing mock staff accounts retain their team and role. New Google accounts are provisioned into a temporary IT staff session for this frontend-only build.
+                  {rapidIdentityEnabled
+                    ? 'Sign in with your WCPSS Rapid Identity account or register with email and password to access the support workspace.'
+                    : 'Sign in with your email and password to access the support workspace.'}
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
@@ -3031,48 +3546,129 @@ function App() {
 
             <div className="flex items-center justify-center p-8 md:p-10">
               <div className="w-full max-w-md space-y-5">
-                <div>
-                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                    <LockKeyhole className="h-4 w-4" />
-                    Authentication
-                  </div>
-                  <h2 className="text-2xl font-semibold">Google Sign-In</h2>
-                  <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
-                    This sign-in uses the Google browser credential flow, verifies it on the backend, and restores your session from a signed cookie after refresh.
-                  </p>
-                </div>
-
-                {hasGoogleClientId ? (
-                  <div className="space-y-4">
-                    {backendAvailable === false && (
-                      <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                        The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
+                {rapidIdentityEnabled && (
+                  <>
+                    <div>
+                      <div className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        <LockKeyhole className="h-4 w-4" />
+                        Authentication
                       </div>
-                    )}
-                    <div className="surface-muted flex justify-center p-5">
-                      <GoogleLogin
-                        onSuccess={(response) => handleGoogleCredential(response.credential)}
-                        onError={() => setAuthError('Google login was cancelled or failed.')}
-                        theme="outline"
-                        text="signin_with"
-                        shape="rectangular"
-                        size="large"
-                        width="320"
-                      />
+                      <h2 className="text-2xl font-semibold">Rapid Identity Sign-In</h2>
+                      <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
+                        Sign in with your WCPSS Rapid Identity account. You will be redirected to authenticate and then returned to this app.
+                      </p>
                     </div>
 
-                    <div className="rounded-[2px] border border-[color:var(--border)] bg-black/[0.02] p-4 text-sm text-[color:var(--text-muted)]">
-                      Signed-in users matching an existing mock email keep their seeded team. All other Google users are mapped to temporary IT Support access for testing, and the authenticated session is restored after refresh.
+                    <div className="space-y-4">
+                      {backendAvailable === false && (
+                        <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                          The backend auth server is offline. Start it with <span className="font-mono">npm run dev</span> or <span className="font-mono">npm run start:server</span> before signing in.
+                        </div>
+                      )}
+                      <div className="surface-muted flex justify-center p-5">
+                        <a
+                          href={apiUrl('/auth/oidc')}
+                          className="primary-button inline-block w-full max-w-xs text-center"
+                        >
+                          Sign in with Rapid Identity
+                        </a>
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                    <div className="font-semibold">Google client ID is missing.</div>
-                    <div className="mt-1">
-                      Add <span className="font-mono">VITE_GOOGLE_CLIENT_ID</span> to your local env file and restart the Vite dev server.
+                  </>
+                )}
+
+                {rapidIdentityEnabled && (
+                  <div className="relative py-2">
+                    <div className="absolute inset-0 flex items-center" aria-hidden>
+                      <div className="w-full border-t border-[color:var(--border)]" />
+                    </div>
+                    <div className="relative flex justify-center">
+                      <span className="bg-[color:var(--card-bg)] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
+                        Or use email
+                      </span>
                     </div>
                   </div>
                 )}
+
+                <div className="grid gap-4">
+                  <form className="surface-muted space-y-3 p-4" onSubmit={handleLocalRegistration}>
+                    <div>
+                      <h3 className="text-sm font-semibold text-[color:var(--text)]">Register New Account</h3>
+                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">
+                        Create a local login saved on this server.
+                      </p>
+                    </div>
+                    <input
+                      className="input-control"
+                      placeholder="Full name"
+                      value={localRegisterName}
+                      onChange={(event) => setLocalRegisterName(event.target.value)}
+                      autoComplete="name"
+                    />
+                    <input
+                      className="input-control"
+                      placeholder="Work email"
+                      type="email"
+                      value={localRegisterEmail}
+                      onChange={(event) => setLocalRegisterEmail(event.target.value)}
+                      autoComplete="email"
+                    />
+                    <input
+                      className="input-control"
+                      placeholder="Password (minimum 8 characters)"
+                      type="password"
+                      value={localRegisterPassword}
+                      onChange={(event) => setLocalRegisterPassword(event.target.value)}
+                      autoComplete="new-password"
+                    />
+                    <button
+                      type="submit"
+                      className="primary-button w-full"
+                      disabled={localRegisterPending || localLoginPending}
+                    >
+                      {localRegisterPending ? 'Creating account...' : 'Register and Sign In'}
+                    </button>
+                  </form>
+
+                  <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
+                    <div className="mb-3 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      Email Sign-In
+                    </div>
+                    <div className="space-y-3">
+                      <input
+                        className="input-control"
+                        placeholder="Email"
+                        type="email"
+                        value={localLoginEmail}
+                        onChange={(event) => setLocalLoginEmail(event.target.value)}
+                        autoComplete="email"
+                      />
+                      <input
+                        className="input-control"
+                        placeholder="Password"
+                        type="password"
+                        value={localLoginPassword}
+                        onChange={(event) => setLocalLoginPassword(event.target.value)}
+                        autoComplete="current-password"
+                      />
+                      <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
+                        <input
+                          type="checkbox"
+                          checked={rememberMeNextLogin}
+                          onChange={(event) => setRememberMeNextLogin(event.target.checked)}
+                        />
+                        <span>Remember me for next login</span>
+                      </label>
+                      <button
+                        type="submit"
+                        className="secondary-button w-full"
+                        disabled={localLoginPending || localRegisterPending}
+                      >
+                        {localLoginPending ? 'Signing in...' : 'Sign In with Email'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
 
                 {authError && (
                   <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
@@ -3080,8 +3676,20 @@ function App() {
                   </div>
                 )}
 
+                {localAuthError && (
+                  <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {localAuthError}
+                  </div>
+                )}
+
+                {localAuthNotice && (
+                  <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+                    {localAuthNotice}
+                  </div>
+                )}
+
                 <div className="text-xs leading-6 text-[color:var(--text-muted)]">
-                  Google client: {appConfig.googleClientId ? 'configured in the browser' : 'missing VITE_GOOGLE_CLIENT_ID'}.
+                  Local accounts persist in a server file at .local-auth-accounts.json.
                 </div>
               </div>
             </div>
@@ -3274,7 +3882,7 @@ function App() {
                 )}
 
                 <button type="button" className="icon-button text-white" onClick={signOut}>
-                  <LogOut className="h-5 w-5" />
+                  <RefreshCw className="h-5 w-5" />
                 </button>
               </div>
             </div>
@@ -3372,8 +3980,8 @@ function App() {
                   className="dashboard-grid"
                   layouts={dashboardLayouts}
                   breakpoints={{ lg: 1280, md: 1024, sm: 640, xs: 0 }}
-                  cols={{ lg: 10, md: 10, sm: 2, xs: 1 }}
-                  rowHeight={56}
+                  cols={{ lg: 10, md: 10, sm: 5, xs: 1 }}
+                  rowHeight={52}
                   margin={[16, 16]}
                   containerPadding={[0, 0]}
                   draggableHandle=".dashboard-widget-handle"
@@ -3648,6 +4256,10 @@ function App() {
                       <div className="mb-2 flex flex-wrap items-center gap-2">
                         <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
                           {selectedTicket.id}
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2 py-0.5 text-xs text-[color:var(--text-muted)]">
+                          <Paperclip className="h-3.5 w-3.5" />
+                          {selectedTicket.attachmentCount ?? 0}
                         </span>
                         <span className={getStatusBadgeClass(selectedTicket.status)}>
                           {selectedTicket.status}
@@ -3924,8 +4536,9 @@ function App() {
                           </div>
                         </div>
                         <input
+                          ref={attachmentInputRef}
                           type="file"
-                          className="input-control"
+                          className="hidden"
                           onChange={(event) => setAttachmentFile(event.target.files?.[0] ?? null)}
                         />
                         <div className="flex items-center justify-between gap-3">
@@ -3934,15 +4547,25 @@ function App() {
                               ? `${attachmentFile.name} • ${formatFileSize(attachmentFile.size)}`
                               : 'Select a file up to 10 MB.'}
                           </div>
-                          <button
-                            type="button"
-                            className="primary-button"
-                            onClick={uploadAttachment}
-                            disabled={!attachmentFile || attachmentUploadPending}
-                          >
-                            <FileUp className="h-4 w-4" />
-                            {attachmentUploadPending ? 'Uploading...' : 'Upload'}
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => attachmentInputRef.current?.click()}
+                              disabled={attachmentUploadPending}
+                            >
+                              File upload
+                            </button>
+                            <button
+                              type="button"
+                              className="primary-button"
+                              onClick={uploadAttachment}
+                              disabled={attachmentUploadPending}
+                            >
+                              <FileUp className="h-4 w-4" />
+                              {attachmentUploadPending ? 'Uploading...' : 'Upload'}
+                            </button>
+                          </div>
                         </div>
                         {attachmentsError && (
                           <div className="rounded-[2px] border border-red-200 bg-red-50 p-3 text-sm text-red-700">

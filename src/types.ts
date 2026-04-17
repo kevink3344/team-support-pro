@@ -47,9 +47,12 @@ export interface User {
 }
 
 export interface AuthSession {
+  id?: string
   subject: string
   name: string
   email: string
+  role?: 'Admin' | 'Staff'
+  teamId?: string
   picture?: string
 }
 
@@ -86,6 +89,7 @@ export interface Ticket {
   priority: TicketPriority
   teamId: TeamId
   categoryId: CategoryId
+  attachmentCount?: number
   assignedToId: UserId | null
   requestorName: string
   requestorEmail: string

@@ -14,6 +14,7 @@ dist-ssr
 .env.*
 !.env.example
 *.local
+.local-auth-accounts.json
 
 # Editor directories and files
 .vscode/*

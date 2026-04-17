@@ -1,7 +1,6 @@
 import express from 'express'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
-import { OAuth2Client } from 'google-auth-library'
 import multer from 'multer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -54,11 +53,37 @@ import {
   ticketBelongsToTeam,
   updateTicket,
 } from './tickets.js'
+import {
+  authenticateLocalAccountPersisted,
+  registerLocalAccountPersisted,
+  upsertLocalAccountPersisted,
+} from './local-auth.js'
+import { getDb } from './db.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
 const currentDirPath = path.dirname(currentFilePath)
-const clientDistPath = path.resolve(currentDirPath, '..')
+const resolveClientDistPath = () => {
+  const candidates = [
+    path.resolve(currentDirPath, '..'),
+    path.resolve(currentDirPath, '../dist'),
+    path.resolve(process.cwd(), 'dist'),
+    path.resolve(process.cwd()),
+  ]
+
+  for (const candidate of candidates) {
+    const indexPath = path.join(candidate, 'index.html')
+    const assetsPath = path.join(candidate, 'assets')
+    if (fs.existsSync(indexPath) && fs.existsSync(assetsPath)) {
+      return candidate
+    }
+  }
+
+  // Fall back to the original location if no candidate has both index and assets.
+  return path.resolve(currentDirPath, '..')
+}
+
+const clientDistPath = resolveClientDistPath()
 const clientIndexPath = path.join(clientDistPath, 'index.html')
 const anonIndexPath = path.join(clientDistPath, 'anon', 'index.html')
 const hasClientBuild = fs.existsSync(clientIndexPath)
@@ -68,11 +93,6 @@ const attachmentUpload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024,
   },
-})
-const oauthClient = new OAuth2Client({
-  clientId: serverConfig.googleClientId,
-  clientSecret: serverConfig.googleClientSecret || undefined,
-  redirectUri: serverConfig.googleRedirectUri,
 })
 
 app.use(
@@ -119,93 +139,115 @@ const readTestApiKeyUserFromRequest = (req: express.Request): SessionUser | null
   }
 }
 
+const defaultSessionUser: SessionUser = {
+  id: 'u-kevin',
+  name: 'Kevin Key',
+  email: 'kevin.key@company.com',
+  role: 'Admin',
+  teamId: serverConfig.fallbackTeam.id || 'it',
+  teamName: serverConfig.fallbackTeam.name || 'IT Support',
+  teamCode: serverConfig.fallbackTeam.code || 'IT',
+  teamAccent: serverConfig.fallbackTeam.accent || '#0078d4',
+}
+
 const readSessionUserFromRequest = (req: express.Request): SessionUser | null => {
   const token = req.cookies[SESSION_COOKIE_NAME]
+  const testApiUser = readTestApiKeyUserFromRequest(req)
 
   if (!token) {
-    return readTestApiKeyUserFromRequest(req)
+    return testApiUser || defaultSessionUser
   }
 
   try {
     return readSessionToken(token)
   } catch {
-    return readTestApiKeyUserFromRequest(req)
+    return testApiUser || defaultSessionUser
   }
 }
 
 const isAdminUser = (user: SessionUser | null) => user?.role === 'Admin'
 
+const readRapidIdentityEnabled = () => {
+  const db = getDb()
+  const row = db
+    .prepare("SELECT Value AS value FROM AppSettings WHERE Key = 'rapidIdentityEnabled' LIMIT 1")
+    .get() as { value?: string } | undefined
+
+  if (!row?.value) {
+    return true
+  }
+
+  return row.value === 'true'
+}
+
+const writeRapidIdentityEnabled = (isEnabled: boolean) => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
+  ).run(isEnabled ? 'true' : 'false')
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/auth/google/client', async (req, res) => {
-  const credential = typeof req.body?.credential === 'string' ? req.body.credential : ''
+app.get('/api/public/auth-settings', (_req, res) => {
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
 
-  if (!credential) {
-    res.status(400).json({ error: 'missing_credential' })
+app.get('/api/settings/auth', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
     return
   }
 
-  try {
-    const ticket = await oauthClient.verifyIdToken({
-      idToken: credential,
-      audience: serverConfig.googleClientId,
-    })
-    const payload = ticket.getPayload()
-
-    if (!payload?.sub || !payload.email || !payload.name) {
-      res.status(400).json({ error: 'invalid_google_payload' })
-      return
-    }
-
-    const appUser = await resolveAuthenticatedUser({
-      subject: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
-    })
-
-    const sessionToken = createSessionToken(appUser)
-    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
-    res.json({
-      authenticated: true,
-      user: {
-        subject: payload.sub,
-        name: appUser.name,
-        email: appUser.email,
-        picture: appUser.picture,
-      },
-    })
-  } catch (error) {
-    console.error('Client Google authentication failed.', error)
-    res.status(401).json({ error: 'google_auth_failed' })
-  }
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
 })
 
-app.get('/auth/google', (_req, res) => {
-  if (!serverConfig.googleClientSecret) {
-    res.status(400).json({ error: 'oauth_redirect_not_configured' })
+app.patch('/api/settings/auth', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  if (typeof req.body?.rapidIdentityEnabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_auth_settings_payload' })
+    return
+  }
+
+  writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
+  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
+
+app.get('/auth/oidc', (_req, res) => {
+  if (!serverConfig.oidcEnabled) {
+    res.status(503).json({ error: 'OIDC authentication is not configured' })
     return
   }
 
   const state = createOAuthState()
   const params = new URLSearchParams({
-    client_id: serverConfig.googleClientId,
-    redirect_uri: serverConfig.googleRedirectUri,
+    client_id: serverConfig.oidcClientId,
+    redirect_uri: serverConfig.oidcRedirectUri,
     response_type: 'code',
-    scope: 'openid email profile',
-    access_type: 'offline',
-    include_granted_scopes: 'true',
-    prompt: 'select_account',
+    scope: 'openid',
     state,
   })
 
   res.cookie(OAUTH_STATE_COOKIE_NAME, state, buildCookieOptions(10 * 60 * 1000))
-  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`)
+  res.redirect(`${serverConfig.oidcAuthorizationUrl}?${params.toString()}`)
 })
 
-app.get('/auth/google/callback', async (req, res) => {
+app.get('/auth/oidc/callback', async (req, res) => {
+  if (!serverConfig.oidcEnabled) {
+    res.status(503).json({ error: 'OIDC authentication is not configured' })
+    return
+  }
+
   const state = typeof req.query.state === 'string' ? req.query.state : ''
   const code = typeof req.query.code === 'string' ? req.query.code : ''
   const storedState = req.cookies[OAUTH_STATE_COOKIE_NAME]
@@ -218,37 +260,70 @@ app.get('/auth/google/callback', async (req, res) => {
   }
 
   try {
-    const { tokens } = await oauthClient.getToken(code)
+    const tokenResponse = await fetch(serverConfig.oidcTokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: serverConfig.oidcRedirectUri,
+        client_id: serverConfig.oidcClientId,
+        client_secret: serverConfig.oidcClientSecret,
+      }),
+    })
 
-    if (!tokens.id_token) {
-      res.redirect(`${serverConfig.clientUrl}?authError=missing_id_token`)
+    if (!tokenResponse.ok) {
+      console.error('OIDC token exchange failed.', await tokenResponse.text())
+      res.redirect(`${serverConfig.clientUrl}?authError=token_exchange_failed`)
       return
     }
 
-    const ticket = await oauthClient.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: serverConfig.googleClientId,
-    })
-    const payload = ticket.getPayload()
+    const tokens = (await tokenResponse.json()) as { access_token?: string }
 
-    if (!payload?.sub || !payload.email || !payload.name) {
-      res.redirect(`${serverConfig.clientUrl}?authError=invalid_google_payload`)
+    if (!tokens.access_token) {
+      res.redirect(`${serverConfig.clientUrl}?authError=missing_access_token`)
+      return
+    }
+
+    const userinfoResponse = await fetch(serverConfig.oidcUserinfoUrl, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    })
+
+    if (!userinfoResponse.ok) {
+      console.error('OIDC userinfo fetch failed.', await userinfoResponse.text())
+      res.redirect(`${serverConfig.clientUrl}?authError=userinfo_failed`)
+      return
+    }
+
+    const userinfo = (await userinfoResponse.json()) as {
+      sub?: string
+      email?: string
+      name?: string
+      given_name?: string
+      family_name?: string
+    }
+
+    const sub = userinfo.sub || ''
+    const email = userinfo.email || ''
+    const name = userinfo.name || [userinfo.given_name, userinfo.family_name].filter(Boolean).join(' ') || email
+
+    if (!sub || !email) {
+      res.redirect(`${serverConfig.clientUrl}?authError=invalid_userinfo`)
       return
     }
 
     const appUser = await resolveAuthenticatedUser({
-      subject: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      picture: payload.picture,
+      subject: sub,
+      email,
+      name,
     })
 
     const sessionToken = createSessionToken(appUser)
     res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(7 * 24 * 60 * 60 * 1000))
     res.redirect(serverConfig.clientUrl)
   } catch (error) {
-    console.error('Google authentication failed.', error)
-    res.redirect(`${serverConfig.clientUrl}?authError=google_auth_failed`)
+    console.error('OIDC authentication failed.', error)
+    res.redirect(`${serverConfig.clientUrl}?authError=oidc_auth_failed`)
   }
 })
 
@@ -261,6 +336,88 @@ app.get('/api/auth/me', (req, res) => {
   }
 
   res.json({ authenticated: true, user })
+})
+
+app.post('/api/auth/register', async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name : ''
+  const email = typeof req.body?.email === 'string' ? req.body.email : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const rememberMe = req.body?.rememberMe === true
+  const registration = await registerLocalAccountPersisted(name, email, password)
+
+  if ('error' in registration) {
+    if (registration.error === 'email_exists') {
+      res.status(409).json({ error: registration.error })
+      return
+    }
+
+    res.status(400).json({ error: registration.error })
+    return
+  }
+
+  try {
+    const appUser = await resolveAuthenticatedUser({
+      subject: `local-${registration.account.email}`,
+      email: registration.account.email,
+      name: registration.account.name,
+    })
+
+    const sessionMaxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    const sessionToken = createSessionToken(appUser, rememberMe ? '30d' : '7d')
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(sessionMaxAgeMs))
+    res.status(201).json({
+      authenticated: true,
+      user: {
+        id: appUser.id,
+        subject: `local-${registration.account.email}`,
+        name: appUser.name,
+        email: appUser.email,
+        role: appUser.role,
+        teamId: appUser.teamId,
+      },
+    })
+  } catch (error) {
+    console.error('Local registration session creation failed.', error)
+    res.status(500).json({ error: 'local_registration_failed' })
+  }
+})
+
+app.post('/api/auth/local/login', async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email : ''
+  const password = typeof req.body?.password === 'string' ? req.body.password : ''
+  const rememberMe = req.body?.rememberMe === true
+  const login = await authenticateLocalAccountPersisted(email, password)
+
+  if ('error' in login) {
+    res.status(login.error === 'invalid_email' ? 400 : 401).json({ error: login.error })
+    return
+  }
+
+  try {
+    const appUser = await resolveAuthenticatedUser({
+      subject: `local-${login.account.email}`,
+      email: login.account.email,
+      name: login.account.name,
+    })
+
+    const sessionMaxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    const sessionToken = createSessionToken(appUser, rememberMe ? '30d' : '7d')
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(sessionMaxAgeMs))
+    res.json({
+      authenticated: true,
+      user: {
+        id: appUser.id,
+        subject: `local-${login.account.email}`,
+        name: appUser.name,
+        email: appUser.email,
+        role: appUser.role,
+        teamId: appUser.teamId,
+      },
+    })
+  } catch (error) {
+    console.error('Local login session creation failed.', error)
+    res.status(500).json({ error: 'local_login_failed' })
+  }
 })
 
 app.get('/api/tickets', async (req, res) => {
@@ -1043,27 +1200,89 @@ app.post('/api/auth/logout', (_req, res) => {
   res.status(204).end()
 })
 
+const ensureBootstrapAdmin = async () => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', 'true', datetime('now')) ON CONFLICT(Key) DO NOTHING",
+  ).run()
+
+  const adminEmail = serverConfig.localAdmin.email
+  const adminPassword = serverConfig.localAdmin.password
+  const adminName = serverConfig.localAdmin.name
+
+  if (!adminEmail || !adminPassword) {
+    return
+  }
+
+  const accountResult = await upsertLocalAccountPersisted(adminName, adminEmail, adminPassword)
+  if ('error' in accountResult) {
+    console.error('LOCAL_ADMIN_* bootstrap failed for local auth account.', accountResult.error)
+    return
+  }
+
+  const teamId = serverConfig.fallbackTeam.id || 'it'
+  const existingUser = db
+    .prepare('SELECT Id AS id FROM Users WHERE LOWER(Email) = LOWER(?) LIMIT 1')
+    .get(adminEmail) as { id: string } | undefined
+
+  if (existingUser?.id) {
+    db.prepare(
+      "UPDATE Users SET Name = ?, DisplayName = ?, TeamId = ?, Role = 'Admin', UpdatedAt = datetime('now') WHERE Id = ?",
+    ).run(adminName, adminName, teamId, existingUser.id)
+    return
+  }
+
+  db.prepare(
+    "INSERT INTO Users (Id, Name, DisplayName, Email, TeamId, Role, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, 'Admin', datetime('now'), datetime('now'))",
+  ).run('u-local-admin', adminName, adminName, adminEmail, teamId)
+}
+
 if (hasClientBuild) {
-  app.use(express.static(clientDistPath))
+  app.use(express.static(clientDistPath, {
+    maxAge: '1y',
+    immutable: true,
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.html')) {
+        res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
+      }
+    },
+  }))
 
   if (hasAnonBuild) {
     app.get('/anon', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
       res.sendFile(anonIndexPath)
     })
 
     app.get('/anon/', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
       res.sendFile(anonIndexPath)
     })
   }
 
-  app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$)).*/, (_req, res) => {
+  app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$))(?!\/assets(?:\/|$))(?!.*\.[a-z0-9]+$).*/i, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
     res.sendFile(clientIndexPath)
   })
 }
 
-app.listen(serverConfig.serverPort, () => {
-  console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)
-})
+const startServer = async () => {
+  try {
+    await ensureBootstrapAdmin()
+  } catch (error) {
+    console.error('Bootstrap admin setup failed.', error)
+  }
+
+  console.log(`Client build root resolved to: ${clientDistPath}`)
+  console.log(`Client index found: ${hasClientBuild}`)
+  console.log(`Anonymous index found: ${hasAnonBuild}`)
+
+  app.listen(serverConfig.serverPort, () => {
+    console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)
+  })
+}
+
+void startServer()
 
 app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (error instanceof multer.MulterError) {

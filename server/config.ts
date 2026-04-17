@@ -11,17 +11,23 @@ const envSchema = z.object({
   TEST_API_KEY: z.string().optional(),
   TEST_API_USER_NAME: z.string().default('Postman IT Staff'),
   TEST_API_USER_EMAIL: z.string().email().default('postman.it.staff@local.test'),
-  GOOGLE_CLIENT_ID: z.string().min(1, 'GOOGLE_CLIENT_ID is required').optional(),
-  VITE_GOOGLE_CLIENT_ID: z.string().optional(),
-  GOOGLE_CLIENT_SECRET: z.string().optional(),
-  GOOGLE_REDIRECT_URI: z.string().url().default('http://localhost:3001/auth/google/callback'),
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  OIDC_CLIENT_ID: z.string().optional(),
+  OIDC_CLIENT_SECRET: z.string().optional(),
+  OIDC_AUTHORIZATION_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/auth'),
+  OIDC_TOKEN_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/token'),
+  OIDC_USERINFO_URL: z.string().url().default('https://stargate.wcpss.net/idp/profile/oidc/userinfo'),
+  OIDC_REDIRECT_URI: z.string().url().default('http://localhost:3001/auth/oidc/callback'),
+  JWT_SECRET: z.string().min(16).optional(),
   DB_SERVER: z.string().optional(),
   DB_PORT: z.coerce.number().int().positive().optional(),
   PORT: z.coerce.number().int().positive().optional(),
   DB_DATABASE: z.string().optional(),
   DB_USER: z.string().optional(),
   DB_PASSWORD: z.string().optional(),
+  DB_SQLITE_PATH: z.string().optional(),
+  LOCAL_ADMIN_NAME: z.string().optional(),
+  LOCAL_ADMIN_EMAIL: z.string().email().optional(),
+  LOCAL_ADMIN_PASSWORD: z.string().min(8).optional(),
   AUTH_USER_LOOKUP_QUERY: z.string().optional(),
   AUTH_FALLBACK_TEAM_ID: z.string().default('it'),
   AUTH_FALLBACK_TEAM_NAME: z.string().default('IT Support'),
@@ -37,6 +43,14 @@ const allowedOrigins = (parsed.ALLOWED_ORIGINS || parsed.CLIENT_URL)
   .map((origin) => origin.trim())
   .filter(Boolean)
 
+// Generate a default JWT secret for development if not provided
+const defaultJwtSecret = () => {
+  if (parsed.NODE_ENV === 'production') {
+    console.warn('WARNING: JWT_SECRET not set in production. Using insecure fallback for development only.')
+  }
+  return 'dev-insecure-jwt-key-change-in-production'
+}
+
 export const serverConfig = {
   nodeEnv: parsed.NODE_ENV,
   isProduction: parsed.NODE_ENV === 'production',
@@ -47,16 +61,26 @@ export const serverConfig = {
   testApiKey: parsed.TEST_API_KEY?.trim() || '',
   testApiUserName: parsed.TEST_API_USER_NAME,
   testApiUserEmail: parsed.TEST_API_USER_EMAIL.toLowerCase(),
-  googleClientId: parsed.GOOGLE_CLIENT_ID || parsed.VITE_GOOGLE_CLIENT_ID || '',
-  googleClientSecret: parsed.GOOGLE_CLIENT_SECRET || '',
-  googleRedirectUri: parsed.GOOGLE_REDIRECT_URI,
-  jwtSecret: parsed.JWT_SECRET,
+  oidcEnabled: !!(parsed.OIDC_CLIENT_ID && parsed.OIDC_CLIENT_SECRET),
+  oidcClientId: parsed.OIDC_CLIENT_ID || '',
+  oidcClientSecret: parsed.OIDC_CLIENT_SECRET || '',
+  oidcAuthorizationUrl: parsed.OIDC_AUTHORIZATION_URL,
+  oidcTokenUrl: parsed.OIDC_TOKEN_URL,
+  oidcUserinfoUrl: parsed.OIDC_USERINFO_URL,
+  oidcRedirectUri: parsed.OIDC_REDIRECT_URI,
+  jwtSecret: parsed.JWT_SECRET || defaultJwtSecret(),
   db: {
     server: parsed.DB_SERVER || '',
     port: parsed.DB_PORT || 1433,
     database: parsed.DB_DATABASE || '',
     user: parsed.DB_USER || '',
     password: parsed.DB_PASSWORD || '',
+    sqlitePath: parsed.DB_SQLITE_PATH || '',
+  },
+  localAdmin: {
+    name: parsed.LOCAL_ADMIN_NAME?.trim() || 'Administrator',
+    email: parsed.LOCAL_ADMIN_EMAIL?.trim().toLowerCase() || '',
+    password: parsed.LOCAL_ADMIN_PASSWORD || '',
   },
   authUserLookupQuery: parsed.AUTH_USER_LOOKUP_QUERY || '',
   fallbackTeam: {
@@ -68,6 +92,3 @@ export const serverConfig = {
   fallbackRole: parsed.AUTH_FALLBACK_ROLE,
 }
 
-if (!serverConfig.googleClientId) {
-  throw new Error('GOOGLE_CLIENT_ID or VITE_GOOGLE_CLIENT_ID must be configured for backend auth.')
-}
