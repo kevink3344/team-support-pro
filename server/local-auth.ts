@@ -232,27 +232,35 @@ export const upsertLocalAccountPersisted = async (
 }
 
 export const changeLocalAccountPasswordPersisted = async (
+  name: string,
   email: string,
   newPassword: string,
-): Promise<{ ok: true } | { error: 'user_not_found' | 'invalid_password' }> => {
+): Promise<{ ok: true } | { error: 'invalid_name' | 'invalid_email' | 'invalid_password' }> => {
   await loadLocalAccounts()
 
+  const normalizedName = normalizeName(name)
   const normalizedEmail = normalizeEmail(email)
-  const existing = localAccountsByEmail.get(normalizedEmail)
 
-  if (!existing) {
-    return { error: 'user_not_found' }
+  if (normalizedName.length < 2) {
+    return { error: 'invalid_name' }
+  }
+
+  if (!emailPattern.test(normalizedEmail)) {
+    return { error: 'invalid_email' }
   }
 
   if (newPassword.length < 8) {
     return { error: 'invalid_password' }
   }
 
+  const existing = localAccountsByEmail.get(normalizedEmail)
   const passwordSalt = crypto.randomBytes(16).toString('hex')
   localAccountsByEmail.set(normalizedEmail, {
-    ...existing,
+    name: normalizedName,
+    email: normalizedEmail,
     passwordSalt,
     passwordHash: hashPassword(newPassword, passwordSalt),
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
   })
 
   await queueLocalAccountsPersist()

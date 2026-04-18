@@ -805,14 +805,10 @@ app.post('/api/users/:userId/change-password', async (req, res) => {
       return
     }
 
-    const result = await changeLocalAccountPasswordPersisted(targetUser.email, newPassword)
+    const result = await changeLocalAccountPasswordPersisted(targetUser.name, targetUser.email, newPassword)
     if ('error' in result) {
-      // user_not_found in local-auth means they have no local account yet — that is fine;
-      // the admin may be pre-setting a password before the user first logs in.
-      if (result.error !== 'user_not_found') {
-        res.status(400).json({ error: result.error })
-        return
-      }
+      res.status(400).json({ error: result.error })
+      return
     }
 
     res.json({ ok: true })
