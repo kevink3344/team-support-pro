@@ -181,9 +181,9 @@ export function AnonymousTicketPage() {
             <div>
               <div className="mb-2 inline-flex items-center gap-2 rounded-[2px] border border-[color:var(--border)] px-3 py-1 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
                 <Ticket className="h-3.5 w-3.5" />
-                Anonymous Support Ticket
+                SUPPORT TICKET
               </div>
-              <h1 className="text-2xl font-semibold md:text-3xl">Submit a support request without signing in</h1>
+              <h1 className="text-2xl font-semibold md:text-3xl">Submit a support request</h1>
               <p className="mt-2 max-w-2xl text-sm text-[color:var(--text-muted)] md:text-base">
                 Choose the team that should receive the request, then select the category that best matches your issue. Priority and assignment will be handled by staff after intake.
               </p>

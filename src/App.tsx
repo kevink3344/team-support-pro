@@ -633,7 +633,7 @@ function App() {
   const [authSettingsError, setAuthSettingsError] = useState('')
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
-    appearance: true,
+    appearance: false,
     authentication: false,
     addUser: false,
     manageUsers: false,
