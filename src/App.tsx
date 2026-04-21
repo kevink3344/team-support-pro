@@ -3935,12 +3935,12 @@ function App() {
 
                 <button
                   type="button"
-                  className="secondary-button border-white/20 bg-white/5 px-3 py-2 text-white hover:bg-white/12"
+                  className="p-2 text-white hover:bg-white/12 rounded"
                   style={{ color: '#ffffff' }}
                   onClick={signOut}
+                  title="Sign Out"
                 >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  Sign Out
+                  <LogOut className="h-5 w-5" />
                 </button>
               </div>
             </div>
