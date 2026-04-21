@@ -745,9 +745,9 @@ function App() {
   const unassignedCount = useMemo(
     () =>
       tickets.filter(
-        (ticket) => ticket.teamId === currentUser.teamId && !ticket.assignedToId,
+        (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
       ).length,
-    [tickets, currentUser.teamId],
+    [tickets, currentUser.teamId, availableUsers, getUserById],
   )
   const activePalette = isThemeConfig(themeConfig)
     ? themeConfig[themeMode]
@@ -1338,7 +1338,7 @@ function App() {
     switch (activeView) {
       case 'unassigned':
         return tickets.filter(
-          (ticket) => ticket.teamId === currentUser.teamId && !ticket.assignedToId,
+          (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
         )
       case 'my-tickets':
         return tickets.filter(
