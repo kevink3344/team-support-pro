@@ -735,6 +735,13 @@ function App() {
   const currentTeamMembers = availableUsers.some((user) => user.id === currentUser.id)
     ? availableUsers.filter((user) => user.teamId === currentUser.teamId)
     : [...availableUsers.filter((user) => user.teamId === currentUser.teamId), currentUser]
+
+  const getTeamById = (teamId: string) => teams.find((team) => team.id === teamId)
+  const getCategoryById = (categoryId: string) =>
+    categories.find((category) => category.id === categoryId)
+  const getUserById = (userId: string | null) =>
+    users.find((user) => user.id === userId)
+
   const notificationSourceTickets = useMemo(
     () =>
       tickets.filter(
@@ -747,7 +754,7 @@ function App() {
       tickets.filter(
         (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
       ).length,
-    [tickets, currentUser.teamId, availableUsers, getUserById],
+    [tickets, currentUser.teamId, availableUsers],
   )
   const activePalette = isThemeConfig(themeConfig)
     ? themeConfig[themeMode]
@@ -1302,12 +1309,6 @@ function App() {
   useEffect(() => {
     setCreateTicketError('')
   }, [activeView])
-
-  const getTeamById = (teamId: string) => teams.find((team) => team.id === teamId)
-  const getCategoryById = (categoryId: string) =>
-    categories.find((category) => category.id === categoryId)
-  const getUserById = (userId: string | null) =>
-    users.find((user) => user.id === userId)
 
   const refreshTicket = async (ticketId: string) => {
     const response = await fetch(apiUrl(`/api/tickets/${ticketId}`), {
