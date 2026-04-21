@@ -742,6 +742,13 @@ function App() {
       ),
     [tickets, currentUser.teamId, currentUser.id],
   )
+  const unassignedCount = useMemo(
+    () =>
+      tickets.filter(
+        (ticket) => ticket.teamId === currentUser.teamId && !ticket.assignedToId,
+      ).length,
+    [tickets, currentUser.teamId],
+  )
   const activePalette = isThemeConfig(themeConfig)
     ? themeConfig[themeMode]
     : defaultThemeConfig[themeMode]
@@ -3470,7 +3477,14 @@ function App() {
             title={collapsed ? label : undefined}
           >
             <Icon className="h-5 w-5 shrink-0" />
-            {!collapsed && <span>{label}</span>}
+            {!collapsed && (
+              <span className="flex-1 text-left">{label}</span>
+            )}
+            {!collapsed && id === 'unassigned' && unassignedCount > 0 && (
+              <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-xs font-semibold text-white">
+                {unassignedCount}
+              </span>
+            )}
           </button>
         ))}
       </nav>
