@@ -615,8 +615,8 @@ button {
 
 @media (max-width: 768px) {
   :root {
-    --mobile-ui-scale: 1.5;
-    --mobile-button-scale: 1.25;
+    --mobile-ui-scale: 1;
+    --mobile-button-scale: 1;
   }
 
   html {
