@@ -6,6 +6,7 @@
 }
 
 :root {
+  --mobile-ui-scale: 1;
   font-family: 'Work Sans', sans-serif;
   color: #10243b;
   background: #f4f7fb;
@@ -613,6 +614,57 @@ button {
 }
 
 @media (max-width: 768px) {
+  :root {
+    --mobile-ui-scale: 1.5;
+    --mobile-button-scale: 1.25;
+  }
+
+  html {
+    font-size: calc(100% * var(--mobile-ui-scale));
+  }
+
+  .field-label,
+  .input-control,
+  .view-toggle,
+  .sidebar-link,
+  .tab-link,
+  .badge,
+  .dashboard-reset-button {
+    font-size: calc(1em * var(--mobile-ui-scale));
+  }
+
+  .primary-button,
+  .secondary-button,
+  .google-login-button {
+    font-size: calc(1em * var(--mobile-button-scale));
+  }
+
+  .primary-button,
+  .secondary-button,
+  .google-login-button {
+    padding: calc(10px * var(--mobile-button-scale)) calc(14px * var(--mobile-button-scale));
+    min-height: calc(44px * var(--mobile-button-scale));
+  }
+
+  .input-control {
+    padding: calc(10px * var(--mobile-ui-scale)) calc(14px * var(--mobile-ui-scale));
+    min-height: calc(44px * var(--mobile-ui-scale));
+  }
+
+  .google-login-button {
+    gap: calc(14px * var(--mobile-button-scale));
+  }
+
+  .google-login-icon {
+    width: calc(32px * var(--mobile-button-scale));
+    height: calc(32px * var(--mobile-button-scale));
+  }
+
+  .icon-button {
+    width: calc(36px * var(--mobile-button-scale));
+    height: calc(36px * var(--mobile-button-scale));
+  }
+
   .login-shell {
     align-items: flex-start;
   }
