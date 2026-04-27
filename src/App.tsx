@@ -69,7 +69,9 @@ import type {
   ActivityEntry,
   AppView,
   AuthSession,
+  Category,
   ListViewMode,
+  Team,
   ThemeConfig,
   ThemeMode,
   TicketAttachment,
@@ -2247,6 +2249,62 @@ function App() {
     )
   }
 
+  const persistTeam = async (team: Team) => {
+    const normalizedTeam = {
+      ...team,
+      name: team.name.trim(),
+      code: team.code.trim().toUpperCase(),
+      accent: team.accent.trim(),
+    }
+
+    if (!normalizedTeam.name || !normalizedTeam.code || !normalizedTeam.accent) {
+      // Maybe set an error, but for now just return
+      return
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/teams/${normalizedTeam.id}`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: normalizedTeam.name,
+          code: normalizedTeam.code,
+          accent: normalizedTeam.accent,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        // Admin required
+        return
+      }
+
+      if (!response.ok) {
+        // Could set an error state
+        return
+      }
+
+      const payload = (await response.json()) as {
+        team?: Team
+      }
+
+      if (payload.team) {
+        setTeams((current) =>
+          current.map((entry) => (entry.id === payload.team?.id ? (payload.team as Team) : entry)),
+        )
+      }
+    } catch {
+      // Error handling
+    }
+  }
+
   const addCategory = () => {
     if (!categoryForm.name.trim() || !categoryForm.teamId) {
       return
@@ -2283,6 +2341,62 @@ function App() {
           : category,
       ),
     )
+  }
+
+  const persistCategory = async (category: Category) => {
+    const normalizedCategory = {
+      ...category,
+      name: category.name.trim(),
+      description: category.description.trim(),
+      teamId: category.teamId.trim(),
+    }
+
+    if (!normalizedCategory.name || !normalizedCategory.teamId) {
+      // Maybe set an error
+      return
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/categories/${normalizedCategory.id}`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: normalizedCategory.name,
+          description: normalizedCategory.description,
+          teamId: normalizedCategory.teamId,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        // Admin required
+        return
+      }
+
+      if (!response.ok) {
+        // Error
+        return
+      }
+
+      const payload = (await response.json()) as {
+        category?: Category
+      }
+
+      if (payload.category) {
+        setCategories((current) =>
+          current.map((entry) => (entry.id === payload.category?.id ? (payload.category as Category) : entry)),
+        )
+      }
+    } catch {
+      // Error
+    }
   }
 
   const addUser = async () => {
@@ -3082,17 +3196,20 @@ function App() {
                       className="input-control"
                       value={team.name}
                       onChange={(event) => updateTeam(team.id, 'name', event.target.value)}
+                      onBlur={() => void persistTeam(team)}
                     />
                     <input
                       className="input-control font-mono"
                       value={team.code}
                       onChange={(event) => updateTeam(team.id, 'code', event.target.value)}
+                      onBlur={() => void persistTeam(team)}
                     />
                     <input
                       type="color"
                       className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
                       value={team.accent}
                       onChange={(event) => updateTeam(team.id, 'accent', event.target.value)}
+                      onBlur={() => void persistTeam(team)}
                     />
                   </div>
                 ))}
@@ -3137,6 +3254,7 @@ function App() {
                       className="input-control"
                       value={category.teamId}
                       onChange={(event) => updateCategory(category.id, 'teamId', event.target.value)}
+                      onBlur={() => void persistCategory(category)}
                     >
                       {teams.map((team) => (
                         <option key={team.id} value={team.id}>
@@ -3148,11 +3266,13 @@ function App() {
                       className="input-control"
                       value={category.name}
                       onChange={(event) => updateCategory(category.id, 'name', event.target.value)}
+                      onBlur={() => void persistCategory(category)}
                     />
                     <input
                       className="input-control"
                       value={category.description}
                       onChange={(event) => updateCategory(category.id, 'description', event.target.value)}
+                      onBlur={() => void persistCategory(category)}
                     />
                   </div>
                 ))}
