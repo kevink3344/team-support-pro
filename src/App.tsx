@@ -2213,7 +2213,7 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  const addTeam = () => {
+  const addTeam = async () => {
     if (!teamForm.name.trim()) {
       return
     }
@@ -2223,17 +2223,48 @@ function App() {
       return
     }
 
-    setTeams((current) => [
-      ...current,
-      {
-        id: teamId,
-        name: teamForm.name.trim(),
-        code: teamForm.code.trim().toUpperCase() || teamForm.name.trim().slice(0, 3).toUpperCase(),
-        accent: teamForm.accent,
-      },
-    ])
-    setTeamForm({ name: '', code: '', accent: '#0078d4' })
-    setCategoryForm((current) => ({ ...current, teamId }))
+    try {
+      const response = await fetch(apiUrl('/api/teams'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          id: teamId,
+          name: teamForm.name.trim(),
+          code: teamForm.code.trim().toUpperCase() || teamForm.name.trim().slice(0, 3).toUpperCase(),
+          accent: teamForm.accent,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        // Admin required
+        return
+      }
+
+      if (!response.ok) {
+        // Error
+        return
+      }
+
+      const payload = (await response.json()) as {
+        team?: Team
+      }
+
+      if (payload.team) {
+        setTeams((current) => [...current, payload.team as Team])
+        setTeamForm({ name: '', code: '', accent: '#0078d4' })
+        setCategoryForm((current) => ({ ...current, teamId }))
+      }
+    } catch {
+      // Error
+    }
   }
 
   const updateTeam = (teamId: string, field: 'name' | 'code' | 'accent', value: string) => {
@@ -2305,25 +2336,55 @@ function App() {
     }
   }
 
-  const addCategory = () => {
+  const addCategory = async () => {
     if (!categoryForm.name.trim() || !categoryForm.teamId) {
       return
     }
 
-    setCategories((current) => [
-      ...current,
-      {
-        id: `cat-${slugify(categoryForm.teamId)}-${slugify(categoryForm.name)}`,
-        teamId: categoryForm.teamId,
-        name: categoryForm.name.trim(),
-        description: categoryForm.description.trim() || 'Custom admin category.',
-      },
-    ])
-    setCategoryForm((current) => ({
-      ...current,
-      name: '',
-      description: '',
-    }))
+    try {
+      const response = await fetch(apiUrl('/api/categories'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          teamId: categoryForm.teamId,
+          name: categoryForm.name.trim(),
+          description: categoryForm.description.trim() || 'Custom admin category.',
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        // Admin required
+        return
+      }
+
+      if (!response.ok) {
+        // Error
+        return
+      }
+
+      const payload = (await response.json()) as {
+        category?: Category
+      }
+
+      if (payload.category) {
+        setCategories((current) => [...current, payload.category as Category])
+        setCategoryForm((current) => ({
+          ...current,
+          name: '',
+          description: '',
+        }))
+      }
+    } catch {
+      // Error
+    }
   }
 
   const updateCategory = (
