@@ -19,6 +19,7 @@ export type AppView =
   | 'my-tickets'
   | 'team-tickets'
   | 'new-ticket'
+  | 'reports'
   | 'settings'
 
 export type ListViewMode = 'table' | 'cards'
@@ -103,6 +104,28 @@ export interface Ticket {
 export interface TrendPoint {
   date: string
   values: Record<string, number>
+}
+
+export interface TicketReport {
+  status: string
+  count: number
+}
+
+export interface PriorityReport {
+  priority: string
+  count: number
+}
+
+export interface AssigneeReport {
+  assigneeId: string | null
+  assigneeName: string | null
+  count: number
+}
+
+export interface TrendReport {
+  date: string
+  created: number
+  resolved: number
 }
 
 export interface ThemePalette {

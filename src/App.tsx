@@ -81,6 +81,7 @@ import type {
   TrendPoint,
   User,
 } from './types'
+import { ReportsPage } from './ReportsPage'
 
 const STORAGE_KEYS = {
   auth: 'team-support-pro-auth',
@@ -335,7 +336,10 @@ const navItems: Array<{
   { id: 'new-ticket', label: 'New Ticket', icon: Plus },
 ]
 
-const adminNavItem = { id: 'settings' as AppView, label: 'Settings', icon: Settings2 }
+const adminNavItems = [
+  { id: 'reports' as AppView, label: 'Reports', icon: FileUp },
+  { id: 'settings' as AppView, label: 'Settings', icon: Settings2 },
+]
 
 const teamIcons: Record<string, LucideIcon> = {
   it: Wrench,
@@ -730,7 +734,7 @@ function App() {
       createMockSessionUser(authSession)
     : availableUsers.find((user) => user.id === currentUserId) ?? availableUsers[0]
   const visibleNavItems =
-    currentUser.role === 'Admin' ? [...navItems, adminNavItem] : navItems
+    currentUser.role === 'Admin' ? [...navItems, ...adminNavItems] : navItems
   const currentTeam = availableTeams.find((team) => team.id === currentUser.teamId) ?? availableTeams[0]
   const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
@@ -1143,7 +1147,7 @@ function App() {
   }, [authSession])
 
   useEffect(() => {
-    if (currentUser.role !== 'Admin' && activeView === 'settings') {
+    if (currentUser.role !== 'Admin' && (activeView === 'settings' || activeView === 'reports')) {
       setActiveView('dashboard')
     }
   }, [activeView, currentUser.role])
@@ -4150,14 +4154,14 @@ function App() {
                     ? `${tickets.length} total tickets`
                     : activeView === 'notifications'
                       ? `${unreadNotificationCount} unread items assigned to you`
-                    : activeView === 'settings'
+                    : activeView === 'settings' || activeView === 'reports'
                       ? `${users.length} users across ${teams.length} teams`
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
                 </div>
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {activeView !== 'settings' && activeView !== 'notifications' && (
+                {activeView !== 'settings' && activeView !== 'notifications' && activeView !== 'reports' && (
                   <>
                     {activeView === 'dashboard' && (
                       <button
@@ -4256,6 +4260,8 @@ function App() {
               activeView === 'team-tickets') && renderTicketCollection()}
 
             {activeView === 'notifications' && renderNotificationsPage()}
+
+            {activeView === 'reports' && currentUser.role === 'Admin' && <ReportsPage sessionToken={null} />}
 
             {activeView === 'settings' && currentUser.role === 'Admin' && renderAdminSettingsPage()}
 
