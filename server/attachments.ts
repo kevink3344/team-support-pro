@@ -27,6 +27,47 @@ interface CreateAttachmentInput {
   uploadedByName: string
 }
 
+const BASE64_TEXT_PATTERN = /^[A-Za-z0-9+/=\r\n]+$/
+
+const looksLikeLegacyBase64Blob = (fileContent: Buffer, contentType: string) => {
+  if (!fileContent.length) {
+    return false
+  }
+
+  const normalizedContentType = contentType.toLowerCase()
+  if (normalizedContentType.startsWith('text/')) {
+    return false
+  }
+
+  const sourceText = fileContent.toString('utf8').trim()
+  if (!sourceText || sourceText.length % 4 !== 0 || !BASE64_TEXT_PATTERN.test(sourceText)) {
+    return false
+  }
+
+  try {
+    const decoded = Buffer.from(sourceText, 'base64')
+    if (!decoded.length || decoded.length >= fileContent.length) {
+      return false
+    }
+
+    if (normalizedContentType === 'application/pdf') {
+      return decoded.subarray(0, 4).toString('utf8') === '%PDF'
+    }
+
+    return true
+  } catch {
+    return false
+  }
+}
+
+const normalizeAttachmentFileContent = (fileContent: Buffer, contentType: string) => {
+  if (!looksLikeLegacyBase64Blob(fileContent, contentType)) {
+    return fileContent
+  }
+
+  return Buffer.from(fileContent.toString('utf8').trim(), 'base64')
+}
+
 const mapAttachmentRecord = (record: Record<string, unknown>): TicketAttachmentRecord => ({
   id: String(record.id),
   ticketId: String(record.ticketId),
@@ -38,10 +79,15 @@ const mapAttachmentRecord = (record: Record<string, unknown>): TicketAttachmentR
   uploadedAt: new Date(String(record.uploadedAt)).toISOString(),
 })
 
-const mapAttachmentBlobRecord = (record: Record<string, unknown>): TicketAttachmentBlobRecord => ({
-  ...mapAttachmentRecord(record),
-  fileContent: Buffer.from(record.fileContent as Buffer),
-})
+const mapAttachmentBlobRecord = (record: Record<string, unknown>): TicketAttachmentBlobRecord => {
+  const metadata = mapAttachmentRecord(record)
+  const rawFileContent = Buffer.from(record.fileContent as Buffer)
+
+  return {
+    ...metadata,
+    fileContent: normalizeAttachmentFileContent(rawFileContent, metadata.contentType),
+  }
+}
 
 export const listTicketAttachments = async (ticketId: string): Promise<TicketAttachmentRecord[]> => {
   const db = getDb()

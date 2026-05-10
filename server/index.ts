@@ -1156,6 +1156,7 @@ app.get('/api/tickets/:ticketId/attachments/:attachmentId', async (req, res) => 
   const user = readSessionUserFromRequest(req)
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
+  const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment'
 
   if (!user) {
     res.status(401).json({ error: 'unauthenticated' })
@@ -1176,7 +1177,7 @@ app.get('/api/tickets/:ticketId/attachments/:attachmentId', async (req, res) => 
 
     res.setHeader('Content-Type', attachment.contentType)
     res.setHeader('Content-Length', String(attachment.fileSizeBytes))
-    res.setHeader('Content-Disposition', `attachment; filename="${attachment.fileName.replace(/"/g, '')}"`)
+    res.setHeader('Content-Disposition', `${disposition}; filename="${attachment.fileName.replace(/"/g, '')}"`)
     res.send(attachment.fileContent)
   } catch (error) {
     console.error('Downloading attachment failed.', error)

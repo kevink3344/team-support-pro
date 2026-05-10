@@ -166,7 +166,7 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
           <h2 className="text-lg font-semibold mb-4">Tickets by Assignee</h2>
           {assigneeData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={assigneeData} layout="horizontal">
+              <BarChart data={assigneeData} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis type="number" />
                 <YAxis dataKey="assigneeName" type="category" width={100} />

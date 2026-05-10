@@ -81,6 +81,7 @@ import type {
   TrendPoint,
   User,
 } from './types'
+import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
 
 const STORAGE_KEYS = {
@@ -520,7 +521,53 @@ interface NotificationItem {
   actor: string
   message: string
   at: string
+  type: 'activity' | 'mention' | 'seeded'
   seeded?: boolean
+}
+
+const toMentionHandle = (name: string) =>
+  name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.+|\.+$/g, '')
+
+const buildMentionLookup = (users: User[]) => {
+  const lookup = new Map<string, string>()
+
+  users.forEach((user) => {
+    const normalizedId = user.id.trim().toLowerCase()
+    const handle = toMentionHandle(user.name)
+
+    if (normalizedId && !lookup.has(normalizedId)) {
+      lookup.set(normalizedId, user.id)
+    }
+
+    if (handle && !lookup.has(handle)) {
+      lookup.set(handle, user.id)
+    }
+  })
+
+  return lookup
+}
+
+const extractMentionedUserIds = (message: string, mentionLookup: Map<string, string>) => {
+  const matchedIds = new Set<string>()
+  const mentionTokenRegex = /(^|\s)@([a-z0-9._-]+)/g
+  const normalizedMessage = message.toLowerCase()
+  let match = mentionTokenRegex.exec(normalizedMessage)
+
+  while (match) {
+    const token = match[2]
+    const matchedUserId = mentionLookup.get(token)
+    if (matchedUserId) {
+      matchedIds.add(matchedUserId)
+    }
+
+    match = mentionTokenRegex.exec(normalizedMessage)
+  }
+
+  return matchedIds
 }
 
 const buildSeedNotificationItems = (
@@ -553,6 +600,7 @@ const buildSeedNotificationItems = (
       actor: definition.actor === currentUserName ? 'System Queue' : definition.actor,
       message: definition.message,
       at: new Date(baseTime - definition.hoursAgo * 60 * 60 * 1000).toISOString(),
+      type: 'seeded',
       seeded: true,
     }
   })
@@ -635,6 +683,7 @@ function App() {
   const [attachmentsError, setAttachmentsError] = useState('')
   const [attachmentUploadPending, setAttachmentUploadPending] = useState(false)
   const [attachmentDeletePendingId, setAttachmentDeletePendingId] = useState<string | null>(null)
+  const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null)
   const [rapidIdentityEnabled, setRapidIdentityEnabled] = useState(true)
   const [authSettingsPending, setAuthSettingsPending] = useState(false)
   const [authSettingsError, setAuthSettingsError] = useState('')
@@ -739,9 +788,29 @@ function App() {
   const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
   )
-  const currentTeamMembers = availableUsers.some((user) => user.id === currentUser.id)
-    ? availableUsers.filter((user) => user.teamId === currentUser.teamId)
-    : [...availableUsers.filter((user) => user.teamId === currentUser.teamId), currentUser]
+  const currentTeamMembers = useMemo(
+    () =>
+      availableUsers.some((user) => user.id === currentUser.id)
+        ? availableUsers.filter((user) => user.teamId === currentUser.teamId)
+        : [...availableUsers.filter((user) => user.teamId === currentUser.teamId), currentUser],
+    [availableUsers, currentUser.id, currentUser.teamId],
+  )
+  const mentionLookup = useMemo(
+    () => buildMentionLookup(currentTeamMembers),
+    [currentTeamMembers],
+  )
+  const mentionableTeamMembers = useMemo(
+    () =>
+      currentTeamMembers
+        .filter((member) => member.id !== currentUser.id)
+        .map((member) => ({
+          id: member.id,
+          name: member.name,
+          handle: toMentionHandle(member.name),
+        }))
+        .filter((member) => member.handle.length > 0),
+    [currentTeamMembers, currentUser.id],
+  )
 
   const getTeamById = (teamId: string) => teams.find((team) => team.id === teamId)
   const getCategoryById = (categoryId: string) =>
@@ -755,6 +824,10 @@ function App() {
         (ticket) => ticket.teamId === currentUser.teamId && ticket.assignedToId === currentUser.id,
       ),
     [tickets, currentUser.teamId, currentUser.id],
+  )
+  const teamScopeTickets = useMemo(
+    () => tickets.filter((ticket) => ticket.teamId === currentUser.teamId),
+    [tickets, currentUser.teamId],
   )
   const unassignedCount = useMemo(
     () =>
@@ -777,6 +850,39 @@ function App() {
   const seededReadNotificationIds = useMemo(
     () => seededNotificationItems.slice(3).map((item) => item.id),
     [seededNotificationItems],
+  )
+  const activityNotificationItems = useMemo<NotificationItem[]>(() => {
+    const items: NotificationItem[] = []
+
+    teamScopeTickets.forEach((ticket) => {
+      ticket.activity.forEach((entry) => {
+        const isAssignedTicket = ticket.assignedToId === currentUser.id
+        const isMentioned = extractMentionedUserIds(entry.message, mentionLookup).has(currentUser.id)
+
+        if (entry.actor === currentUser.name || (!isAssignedTicket && !isMentioned)) {
+          return
+        }
+
+        items.push({
+          id: entry.id,
+          ticketId: ticket.id,
+          ticketTitle: ticket.title,
+          actor: entry.actor,
+          message: entry.message,
+          at: entry.at,
+          type: isMentioned ? 'mention' : 'activity',
+        })
+      })
+    })
+
+    return items
+  }, [teamScopeTickets, currentUser.id, currentUser.name, mentionLookup])
+  const notificationItems = useMemo(
+    () =>
+      [...seededNotificationItems, ...activityNotificationItems].sort(
+        (left, right) => new Date(right.at).getTime() - new Date(left.at).getTime(),
+      ),
+    [seededNotificationItems, activityNotificationItems],
   )
 
   useEffect(() => {
@@ -1156,25 +1262,29 @@ function App() {
     if (activeView === 'notifications') {
       setReadNotificationIds((current) => {
         const next = new Set(current)
-        notificationSourceTickets
-          .flatMap((ticket) => ticket.activity)
-          .forEach((entry) => next.add(entry.id))
+        activityNotificationItems.forEach((item) => next.add(item.id))
         return Array.from(next)
       })
       setNotificationsPreviewOpen(false)
     }
-  }, [activeView, notificationSourceTickets])
+  }, [activeView, activityNotificationItems])
 
   useEffect(() => {
     const validNotificationIds = new Set(
       [
-        ...notificationSourceTickets
-          .flatMap((ticket) => ticket.activity.map((entry) => entry.id)),
+        ...activityNotificationItems.map((item) => item.id),
         ...seededNotificationItems.map((item) => item.id),
       ],
     )
-    setReadNotificationIds((current) => current.filter((id) => validNotificationIds.has(id)))
-  }, [notificationSourceTickets, seededNotificationItems])
+    setReadNotificationIds((current) => {
+      const filtered = current.filter((id) => validNotificationIds.has(id))
+      if (filtered.length === current.length && filtered.every((id, index) => id === current[index])) {
+        return current
+      }
+
+      return filtered
+    })
+  }, [activityNotificationItems, seededNotificationItems])
 
   useEffect(() => {
     if (!notificationsPreviewOpen) {
@@ -1239,6 +1349,7 @@ function App() {
       setAttachments([])
       setAttachmentFile(null)
       setAttachmentsError('')
+      setPreviewAttachmentId(null)
       return
     }
 
@@ -1255,6 +1366,7 @@ function App() {
     setDetailSaveError('')
     setAttachmentFile(null)
     setAttachmentsError('')
+    setPreviewAttachmentId(null)
   }, [selectedTicket])
 
   useEffect(() => {
@@ -1312,6 +1424,19 @@ function App() {
       cancelled = true
     }
   }, [selectedTicket?.id, authSession])
+
+  useEffect(() => {
+    if (!previewAttachmentId) {
+      return
+    }
+
+    const previewAttachment = attachments.find((attachment) => attachment.id === previewAttachmentId)
+    if (previewAttachment?.contentType.toLowerCase().includes('pdf')) {
+      return
+    }
+
+    setPreviewAttachmentId(null)
+  }, [attachments, previewAttachmentId])
 
   useEffect(() => {
     setCreateTicketError('')
@@ -1384,22 +1509,6 @@ function App() {
       .toLowerCase()
       .includes(query)
   })
-
-  const notificationItems = [
-    ...seededNotificationItems,
-    ...notificationSourceTickets
-      .flatMap((ticket) =>
-        ticket.activity.map((entry) => ({
-          id: entry.id,
-          ticketId: ticket.id,
-          ticketTitle: ticket.title,
-          actor: entry.actor,
-          message: entry.message,
-          at: entry.at,
-        } satisfies NotificationItem)),
-      )
-      .filter((item) => item.actor !== currentUser.name),
-  ].sort((left, right) => new Date(right.at).getTime() - new Date(left.at).getTime())
 
   const readNotificationIdSet = new Set(readNotificationIds)
   const unreadNotifications = notificationItems.filter((item) => !readNotificationIdSet.has(item.id))
@@ -1479,6 +1588,20 @@ function App() {
   const openNotificationsPage = () => {
     setActiveView('notifications')
     setNotificationsPreviewOpen(false)
+  }
+
+  const insertMentionIntoComment = (handle: string) => {
+    const mentionToken = `@${handle}`
+
+    setCommentDraft((current) => {
+      const trimmedEnd = current.replace(/\s+$/g, '')
+
+      if (!trimmedEnd) {
+        return `${mentionToken} `
+      }
+
+      return `${trimmedEnd} ${mentionToken} `
+    })
   }
 
   const toggleNotificationReadState = (notificationId: string, shouldBeUnread: boolean) => {
@@ -2023,6 +2146,24 @@ function App() {
     }
   }
 
+  const previewAttachment = attachments.find((attachment) => attachment.id === previewAttachmentId) ?? null
+  const previewAttachmentUrl =
+    selectedTicket && previewAttachment
+      ? apiUrl(`/api/tickets/${selectedTicket.id}/attachments/${previewAttachment.id}?disposition=inline`)
+      : ''
+
+  const openAttachmentPreview = (attachment: TicketAttachment) => {
+    if (!attachment.contentType.toLowerCase().includes('pdf')) {
+      return
+    }
+
+    setPreviewAttachmentId(attachment.id)
+  }
+
+  const closeAttachmentPreview = () => {
+    setPreviewAttachmentId(null)
+  }
+
   const removeAttachment = async (attachmentId: string) => {
     if (!selectedTicket) {
       return
@@ -2051,6 +2192,9 @@ function App() {
         return
       }
 
+      if (previewAttachmentId === attachmentId) {
+        closeAttachmentPreview()
+      }
       setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId))
       await refreshTicket(selectedTicket.id)
     } catch {
@@ -2923,7 +3067,7 @@ function App() {
     if (notificationItems.length === 0) {
       return (
         <div className="surface flex min-h-56 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
-          No notifications yet for tickets assigned to you.
+          No notifications yet for assigned tickets or @mentions.
         </div>
       )
     }
@@ -2935,7 +3079,7 @@ function App() {
             <div>
               <div className="text-xl font-semibold">Recent Activity Notifications</div>
               <div className="text-sm text-[color:var(--text-muted)]">
-                Activity on tickets assigned to you. Opening this page marks visible items as read.
+                Activity on tickets assigned to you and @mentions from your team. Opening this page marks visible items as read.
               </div>
             </div>
             <div className="rounded-[2px] border border-[color:var(--border)] px-3 py-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
@@ -2958,6 +3102,9 @@ function App() {
                       <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
                         {item.ticketId}
                       </span>
+                      {item.type === 'mention' && (
+                        <span className="badge badge-blue">Mention</span>
+                      )}
                       {isUnread && (
                         <span className="badge badge-red">Unread</span>
                       )}
@@ -4078,6 +4225,9 @@ function App() {
                                     <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
                                       {item.ticketId}
                                     </span>
+                                    {item.type === 'mention' && (
+                                      <span className="badge badge-blue">Mention</span>
+                                    )}
                                   </div>
                                   <span className="text-xs text-[color:var(--text-muted)]">{formatDateTime(item.at)}</span>
                                 </div>
@@ -4153,7 +4303,7 @@ function App() {
                   {activeView === 'dashboard'
                     ? `${tickets.length} total tickets`
                     : activeView === 'notifications'
-                      ? `${unreadNotificationCount} unread items assigned to you`
+                      ? `${unreadNotificationCount} unread assigned or mention items`
                     : activeView === 'settings' || activeView === 'reports'
                       ? `${users.length} users across ${teams.length} teams`
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
@@ -4720,15 +4870,36 @@ function App() {
                             Add Comment
                           </div>
                           <div className="text-sm text-[color:var(--text-muted)]">
-                            Comments are added to the ticket activity feed.
+                            Comments are added to the ticket activity feed. Use @handle to notify teammates.
                           </div>
                         </div>
                         <textarea
                           className="input-control min-h-28 resize-y"
-                          placeholder="Add a comment for this ticket"
+                          placeholder="Add a comment for this ticket (for example: @kevin.key please review)"
                           value={commentDraft}
                           onChange={(event) => setCommentDraft(event.target.value)}
                         />
+                        {mentionableTeamMembers.length > 0 && (
+                          <div className="space-y-2">
+                            <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                              Quick Mentions
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {mentionableTeamMembers.slice(0, 6).map((member) => (
+                                <button
+                                  key={member.id}
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => insertMentionIntoComment(member.handle)}
+                                  disabled={commentPending}
+                                  title={`Mention ${member.name}`}
+                                >
+                                  @{member.handle}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         <div className="flex justify-end">
                           <button
                             type="button"
@@ -4841,6 +5012,15 @@ function App() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
+                                {attachment.contentType.toLowerCase().includes('pdf') && (
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    onClick={() => openAttachmentPreview(attachment)}
+                                  >
+                                    Preview
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   className="secondary-button"
@@ -4863,6 +5043,38 @@ function App() {
                           ))
                         )}
                       </div>
+
+                      {previewAttachment && (
+                        <div className="surface-muted space-y-3 p-4">
+                          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <div className="text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                                PDF Preview
+                              </div>
+                              <div className="text-sm text-[color:var(--text)]">{previewAttachment.fileName}</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={() => downloadAttachment(previewAttachment)}
+                              >
+                                <Download className="h-4 w-4" />
+                                Download
+                              </button>
+                              <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={closeAttachmentPreview}
+                              >
+                                <X className="h-4 w-4" />
+                                Close
+                              </button>
+                            </div>
+                          </div>
+                          <PdfPreview fileUrl={previewAttachmentUrl} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
