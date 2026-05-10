@@ -66,11 +66,25 @@ jobs:
 
           echo "Build verification passed. All referenced assets are present."
 
+      - name: Prepare deployment package
+        run: |
+          set -e
+
+          rm -rf deploy-package
+          mkdir -p deploy-package
+
+          cp -R dist deploy-package/dist
+          cp package.json deploy-package/package.json
+          cp package-lock.json deploy-package/package-lock.json
+
+          npm prune --omit=dev
+          cp -R node_modules deploy-package/node_modules
+
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: .
+          path: deploy-package
 
   deploy:
     runs-on: ubuntu-latest
