@@ -48,7 +48,11 @@ import {
   updateTeam,
   updateUser,
 } from './directory.js'
-import { listTeamTicketTrends } from './trends.js'
+import {
+  clearSeededTeamTicketTrends,
+  listTeamTicketTrends,
+  seedTeamTicketTrends,
+} from './trends.js'
 import { resolveAuthenticatedUser } from './user-directory.js'
 import {
   createTicket,
@@ -937,6 +941,44 @@ app.get('/api/dashboard/trends', async (req, res) => {
   } catch (error) {
     console.error('Loading dashboard trends failed.', error)
     res.status(500).json({ error: 'dashboard_trends_load_failed' })
+  }
+})
+
+app.post('/api/admin/dashboard/trends/seed', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  try {
+    const result = await seedTeamTicketTrends(
+      typeof req.body?.days === 'number' ? req.body.days : Number(req.body?.days),
+    )
+    res.json({ result })
+  } catch (error) {
+    console.error('Seeding dashboard trends failed.', error)
+    res.status(500).json({ error: 'dashboard_trends_seed_failed' })
+  }
+})
+
+app.post('/api/admin/dashboard/trends/clear', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  try {
+    const result = await clearSeededTeamTicketTrends(
+      typeof req.body?.days === 'number' ? req.body.days : Number(req.body?.days),
+    )
+    res.json({ result })
+  } catch (error) {
+    console.error('Clearing dashboard trend seed failed.', error)
+    res.status(500).json({ error: 'dashboard_trends_clear_failed' })
   }
 })
 

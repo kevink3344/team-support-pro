@@ -87,6 +87,7 @@ import { ReportsPage } from './ReportsPage'
 const STORAGE_KEYS = {
   auth: 'team-support-pro-auth',
   dashboardLayout: 'team-support-pro-dashboard-layout',
+  notificationsArchivedIds: 'team-support-pro-notifications-archived-ids',
   mode: 'team-support-pro-mode',
   notificationsReadIds: 'team-support-pro-notifications-read-ids',
   notificationsSampleSeeded: 'team-support-pro-notifications-sample-seeded',
@@ -139,6 +140,7 @@ type SettingsAccordionSection =
   | 'addUser'
   | 'manageUsers'
   | 'manageTeams'
+  | 'trendSeeding'
   | 'categories'
 
 type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
@@ -149,6 +151,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'addUser',
   'manageUsers',
   'manageTeams',
+  'trendSeeding',
   'categories',
 ]
 
@@ -639,6 +642,9 @@ function App() {
   const settingsAccordionOrderStorageKey = authSession
     ? `${STORAGE_KEYS.settingsAccordionOrder}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.settingsAccordionOrder
+  const notificationArchivedIdsStorageKey = authSession
+    ? `${STORAGE_KEYS.notificationsArchivedIds}:${authSession.email.toLowerCase()}`
+    : STORAGE_KEYS.notificationsArchivedIds
   const notificationReadIdsStorageKey = authSession
     ? `${STORAGE_KEYS.notificationsReadIds}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.notificationsReadIds
@@ -650,6 +656,9 @@ function App() {
     : STORAGE_KEYS.notificationsSeenAt
   const [readNotificationIds, setReadNotificationIds] = useState<string[]>(() =>
     readStoredValue<string[]>(notificationReadIdsStorageKey, []),
+  )
+  const [archivedNotificationIds, setArchivedNotificationIds] = useState<string[]>(() =>
+    readStoredValue<string[]>(notificationArchivedIdsStorageKey, []),
   )
   const [listMode, setListMode] = useState<ListViewMode>(() =>
     typeof window !== 'undefined' && window.innerWidth < 768 ? 'cards' : 'table',
@@ -694,6 +703,7 @@ function App() {
     addUser: false,
     manageUsers: false,
     manageTeams: false,
+    trendSeeding: false,
     categories: false,
   })
   const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
@@ -726,6 +736,10 @@ function App() {
   const [userSavePendingIds, setUserSavePendingIds] = useState<string[]>([])
   const [userDirectoryError, setUserDirectoryError] = useState('')
   const [userDirectoryNotice, setUserDirectoryNotice] = useState('')
+  const [trendSeedDays, setTrendSeedDays] = useState(60)
+  const [trendSeedPendingAction, setTrendSeedPendingAction] = useState<'seed' | 'clear' | null>(null)
+  const [trendSeedError, setTrendSeedError] = useState('')
+  const [trendSeedNotice, setTrendSeedNotice] = useState('')
   const [changePasswordModal, setChangePasswordModal] = useState<{ userId: string; userName: string } | null>(null)
   const [changePasswordValue, setChangePasswordValue] = useState('')
   const [changePasswordPending, setChangePasswordPending] = useState(false)
@@ -798,18 +812,6 @@ function App() {
   const mentionLookup = useMemo(
     () => buildMentionLookup(currentTeamMembers),
     [currentTeamMembers],
-  )
-  const mentionableTeamMembers = useMemo(
-    () =>
-      currentTeamMembers
-        .filter((member) => member.id !== currentUser.id)
-        .map((member) => ({
-          id: member.id,
-          name: member.name,
-          handle: toMentionHandle(member.name),
-        }))
-        .filter((member) => member.handle.length > 0),
-    [currentTeamMembers, currentUser.id],
   )
 
   const getTeamById = (teamId: string) => teams.find((team) => team.id === teamId)
@@ -884,6 +886,8 @@ function App() {
       ),
     [seededNotificationItems, activityNotificationItems],
   )
+  const archivedNotificationIdSet = new Set(archivedNotificationIds)
+  const visibleNotificationItems = notificationItems.filter((item) => !archivedNotificationIdSet.has(item.id))
 
   useEffect(() => {
     if (authSession) {
@@ -910,6 +914,10 @@ function App() {
       ),
     )
   }, [settingsAccordionOrderStorageKey])
+
+  useEffect(() => {
+    setArchivedNotificationIds(readStoredValue<string[]>(notificationArchivedIdsStorageKey, []))
+  }, [notificationArchivedIdsStorageKey])
 
   useEffect(() => {
     const storedReadIds = readStoredValue<string[]>(notificationReadIdsStorageKey, [])
@@ -957,6 +965,13 @@ function App() {
   }, [settingsAccordionOrderStorageKey, settingsAccordionOrder])
 
   useEffect(() => {
+    window.localStorage.setItem(
+      notificationArchivedIdsStorageKey,
+      JSON.stringify(archivedNotificationIds),
+    )
+  }, [notificationArchivedIdsStorageKey, archivedNotificationIds])
+
+  useEffect(() => {
     window.localStorage.setItem(notificationReadIdsStorageKey, JSON.stringify(readNotificationIds))
   }, [notificationReadIdsStorageKey, readNotificationIds])
 
@@ -971,6 +986,27 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themeConfig))
   }, [themeConfig])
+
+  const fetchDashboardTrends = async () => {
+    const response = await fetch(apiUrl('/api/dashboard/trends'), {
+      credentials: 'include',
+    })
+
+    if (response.status === 401) {
+      setAuthSession(null)
+      return null
+    }
+
+    if (!response.ok) {
+      return null
+    }
+
+    const payload = (await response.json()) as {
+      trends?: TrendPoint[]
+    }
+
+    return Array.isArray(payload.trends) ? payload.trends : null
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -1172,27 +1208,10 @@ function App() {
 
     const loadTrends = async () => {
       try {
-        const response = await fetch(apiUrl('/api/dashboard/trends'), {
-          credentials: 'include',
-        })
+        const trends = await fetchDashboardTrends()
 
-        if (response.status === 401) {
-          if (!cancelled) {
-            setAuthSession(null)
-          }
-          return
-        }
-
-        if (!response.ok) {
-          return
-        }
-
-        const payload = (await response.json()) as {
-          trends?: TrendPoint[]
-        }
-
-        if (!cancelled && Array.isArray(payload.trends) && payload.trends.length > 0) {
-          setTrendPoints(payload.trends)
+        if (!cancelled && Array.isArray(trends) && trends.length > 0) {
+          setTrendPoints(trends)
         }
       } catch {
         // The app can continue from mock trend data if the API is unavailable.
@@ -1511,9 +1530,9 @@ function App() {
   })
 
   const readNotificationIdSet = new Set(readNotificationIds)
-  const unreadNotifications = notificationItems.filter((item) => !readNotificationIdSet.has(item.id))
+  const unreadNotifications = visibleNotificationItems.filter((item) => !readNotificationIdSet.has(item.id))
   const unreadNotificationCount = unreadNotifications.length
-  const notificationPreviewItems = notificationItems.slice(0, 3)
+  const notificationPreviewItems = visibleNotificationItems.slice(0, 3)
 
   const fallbackDashboardStats = {
     total: tickets.length,
@@ -1590,20 +1609,6 @@ function App() {
     setNotificationsPreviewOpen(false)
   }
 
-  const insertMentionIntoComment = (handle: string) => {
-    const mentionToken = `@${handle}`
-
-    setCommentDraft((current) => {
-      const trimmedEnd = current.replace(/\s+$/g, '')
-
-      if (!trimmedEnd) {
-        return `${mentionToken} `
-      }
-
-      return `${trimmedEnd} ${mentionToken} `
-    })
-  }
-
   const toggleNotificationReadState = (notificationId: string, shouldBeUnread: boolean) => {
     setReadNotificationIds((current) => {
       const next = new Set(current)
@@ -1615,6 +1620,100 @@ function App() {
       }
 
       return Array.from(next)
+    })
+  }
+
+  const submitTrendSeedAction = async (action: 'seed' | 'clear') => {
+    const normalizedDays = Math.min(Math.max(Math.trunc(trendSeedDays) || 0, 1), 365)
+
+    if (normalizedDays !== trendSeedDays) {
+      setTrendSeedDays(normalizedDays)
+    }
+
+    if (!normalizedDays) {
+      setTrendSeedError('Enter a valid number of days between 1 and 365.')
+      setTrendSeedNotice('')
+      return
+    }
+
+    setTrendSeedPendingAction(action)
+    setTrendSeedError('')
+    setTrendSeedNotice('')
+
+    try {
+      const response = await fetch(apiUrl(`/api/admin/dashboard/trends/${action}`), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({ days: normalizedDays }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        setTrendSeedError('Administrator access is required to manage seeded trend data.')
+        return
+      }
+
+      if (!response.ok) {
+        setTrendSeedError(
+          action === 'seed'
+            ? 'Trend history could not be seeded. Please try again.'
+            : 'Seeded trend history could not be cleared. Please try again.',
+        )
+        return
+      }
+
+      const payload = (await response.json()) as {
+        result?: { days?: number; rowsAffected?: number; fromDate?: string; toDate?: string }
+      }
+
+      const resultDays = payload.result?.days ?? normalizedDays
+      const resultRows = payload.result?.rowsAffected ?? 0
+      const resultFromDate = payload.result?.fromDate
+      const resultToDate = payload.result?.toDate
+      const nextTrends = await fetchDashboardTrends()
+
+      if (Array.isArray(nextTrends) && nextTrends.length > 0) {
+        setTrendPoints(nextTrends)
+      }
+
+      setTrendSeedNotice(
+        action === 'seed'
+          ? `Seeded ${resultRows} trend rows for ${resultDays} days${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`
+          : `Cleared seeded trend data for ${resultDays} days${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`,
+      )
+    } catch {
+      setTrendSeedError(
+        action === 'seed'
+          ? 'Trend history could not be seeded. Confirm the backend server is running.'
+          : 'Seeded trend history could not be cleared. Confirm the backend server is running.',
+      )
+    } finally {
+      setTrendSeedPendingAction(null)
+    }
+  }
+
+  const archiveNotification = (notificationId: string) => {
+    setArchivedNotificationIds((current) => {
+      if (current.includes(notificationId)) {
+        return current
+      }
+
+      return [...current, notificationId]
+    })
+
+    setReadNotificationIds((current) => {
+      if (current.includes(notificationId)) {
+        return current
+      }
+
+      return [...current, notificationId]
     })
   }
 
@@ -3064,10 +3163,10 @@ function App() {
   }
 
   const renderNotificationsPage = () => {
-    if (notificationItems.length === 0) {
+    if (visibleNotificationItems.length === 0) {
       return (
         <div className="surface flex min-h-56 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
-          No notifications yet for assigned tickets or @mentions.
+          No notifications in view. Archived items stay hidden for your account.
         </div>
       )
     }
@@ -3088,7 +3187,7 @@ function App() {
           </div>
 
           <div className="space-y-3">
-            {notificationItems.map((item) => {
+            {visibleNotificationItems.map((item) => {
               const isUnread = !readNotificationIdSet.has(item.id)
 
               return (
@@ -3119,6 +3218,13 @@ function App() {
                       {formatDateTime(item.at)}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => archiveNotification(item.id)}
+                      >
+                        Archive
+                      </button>
                       <button
                         type="button"
                         className={isUnread ? 'dashboard-reset-button' : 'notification-unread-button'}
@@ -3428,6 +3534,63 @@ function App() {
               </div>
             </div>
           )
+        case 'trendSeeding':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {currentUser.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to seed dashboard trend history.
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-[color:var(--text-muted)]">
+                    Generate or clear chart-only history for Ticket Trend by Team. This does not create or modify ticket records.
+                  </p>
+                  {trendSeedError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {trendSeedError}
+                    </div>
+                  )}
+                  {trendSeedNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {trendSeedNotice}
+                    </div>
+                  )}
+                  <div className="surface-muted grid gap-3 p-4 md:grid-cols-[0.8fr_auto_auto] md:items-end">
+                    <label className="space-y-2">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        Days of trend history
+                      </div>
+                      <input
+                        type="number"
+                        min={1}
+                        max={365}
+                        className="input-control"
+                        value={trendSeedDays}
+                        onChange={(event) => setTrendSeedDays(Number(event.target.value))}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={trendSeedPendingAction !== null}
+                      onClick={() => void submitTrendSeedAction('seed')}
+                    >
+                      {trendSeedPendingAction === 'seed' ? 'Seeding...' : 'Seed Trend History'}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={trendSeedPendingAction !== null}
+                      onClick={() => void submitTrendSeedAction('clear')}
+                    >
+                      {trendSeedPendingAction === 'clear' ? 'Clearing...' : 'Clear Seeded History'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )
         case 'categories':
           return (
             <div className="settings-accordion-content">
@@ -3517,6 +3680,10 @@ function App() {
       manageTeams: {
         title: 'Manage Teams',
         description: 'Add or update team names, codes, and accent colors.',
+      },
+      trendSeeding: {
+        title: 'Trend Seeding',
+        description: 'Generate or clear chart-only trend history for the dashboard.',
       },
       categories: {
         title: 'Categories',
@@ -3617,9 +3784,10 @@ function App() {
       const isPending = quickActionPendingTicketId === ticket.id
       const disableAssign = isPending || ticket.assignedToId === currentUser.id
       const disableInProgress = isPending || ticket.status === 'In Progress'
-      const disableResolve = isPending || ticket.status === 'Resolved'
+      const disableResolve = isPending
       const showAssignAction =
         activeView !== 'my-tickets' && ticket.assignedToId !== currentUser.id
+      const showResolveAction = ticket.status !== 'Resolved'
 
       return (
         <div className="flex flex-wrap items-center gap-2">
@@ -3641,14 +3809,16 @@ function App() {
           >
             In Progress
           </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={disableResolve}
-            onClick={() => applyQuickTicketAction(ticket, 'mark-resolved')}
-          >
-            Resolve
-          </button>
+          {showResolveAction && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={disableResolve}
+              onClick={() => applyQuickTicketAction(ticket, 'mark-resolved')}
+            >
+              Resolve
+            </button>
+          )}
         </div>
       )
     }
@@ -4879,27 +5049,6 @@ function App() {
                           value={commentDraft}
                           onChange={(event) => setCommentDraft(event.target.value)}
                         />
-                        {mentionableTeamMembers.length > 0 && (
-                          <div className="space-y-2">
-                            <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                              Quick Mentions
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {mentionableTeamMembers.slice(0, 6).map((member) => (
-                                <button
-                                  key={member.id}
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={() => insertMentionIntoComment(member.handle)}
-                                  disabled={commentPending}
-                                  title={`Mention ${member.name}`}
-                                >
-                                  @{member.handle}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        )}
                         <div className="flex justify-end">
                           <button
                             type="button"
