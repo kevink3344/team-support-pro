@@ -145,6 +145,19 @@ type SettingsAccordionSection =
 
 type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
 
+type QuickTicketAction = 'assign-to-me' | 'mark-in-progress' | 'mark-resolved'
+
+type QuickActionConfirmationState = {
+  ticketId: string
+  ticketTitle: string
+  action: QuickTicketAction
+}
+
+type QuickActionToastState = {
+  message: string
+  tone: 'success' | 'error'
+}
+
 const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'appearance',
   'authentication',
@@ -737,6 +750,7 @@ function App() {
   const [userDirectoryError, setUserDirectoryError] = useState('')
   const [userDirectoryNotice, setUserDirectoryNotice] = useState('')
   const [trendSeedDays, setTrendSeedDays] = useState(60)
+  const [trendSeedCategoryId, setTrendSeedCategoryId] = useState('')
   const [trendSeedPendingAction, setTrendSeedPendingAction] = useState<'seed' | 'clear' | null>(null)
   const [trendSeedError, setTrendSeedError] = useState('')
   const [trendSeedNotice, setTrendSeedNotice] = useState('')
@@ -783,9 +797,12 @@ function App() {
   const [createTicketPending, setCreateTicketPending] = useState(false)
   const [quickActionPendingTicketId, setQuickActionPendingTicketId] = useState<string | null>(null)
   const [quickActionError, setQuickActionError] = useState('')
+  const [quickActionConfirmation, setQuickActionConfirmation] = useState<QuickActionConfirmationState | null>(null)
+  const [quickActionToast, setQuickActionToast] = useState<QuickActionToastState | null>(null)
   const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
   const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
   const detailResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const quickActionToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const deferredSearch = useDeferredValue(searchText)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
@@ -986,6 +1003,14 @@ function App() {
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.theme, JSON.stringify(themeConfig))
   }, [themeConfig])
+
+  useEffect(() => {
+    return () => {
+      if (quickActionToastTimeoutRef.current) {
+        clearTimeout(quickActionToastTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const fetchDashboardTrends = async () => {
     const response = await fetch(apiUrl('/api/dashboard/trends'), {
@@ -1625,6 +1650,7 @@ function App() {
 
   const submitTrendSeedAction = async (action: 'seed' | 'clear') => {
     const normalizedDays = Math.min(Math.max(Math.trunc(trendSeedDays) || 0, 1), 365)
+    const selectedTrendSeedCategory = categories.find((category) => category.id === trendSeedCategoryId) ?? null
 
     if (normalizedDays !== trendSeedDays) {
       setTrendSeedDays(normalizedDays)
@@ -1647,7 +1673,10 @@ function App() {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({ days: normalizedDays }),
+        body: JSON.stringify({
+          days: normalizedDays,
+          categoryId: selectedTrendSeedCategory?.id ?? null,
+        }),
       })
 
       if (response.status === 401) {
@@ -1657,6 +1686,11 @@ function App() {
 
       if (response.status === 403) {
         setTrendSeedError('Administrator access is required to manage seeded trend data.')
+        return
+      }
+
+      if (response.status === 400) {
+        setTrendSeedError('Select a valid category before running trend seeding.')
         return
       }
 
@@ -1670,13 +1704,21 @@ function App() {
       }
 
       const payload = (await response.json()) as {
-        result?: { days?: number; rowsAffected?: number; fromDate?: string; toDate?: string }
+        result?: {
+          days?: number
+          rowsAffected?: number
+          fromDate?: string
+          toDate?: string
+          categoryId?: string | null
+          categoryName?: string | null
+        }
       }
 
       const resultDays = payload.result?.days ?? normalizedDays
       const resultRows = payload.result?.rowsAffected ?? 0
       const resultFromDate = payload.result?.fromDate
       const resultToDate = payload.result?.toDate
+      const resultCategoryName = payload.result?.categoryName ?? selectedTrendSeedCategory?.name ?? null
       const nextTrends = await fetchDashboardTrends()
 
       if (Array.isArray(nextTrends) && nextTrends.length > 0) {
@@ -1685,8 +1727,8 @@ function App() {
 
       setTrendSeedNotice(
         action === 'seed'
-          ? `Seeded ${resultRows} trend rows for ${resultDays} days${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`
-          : `Cleared seeded trend data for ${resultDays} days${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`,
+          ? `Seeded ${resultRows} trend rows for ${resultDays} days${resultCategoryName ? ` using ${resultCategoryName}` : ''}${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`
+          : `Cleared seeded trend data for ${resultDays} days${resultCategoryName ? ` for ${resultCategoryName}` : ''}${resultFromDate && resultToDate ? ` (${resultFromDate} to ${resultToDate})` : ''}.`,
       )
     } catch {
       setTrendSeedError(
@@ -1715,6 +1757,74 @@ function App() {
 
       return [...current, notificationId]
     })
+  }
+
+  const getQuickActionCopy = (action: QuickTicketAction) => {
+    switch (action) {
+      case 'assign-to-me':
+        return {
+          buttonLabel: 'Assign to me',
+          confirmTitle: 'Assign Ticket',
+          confirmMessage: 'Are you sure you want to assign this ticket to yourself?',
+          successMessage: 'Ticket assigned to you.',
+        }
+      case 'mark-in-progress':
+        return {
+          buttonLabel: 'In Progress',
+          confirmTitle: 'Mark In Progress',
+          confirmMessage: 'Are you sure you want to mark this ticket as In Progress?',
+          successMessage: 'Ticket marked In Progress.',
+        }
+      case 'mark-resolved':
+        return {
+          buttonLabel: 'Resolve',
+          confirmTitle: 'Mark Resolved',
+          confirmMessage: 'Are you sure you want to mark this ticket as Resolved?',
+          successMessage: 'Ticket marked Resolved.',
+        }
+    }
+  }
+
+  const showQuickActionToast = (message: string, tone: QuickActionToastState['tone']) => {
+    if (quickActionToastTimeoutRef.current) {
+      clearTimeout(quickActionToastTimeoutRef.current)
+    }
+
+    setQuickActionToast({ message, tone })
+    quickActionToastTimeoutRef.current = setTimeout(() => {
+      setQuickActionToast(null)
+      quickActionToastTimeoutRef.current = null
+    }, 3200)
+  }
+
+  const requestQuickTicketAction = (ticket: TicketRecord, action: QuickTicketAction) => {
+    setQuickActionConfirmation({
+      ticketId: ticket.id,
+      ticketTitle: ticket.title,
+      action,
+    })
+  }
+
+  const confirmQuickTicketAction = async () => {
+    if (!quickActionConfirmation) {
+      return
+    }
+
+    const ticket = tickets.find((entry) => entry.id === quickActionConfirmation.ticketId)
+
+    if (!ticket) {
+      setQuickActionConfirmation(null)
+      showQuickActionToast('Ticket could not be found. Refresh and try again.', 'error')
+      return
+    }
+
+    const { action } = quickActionConfirmation
+    setQuickActionConfirmation(null)
+    const didSucceed = await applyQuickTicketAction(ticket, action)
+
+    if (didSucceed) {
+      showQuickActionToast(getQuickActionCopy(action).successMessage, 'success')
+    }
   }
 
   const closePanel = () => {
@@ -1993,10 +2103,10 @@ function App() {
 
   const applyQuickTicketAction = async (
     ticket: TicketRecord,
-    action: 'assign-to-me' | 'mark-in-progress' | 'mark-resolved',
+    action: QuickTicketAction,
   ) => {
     if (quickActionPendingTicketId) {
-      return
+      return false
     }
 
     let nextAssignedToId = ticket.assignedToId
@@ -2017,7 +2127,7 @@ function App() {
     }
 
     if (nextAssignedToId === ticket.assignedToId && nextStatus === ticket.status) {
-      return
+      return false
     }
 
     setQuickActionPendingTicketId(ticket.id)
@@ -2058,7 +2168,7 @@ function App() {
         setTickets((current) =>
           current.map((item) => (item.id === ticket.id ? ticket : item)),
         )
-        return
+        return false
       }
 
       if (!response.ok) {
@@ -2067,7 +2177,7 @@ function App() {
         setTickets((current) =>
           current.map((item) => (item.id === ticket.id ? ticket : item)),
         )
-        return
+        return false
       }
 
       const payload = (await response.json()) as {
@@ -2080,19 +2190,21 @@ function App() {
         setTickets((current) =>
           current.map((item) => (item.id === ticket.id ? ticket : item)),
         )
-        return
+        return false
       }
 
       // Reconcile with the authoritative server response
       setTickets((current) =>
         current.map((item) => (item.id === payload.ticket!.id ? payload.ticket! : item)),
       )
+      return true
     } catch {
       setQuickActionError('Quick action failed because the backend server is unavailable.')
       // Revert the optimistic update on network error
       setTickets((current) =>
         current.map((item) => (item.id === ticket.id ? ticket : item)),
       )
+      return false
     } finally {
       setQuickActionPendingTicketId(null)
     }
@@ -3193,9 +3305,18 @@ function App() {
               return (
                 <div
                   key={item.id}
-                  className="surface-muted flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between"
+                  className="surface-muted relative flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between"
                   data-unread={isUnread}
                 >
+                  <button
+                    type="button"
+                    className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-[2px] text-[color:var(--text-muted)] transition hover:bg-[color:var(--panel-bg)] hover:text-[color:var(--text)]"
+                    onClick={() => archiveNotification(item.id)}
+                    aria-label="Remove notification"
+                    title="Remove notification"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
@@ -3218,13 +3339,6 @@ function App() {
                       {formatDateTime(item.at)}
                     </div>
                     <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        onClick={() => archiveNotification(item.id)}
-                      >
-                        Archive
-                      </button>
                       <button
                         type="button"
                         className={isUnread ? 'dashboard-reset-button' : 'notification-unread-button'}
@@ -3556,7 +3670,7 @@ function App() {
                       {trendSeedNotice}
                     </div>
                   )}
-                  <div className="surface-muted grid gap-3 p-4 md:grid-cols-[0.8fr_auto_auto] md:items-end">
+                  <div className="surface-muted grid gap-3 p-4 md:grid-cols-[0.9fr_1.1fr_auto_auto] md:items-end">
                     <label className="space-y-2">
                       <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
                         Days of trend history
@@ -3569,6 +3683,27 @@ function App() {
                         value={trendSeedDays}
                         onChange={(event) => setTrendSeedDays(Number(event.target.value))}
                       />
+                    </label>
+                    <label className="space-y-2">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        Category target
+                      </div>
+                      <select
+                        className="input-control"
+                        value={trendSeedCategoryId}
+                        onChange={(event) => setTrendSeedCategoryId(event.target.value)}
+                      >
+                        <option value="">All categories / all teams</option>
+                        {categories.map((category) => {
+                          const teamName = teams.find((team) => team.id === category.teamId)?.name ?? category.teamId
+
+                          return (
+                            <option key={category.id} value={category.id}>
+                              {category.name} ({teamName})
+                            </option>
+                          )
+                        })}
+                      </select>
                     </label>
                     <button
                       type="button"
@@ -3796,7 +3931,7 @@ function App() {
               type="button"
               className="secondary-button"
               disabled={disableAssign}
-              onClick={() => applyQuickTicketAction(ticket, 'assign-to-me')}
+              onClick={() => requestQuickTicketAction(ticket, 'assign-to-me')}
             >
               {isPending ? 'Updating...' : 'Assign to me'}
             </button>
@@ -3805,7 +3940,7 @@ function App() {
             type="button"
             className="secondary-button"
             disabled={disableInProgress}
-            onClick={() => applyQuickTicketAction(ticket, 'mark-in-progress')}
+            onClick={() => requestQuickTicketAction(ticket, 'mark-in-progress')}
           >
             In Progress
           </button>
@@ -3814,7 +3949,7 @@ function App() {
               type="button"
               className="secondary-button"
               disabled={disableResolve}
-              onClick={() => applyQuickTicketAction(ticket, 'mark-resolved')}
+              onClick={() => requestQuickTicketAction(ticket, 'mark-resolved')}
             >
               Resolve
             </button>
@@ -5288,6 +5423,93 @@ function App() {
           </div>
         </>
       )}
+
+      {quickActionConfirmation && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-slate-950/40"
+            aria-label="Close dialog"
+            onClick={() => setQuickActionConfirmation(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal={true}
+            aria-labelledby="quick-action-confirm-title"
+            className="surface fixed left-1/2 top-1/2 z-50 w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 p-6 shadow-[0_24px_64px_rgba(13,47,79,0.22)]"
+          >
+            <div className="mb-4 flex items-start gap-3">
+              <div className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[2px] bg-[color:var(--panel-bg)] text-[color:var(--accent)]">
+                <TriangleAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 id="quick-action-confirm-title" className="mb-1 text-base font-semibold text-[color:var(--text)]">
+                  {getQuickActionCopy(quickActionConfirmation.action).confirmTitle}
+                </h2>
+                <p className="text-sm text-[color:var(--text-muted)]">
+                  {getQuickActionCopy(quickActionConfirmation.action).confirmMessage}
+                </p>
+              </div>
+            </div>
+
+            <div className="surface-muted mb-4 space-y-1 p-3">
+              <div className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                {quickActionConfirmation.ticketId}
+              </div>
+              <div className="text-sm font-semibold text-[color:var(--text)]">
+                {quickActionConfirmation.ticketTitle}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setQuickActionConfirmation(null)}
+                disabled={quickActionPendingTicketId !== null}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void confirmQuickTicketAction()}
+                disabled={quickActionPendingTicketId !== null}
+              >
+                {quickActionPendingTicketId === quickActionConfirmation.ticketId
+                  ? 'Updating...'
+                  : getQuickActionCopy(quickActionConfirmation.action).buttonLabel}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      <AnimatePresence>
+        {quickActionToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="pointer-events-none fixed bottom-4 right-4 z-50 w-[min(22rem,calc(100vw-2rem))]"
+          >
+            <div
+              className={`surface border px-4 py-3 shadow-[0_18px_48px_rgba(13,47,79,0.18)] ${
+                quickActionToast.tone === 'success'
+                  ? 'border-emerald-200 bg-emerald-50/95 text-emerald-900'
+                  : 'border-rose-200 bg-rose-50/95 text-rose-900'
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              <div className="text-sm font-semibold">
+                {quickActionToast.message}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   )

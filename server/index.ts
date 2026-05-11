@@ -955,9 +955,17 @@ app.post('/api/admin/dashboard/trends/seed', async (req, res) => {
   try {
     const result = await seedTeamTicketTrends(
       typeof req.body?.days === 'number' ? req.body.days : Number(req.body?.days),
+      typeof req.body?.categoryId === 'string' && req.body.categoryId.trim().length > 0
+        ? req.body.categoryId.trim()
+        : undefined,
     )
     res.json({ result })
   } catch (error) {
+    if (error instanceof Error && error.message === 'category_not_found') {
+      res.status(400).json({ error: 'category_not_found' })
+      return
+    }
+
     console.error('Seeding dashboard trends failed.', error)
     res.status(500).json({ error: 'dashboard_trends_seed_failed' })
   }
@@ -974,9 +982,17 @@ app.post('/api/admin/dashboard/trends/clear', async (req, res) => {
   try {
     const result = await clearSeededTeamTicketTrends(
       typeof req.body?.days === 'number' ? req.body.days : Number(req.body?.days),
+      typeof req.body?.categoryId === 'string' && req.body.categoryId.trim().length > 0
+        ? req.body.categoryId.trim()
+        : undefined,
     )
     res.json({ result })
   } catch (error) {
+    if (error instanceof Error && error.message === 'category_not_found') {
+      res.status(400).json({ error: 'category_not_found' })
+      return
+    }
+
     console.error('Clearing dashboard trend seed failed.', error)
     res.status(500).json({ error: 'dashboard_trends_clear_failed' })
   }

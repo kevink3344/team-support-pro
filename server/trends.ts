@@ -11,16 +11,50 @@ interface TrendRow {
   count: number
 }
 
+interface SeedTargetTeam {
+  id: string
+  name: string
+}
+
+interface SeedTargetCategory {
+  id: string
+  name: string
+  teamId: string
+}
+
+interface TrendSeedConfig {
+  enabled?: boolean
+  days?: number
+  seededAt?: string
+  targetTeamIds?: string[]
+  categoryId?: string | null
+  categoryName?: string | null
+}
+
 export interface TrendSeedResult {
   days: number
   fromDate: string
   toDate: string
   rowsAffected: number
+  categoryId: string | null
+  categoryName: string | null
 }
 
 const TREND_SEED_SETTINGS_KEY = 'dashboard-trend-seed-config'
 
 const formatDate = (date: Date) => date.toISOString().slice(0, 10)
+
+const parseTrendSeedConfig = (value: string | undefined): TrendSeedConfig | null => {
+  if (!value) {
+    return null
+  }
+
+  try {
+    return JSON.parse(value) as TrendSeedConfig
+  } catch {
+    return null
+  }
+}
 
 const clampTrendDays = (days: number) => Math.min(Math.max(Math.trunc(days) || 0, 1), 365)
 
@@ -71,42 +105,104 @@ const listDerivedTrendRows = (days: number): TrendRow[] => {
   `).all(`-${Math.max(clampTrendDays(days) - 1, 0)} days`) as TrendRow[]
 }
 
-const listStoredTrendRows = (days: number): TrendRow[] => {
+const listStoredTrendRows = (days: number, targetTeamIds: string[]): TrendRow[] => {
   const db = getDb()
+
+  if (targetTeamIds.length === 0) {
+    return []
+  }
+
+  const placeholders = targetTeamIds.map(() => '?').join(', ')
 
   return db.prepare(`
     SELECT TrendDate AS date, TeamId AS teamId, TicketCount AS count
     FROM TeamTicketTrends
     WHERE TrendDate >= date('now', ?)
+      AND TeamId IN (${placeholders})
     ORDER BY TrendDate ASC, TeamId ASC
-  `).all(`-${Math.max(clampTrendDays(days) - 1, 0)} days`) as TrendRow[]
+  `).all(`-${Math.max(clampTrendDays(days) - 1, 0)} days`, ...targetTeamIds) as TrendRow[]
 }
 
-const hasActiveTrendSeed = () => {
+const readTrendSeedConfig = () => {
   const db = getDb()
   const row = db.prepare('SELECT Value AS value FROM AppSettings WHERE Key = ?').get(TREND_SEED_SETTINGS_KEY) as { value?: string } | undefined
 
-  if (!row?.value) {
-    return false
+  return parseTrendSeedConfig(row?.value)
+}
+
+const hasActiveTrendSeed = (config: TrendSeedConfig | null) => {
+  return config?.enabled === true
+}
+
+const listAllTeams = () => {
+  const db = getDb()
+  return db.prepare('SELECT Id AS id, Name AS name FROM Teams ORDER BY Name ASC').all() as SeedTargetTeam[]
+}
+
+const resolveTrendSeedTargets = (categoryId?: string): { teams: SeedTargetTeam[]; category: SeedTargetCategory | null } => {
+  const allTeams = listAllTeams()
+
+  if (!categoryId) {
+    return { teams: allTeams, category: null }
   }
 
-  try {
-    const parsed = JSON.parse(row.value) as { enabled?: boolean }
-    return parsed.enabled === true
-  } catch {
-    return false
+  const db = getDb()
+  const category = db.prepare(`
+    SELECT c.Id AS id, c.Name AS name, c.TeamId AS teamId
+    FROM Categories c
+    WHERE c.Id = ?
+  `).get(categoryId) as SeedTargetCategory | undefined
+
+  if (!category) {
+    throw new Error('category_not_found')
   }
+
+  const team = allTeams.find((entry) => entry.id === category.teamId)
+
+  if (!team) {
+    throw new Error('category_team_not_found')
+  }
+
+  return {
+    teams: [team],
+    category,
+  }
+}
+
+const writeTrendSeedConfig = (config: TrendSeedConfig) => {
+  const db = getDb()
+  const upsertSetting = db.prepare(`
+    INSERT INTO AppSettings (Key, Value, UpdatedAt)
+    VALUES (?, ?, datetime('now'))
+    ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')
+  `)
+
+  upsertSetting.run(TREND_SEED_SETTINGS_KEY, JSON.stringify(config))
+}
+
+const clearTrendSeedConfig = () => {
+  const db = getDb()
+  db.prepare('DELETE FROM AppSettings WHERE Key = ?').run(TREND_SEED_SETTINGS_KEY)
+}
+
+const getActiveTargetTeamIds = (config: TrendSeedConfig | null, fallbackTeams: SeedTargetTeam[]) => {
+  if (Array.isArray(config?.targetTeamIds) && config.targetTeamIds.length > 0) {
+    return config.targetTeamIds
+  }
+
+  return fallbackTeams.map((team) => team.id)
 }
 
 export const listTeamTicketTrends = async (days: number = 21): Promise<TrendRecord[]> => {
   const safeDays = clampTrendDays(days)
   const derivedRows = listDerivedTrendRows(safeDays)
+  const seedConfig = readTrendSeedConfig()
 
-  if (!hasActiveTrendSeed()) {
+  if (!hasActiveTrendSeed(seedConfig)) {
     return buildTrendRecords(derivedRows, safeDays)
   }
 
-  const storedRows = listStoredTrendRows(safeDays)
+  const storedRows = listStoredTrendRows(safeDays, getActiveTargetTeamIds(seedConfig, listAllTeams()))
   const mergedRows = new Map<string, TrendRow>()
 
   for (const row of derivedRows) {
@@ -120,20 +216,16 @@ export const listTeamTicketTrends = async (days: number = 21): Promise<TrendReco
   return buildTrendRecords(Array.from(mergedRows.values()), safeDays)
 }
 
-export const seedTeamTicketTrends = async (days: number = 60): Promise<TrendSeedResult> => {
+export const seedTeamTicketTrends = async (days: number = 60, categoryId?: string): Promise<TrendSeedResult> => {
   const safeDays = clampTrendDays(days)
   const db = getDb()
   const dates = getTrendDates(safeDays)
-  const teams = db.prepare('SELECT Id AS id FROM Teams ORDER BY Name ASC').all() as Array<{ id: string }>
+  const currentConfig = readTrendSeedConfig()
+  const { teams, category } = resolveTrendSeedTargets(categoryId)
   const upsertTrend = db.prepare(`
     INSERT INTO TeamTicketTrends (TrendDate, TeamId, TicketCount)
     VALUES (?, ?, ?)
     ON CONFLICT(TrendDate, TeamId) DO UPDATE SET TicketCount = excluded.TicketCount
-  `)
-  const upsertSetting = db.prepare(`
-    INSERT INTO AppSettings (Key, Value, UpdatedAt)
-    VALUES (?, ?, datetime('now'))
-    ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')
   `)
 
   db.exec('BEGIN TRANSACTION')
@@ -154,10 +246,16 @@ export const seedTeamTicketTrends = async (days: number = 60): Promise<TrendSeed
       })
     })
 
-    upsertSetting.run(
-      TREND_SEED_SETTINGS_KEY,
-      JSON.stringify({ enabled: true, days: safeDays, seededAt: new Date().toISOString() }),
-    )
+    writeTrendSeedConfig({
+      enabled: true,
+      days: safeDays,
+      seededAt: new Date().toISOString(),
+      targetTeamIds: Array.from(
+        new Set([...(currentConfig?.targetTeamIds ?? []), ...teams.map((team) => team.id)]),
+      ),
+      categoryId: category?.id ?? null,
+      categoryName: category?.name ?? null,
+    })
 
     db.exec('COMMIT')
 
@@ -166,6 +264,8 @@ export const seedTeamTicketTrends = async (days: number = 60): Promise<TrendSeed
       fromDate: dates[0],
       toDate: dates[dates.length - 1],
       rowsAffected,
+      categoryId: category?.id ?? null,
+      categoryName: category?.name ?? null,
     }
   } catch (error) {
     db.exec('ROLLBACK')
@@ -173,18 +273,43 @@ export const seedTeamTicketTrends = async (days: number = 60): Promise<TrendSeed
   }
 }
 
-export const clearSeededTeamTicketTrends = async (days: number = 60): Promise<TrendSeedResult> => {
+export const clearSeededTeamTicketTrends = async (days: number = 60, categoryId?: string): Promise<TrendSeedResult> => {
   const safeDays = clampTrendDays(days)
   const db = getDb()
   const dates = getTrendDates(safeDays)
-  const deleteSeededRows = db.prepare("DELETE FROM TeamTicketTrends WHERE TrendDate >= date('now', ?)")
-  const deleteSeedSetting = db.prepare('DELETE FROM AppSettings WHERE Key = ?')
+  const currentConfig = readTrendSeedConfig()
+  const { teams, category } = resolveTrendSeedTargets(categoryId)
+  const placeholders = teams.map(() => '?').join(', ')
+  const deleteSeededRows = db.prepare(`
+    DELETE FROM TeamTicketTrends
+    WHERE TrendDate >= date('now', ?)
+      AND TeamId IN (${placeholders})
+  `)
 
   db.exec('BEGIN TRANSACTION')
 
   try {
-    const result = deleteSeededRows.run(`-${Math.max(safeDays - 1, 0)} days`)
-    deleteSeedSetting.run(TREND_SEED_SETTINGS_KEY)
+    const result = deleteSeededRows.run(
+      `-${Math.max(safeDays - 1, 0)} days`,
+      ...teams.map((team) => team.id),
+    )
+    const remainingTargetTeamIds = getActiveTargetTeamIds(currentConfig, listAllTeams()).filter(
+      (teamId) => !teams.some((team) => team.id === teamId),
+    )
+
+    if (remainingTargetTeamIds.length === 0) {
+      clearTrendSeedConfig()
+    } else {
+      writeTrendSeedConfig({
+        enabled: true,
+        days: safeDays,
+        seededAt: currentConfig?.seededAt ?? new Date().toISOString(),
+        targetTeamIds: remainingTargetTeamIds,
+        categoryId: currentConfig?.categoryId ?? null,
+        categoryName: currentConfig?.categoryName ?? null,
+      })
+    }
+
     db.exec('COMMIT')
 
     return {
@@ -192,6 +317,8 @@ export const clearSeededTeamTicketTrends = async (days: number = 60): Promise<Tr
       fromDate: dates[0],
       toDate: dates[dates.length - 1],
       rowsAffected: result.changes,
+      categoryId: category?.id ?? null,
+      categoryName: category?.name ?? null,
     }
   } catch (error) {
     db.exec('ROLLBACK')
