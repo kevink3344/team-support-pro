@@ -1,10 +1,14 @@
-import type { Category, Team, Ticket, TrendPoint, User } from '../types'
+import type { Category, Organization, Team, Ticket, TrendPoint, User } from '../types'
+
+export const initialOrganizations: Organization[] = [
+  { id: 'legacy-default', name: 'Legacy Default', code: 'LEG', accent: '#334155' },
+]
 
 export const initialTeams: Team[] = [
-  { id: 'it', name: 'IT Support', code: 'IT', accent: '#0078d4' },
-  { id: 'facilities', name: 'Facilities', code: 'FAC', accent: '#2f9e44' },
-  { id: 'learning', name: 'HR & Training', code: 'HRT', accent: '#6f42c1' },
-  { id: 'security', name: 'Security', code: 'SEC', accent: '#d9485f' },
+  { id: 'it', organizationId: 'legacy-default', name: 'IT Support', code: 'IT', accent: '#0078d4' },
+  { id: 'facilities', organizationId: 'legacy-default', name: 'Facilities', code: 'FAC', accent: '#2f9e44' },
+  { id: 'learning', organizationId: 'legacy-default', name: 'HR & Training', code: 'HRT', accent: '#6f42c1' },
+  { id: 'security', organizationId: 'legacy-default', name: 'Security', code: 'SEC', accent: '#d9485f' },
 ]
 
 export const initialCategories: Category[] = [
@@ -69,6 +73,7 @@ export const initialUsers: User[] = [
     id: 'u-kevin',
     name: 'Kevin Key',
     email: 'kevin.key@company.com',
+    organizationId: 'legacy-default',
     teamId: 'it',
     role: 'Admin',
   },
@@ -76,6 +81,7 @@ export const initialUsers: User[] = [
     id: 'u-diana',
     name: 'Diana Park',
     email: 'diana.park@company.com',
+    organizationId: 'legacy-default',
     teamId: 'it',
     role: 'Staff',
   },
@@ -83,6 +89,7 @@ export const initialUsers: User[] = [
     id: 'u-aaron',
     name: 'Aaron Stone',
     email: 'aaron.stone@company.com',
+    organizationId: 'legacy-default',
     teamId: 'it',
     role: 'Staff',
   },
@@ -90,6 +97,7 @@ export const initialUsers: User[] = [
     id: 'u-michael',
     name: 'Michael Chen',
     email: 'michael.chen@company.com',
+    organizationId: 'legacy-default',
     teamId: 'facilities',
     role: 'Staff',
   },
@@ -97,6 +105,7 @@ export const initialUsers: User[] = [
     id: 'u-linda',
     name: 'Linda Wu',
     email: 'linda.wu@company.com',
+    organizationId: 'legacy-default',
     teamId: 'facilities',
     role: 'Staff',
   },
@@ -104,6 +113,7 @@ export const initialUsers: User[] = [
     id: 'u-jasmin',
     name: 'Jasmin Hall',
     email: 'jasmin.hall@company.com',
+    organizationId: 'legacy-default',
     teamId: 'learning',
     role: 'Staff',
   },
@@ -111,6 +121,7 @@ export const initialUsers: User[] = [
     id: 'u-omar',
     name: 'Omar Reyes',
     email: 'omar.reyes@company.com',
+    organizationId: 'legacy-default',
     teamId: 'security',
     role: 'Staff',
   },

@@ -3,13 +3,14 @@ import { Building2, CheckCircle2, Send, Ticket } from 'lucide-react'
 
 import { apiUrl, appConfig } from '../config'
 import { defaultThemeConfig } from '../theme'
-import type { Category, Team, Ticket as TicketRecord } from '../types'
+import type { Category, Organization, Team, Ticket as TicketRecord } from '../types'
 
 type AnonymousTicketForm = {
   title: string
   requestorName: string
   requestorEmail: string
   location: string
+  organizationId: string
   teamId: string
   categoryId: string
   description: string
@@ -20,12 +21,20 @@ const initialForm: AnonymousTicketForm = {
   requestorName: '',
   requestorEmail: '',
   location: '',
+  organizationId: '',
   teamId: '',
   categoryId: '',
   description: '',
 }
 
+const getTeamsForOrganization = (teams: Team[], organizationId: string) =>
+  teams.filter((team) => team.organizationId === organizationId)
+
+const getFirstTeamIdForOrganization = (teams: Team[], organizationId: string) =>
+  getTeamsForOrganization(teams, organizationId)[0]?.id || ''
+
 export function AnonymousTicketPage() {
+  const [organizations, setOrganizations] = useState<Organization[]>([])
   const [teams, setTeams] = useState<Team[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [form, setForm] = useState<AnonymousTicketForm>(initialForm)
@@ -47,17 +56,23 @@ export function AnonymousTicketPage() {
           throw new Error('public_directory_load_failed')
         }
 
-        const payload = (await response.json()) as { teams?: Team[]; categories?: Category[] }
+        const payload = (await response.json()) as { organizations?: Organization[]; teams?: Team[]; categories?: Category[] }
         if (cancelled) {
           return
         }
 
+        const nextOrganizations = payload.organizations ?? []
         const nextTeams = payload.teams ?? []
         const nextCategories = payload.categories ?? []
+        setOrganizations(nextOrganizations)
         setTeams(nextTeams)
         setCategories(nextCategories)
         setForm((current) => {
-          const teamId = current.teamId || nextTeams[0]?.id || ''
+          const organizationId = current.organizationId || nextOrganizations[0]?.id || ''
+          const teamId =
+            current.teamId && nextTeams.some((team) => team.id === current.teamId && team.organizationId === organizationId)
+              ? current.teamId
+              : getFirstTeamIdForOrganization(nextTeams, organizationId)
           const categoryId =
             current.categoryId && nextCategories.some((category) => category.id === current.categoryId)
               ? current.categoryId
@@ -65,6 +80,7 @@ export function AnonymousTicketPage() {
 
           return {
             ...current,
+            organizationId,
             teamId,
             categoryId,
           }
@@ -85,6 +101,11 @@ export function AnonymousTicketPage() {
       cancelled = true
     }
   }, [])
+
+  const availableTeams = useMemo(
+    () => getTeamsForOrganization(teams, form.organizationId),
+    [teams, form.organizationId],
+  )
 
   const availableCategories = useMemo(
     () => categories.filter((category) => category.teamId === form.teamId),
@@ -163,6 +184,7 @@ export function AnonymousTicketPage() {
       setCreatedTicket(payload.ticket)
       setForm((current) => ({
         ...initialForm,
+          organizationId: current.organizationId,
         teamId: current.teamId,
         categoryId: categories.find((category) => category.teamId === current.teamId)?.id || '',
       }))
@@ -235,6 +257,29 @@ export function AnonymousTicketPage() {
                 />
               </label>
               <label className="field">
+                <span className="field-label">Organization</span>
+                <select
+                  className="input-control"
+                  value={form.organizationId}
+                  onChange={(event) => {
+                    const nextOrganizationId = event.target.value
+                    const nextTeamId = getFirstTeamIdForOrganization(teams, nextOrganizationId)
+                    setForm((current) => ({
+                      ...current,
+                      organizationId: nextOrganizationId,
+                      teamId: nextTeamId,
+                      categoryId: categories.find((category) => category.teamId === nextTeamId)?.id || '',
+                    }))
+                  }}
+                >
+                  {organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
                 <span className="field-label">Team</span>
                 <select
                   className="input-control"
@@ -248,7 +293,7 @@ export function AnonymousTicketPage() {
                     }))
                   }}
                 >
-                  {teams.map((team) => (
+                  {availableTeams.map((team) => (
                     <option key={team.id} value={team.id}>
                       {team.name}
                     </option>

@@ -28,6 +28,7 @@ import {
   Settings2,
   Shield,
   SunMedium,
+  Pencil,
   Ticket,
   Trash2,
   TriangleAlert,
@@ -58,6 +59,7 @@ import {
 import { apiUrl, appConfig } from './config'
 import {
   currentUserId,
+  initialOrganizations,
   initialCategories,
   initialTeams,
   initialTickets,
@@ -71,6 +73,7 @@ import type {
   AuthSession,
   Category,
   ListViewMode,
+  Organization,
   Team,
   ThemeConfig,
   ThemeMode,
@@ -137,11 +140,19 @@ const clearCookieValue = (name: string) => {
 type SettingsAccordionSection =
   | 'appearance'
   | 'authentication'
-  | 'addUser'
+  | 'manageOrganizations'
   | 'manageUsers'
   | 'manageTeams'
   | 'trendSeeding'
   | 'categories'
+
+type ManagementDrawerSection =
+  | 'manageOrganizations'
+  | 'manageUsers'
+  | 'manageTeams'
+  | 'categories'
+
+type SettingsDrawerTab = 'add' | 'edit'
 
 type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
 
@@ -161,7 +172,7 @@ type QuickActionToastState = {
 const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'appearance',
   'authentication',
-  'addUser',
+  'manageOrganizations',
   'manageUsers',
   'manageTeams',
   'trendSeeding',
@@ -412,18 +423,18 @@ const formatFileSize = (bytes: number) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-const slugify = (value: string) =>
-  value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+const getTeamsForOrganization = (teams: Team[], organizationId: string) =>
+  teams.filter((team) => team.organizationId === organizationId)
+
+const getFirstTeamIdForOrganization = (teams: Team[], organizationId: string) =>
+  getTeamsForOrganization(teams, organizationId)[0]?.id || ''
 
 const createMockSessionUser = (session: AuthSession): User => ({
   id: session.id ?? session.subject,
   name: session.name,
   email: session.email,
-  teamId: session.teamId ?? 'it',
+  organizationId: session.organizationId ?? initialOrganizations[0]?.id ?? '',
+  teamId: session.teamId ?? initialTeams[0]?.id ?? '',
   role: session.role ?? 'Staff',
 })
 
@@ -433,6 +444,10 @@ interface SessionApiUser {
   email: string
   name: string
   role?: 'Admin' | 'Staff'
+  organizationId?: string
+  organizationName?: string
+  organizationCode?: string
+  organizationAccent?: string
   teamId?: string
   picture?: string
 }
@@ -465,6 +480,10 @@ const mapSessionApiUser = (user: SessionApiUser): AuthSession => ({
   email: user.email,
   name: user.name,
   role: user.role,
+  organizationId: user.organizationId,
+  organizationName: user.organizationName,
+  organizationCode: user.organizationCode,
+  organizationAccent: user.organizationAccent,
   teamId: user.teamId,
   picture: user.picture,
 })
@@ -638,6 +657,7 @@ const getPriorityBadgeClass = (priority: TicketPriority) => {
 }
 
 function App() {
+  const [organizations, setOrganizations] = useState(initialOrganizations)
   const [teams, setTeams] = useState(initialTeams)
   const [categories, setCategories] = useState(initialCategories)
   const [users, setUsers] = useState(initialUsers)
@@ -713,7 +733,7 @@ function App() {
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
     authentication: false,
-    addUser: false,
+    manageOrganizations: false,
     manageUsers: false,
     manageTeams: false,
     trendSeeding: false,
@@ -729,20 +749,33 @@ function App() {
   )
   const [draggedSettingsSection, setDraggedSettingsSection] = useState<SettingsAccordionSection | null>(null)
   const [settingsDragOverSection, setSettingsDragOverSection] = useState<SettingsAccordionSection | null>(null)
+  const [settingsDrawerSection, setSettingsDrawerSection] = useState<ManagementDrawerSection | null>(null)
+  const [settingsDrawerTab, setSettingsDrawerTab] = useState<SettingsDrawerTab>('add')
+  const [manageOrganizationEditDraft, setManageOrganizationEditDraft] = useState<Organization | null>(null)
+  const [manageUsersEditDraft, setManageUsersEditDraft] = useState<User | null>(null)
+  const [manageTeamEditDraft, setManageTeamEditDraft] = useState<Team | null>(null)
+  const [manageCategoryEditDraft, setManageCategoryEditDraft] = useState<Category | null>(null)
+  const [organizationForm, setOrganizationForm] = useState({
+    name: '',
+    code: '',
+    accent: '#334155',
+  })
   const [teamForm, setTeamForm] = useState({
+    organizationId: initialOrganizations[0]?.id ?? '',
     name: '',
     code: '',
     accent: '#0078d4',
   })
   const [categoryForm, setCategoryForm] = useState({
-    teamId: 'it',
+    teamId: initialTeams[0]?.id ?? '',
     name: '',
     description: '',
   })
   const [userForm, setUserForm] = useState({
     name: '',
     email: '',
-    teamId: 'it',
+    organizationId: initialOrganizations[0]?.id ?? '',
+    teamId: initialTeams[0]?.id ?? '',
     role: 'Staff' as User['role'],
   })
   const [userFormPending, setUserFormPending] = useState(false)
@@ -806,6 +839,7 @@ function App() {
 
   const deferredSearch = useDeferredValue(searchText)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
+  const availableOrganizations = organizations.length > 0 ? organizations : initialOrganizations
   const availableTeams = teams.length > 0 ? teams : initialTeams
   const availableCategories = categories.length > 0 ? categories : initialCategories
   const availableUsers = users.length > 0 ? users : initialUsers
@@ -831,6 +865,8 @@ function App() {
     [currentTeamMembers],
   )
 
+  const getOrganizationById = (organizationId: string) =>
+    organizations.find((organization) => organization.id === organizationId)
   const getTeamById = (teamId: string) => teams.find((team) => team.id === teamId)
   const getCategoryById = (categoryId: string) =>
     categories.find((category) => category.id === categoryId)
@@ -1179,12 +1215,17 @@ function App() {
         }
 
         const payload = (await response.json()) as {
+          organizations?: typeof initialOrganizations
           teams?: typeof initialTeams
           categories?: typeof initialCategories
           users?: typeof initialUsers
         }
 
         if (!cancelled) {
+          if (Array.isArray(payload.organizations)) {
+            setOrganizations(payload.organizations)
+          }
+
           if (Array.isArray(payload.teams)) {
             setTeams(payload.teams)
           }
@@ -1297,7 +1338,17 @@ function App() {
   }, [authSession])
 
   useEffect(() => {
-    if (currentUser.role !== 'Admin' && (activeView === 'settings' || activeView === 'reports')) {
+    if (
+      currentUser.role !== 'Admin' &&
+      (
+        activeView === 'settings' ||
+        activeView === 'reports' ||
+        activeView === 'manage-organizations' ||
+        activeView === 'manage-users' ||
+        activeView === 'manage-teams' ||
+        activeView === 'manage-categories'
+      )
+    ) {
       setActiveView('dashboard')
     }
   }, [activeView, currentUser.role])
@@ -1486,6 +1537,36 @@ function App() {
     setCreateTicketError('')
   }, [activeView])
 
+  useEffect(() => {
+    if (activeView !== 'settings') {
+      setSettingsDrawerSection(null)
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    if (activeView !== 'manage-organizations') {
+      setManageOrganizationEditDraft(null)
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    if (activeView !== 'manage-users') {
+      setManageUsersEditDraft(null)
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    if (activeView !== 'manage-teams') {
+      setManageTeamEditDraft(null)
+    }
+  }, [activeView])
+
+  useEffect(() => {
+    if (activeView !== 'manage-categories') {
+      setManageCategoryEditDraft(null)
+    }
+  }, [activeView])
+
   const refreshTicket = async (ticketId: string) => {
     const response = await fetch(apiUrl(`/api/tickets/${ticketId}`), {
       credentials: 'include',
@@ -1632,6 +1713,41 @@ function App() {
   const openNotificationsPage = () => {
     setActiveView('notifications')
     setNotificationsPreviewOpen(false)
+  }
+
+  const openSettingsDrawer = (section: ManagementDrawerSection) => {
+    setSettingsDrawerSection(section)
+  }
+
+  const openManageOrganizationsPage = () => {
+    setActiveView('manage-organizations')
+    setSettingsDrawerTab('add')
+    setManageOrganizationEditDraft(null)
+  }
+
+  const openManageUsersPage = () => {
+    setActiveView('manage-users')
+    setSettingsDrawerTab('add')
+    setManageUsersEditDraft(null)
+  }
+
+  const openManageTeamsPage = () => {
+    setActiveView('manage-teams')
+    setSettingsDrawerTab('add')
+    setManageTeamEditDraft(null)
+  }
+
+  const openManageCategoriesPage = () => {
+    setActiveView('manage-categories')
+    setSettingsDrawerTab('add')
+    setManageCategoryEditDraft(null)
+  }
+
+  const closeSettingsDrawer = () => {
+    setSettingsDrawerSection(null)
+    setManageOrganizationEditDraft(null)
+    setManageTeamEditDraft(null)
+    setManageCategoryEditDraft(null)
   }
 
   const toggleNotificationReadState = (notificationId: string, shouldBeUnread: boolean) => {
@@ -2572,13 +2688,113 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  const addTeam = async () => {
-    if (!teamForm.name.trim()) {
+  const addOrganization = async () => {
+    if (!organizationForm.name.trim()) {
       return
     }
 
-    const teamId = slugify(teamForm.name)
-    if (teams.some((team) => team.id === teamId)) {
+    try {
+      const response = await fetch(apiUrl('/api/organizations'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: organizationForm.name.trim(),
+          code: organizationForm.code.trim().toUpperCase() || organizationForm.name.trim().slice(0, 3).toUpperCase(),
+          accent: organizationForm.accent,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403 || !response.ok) {
+        return
+      }
+
+      const payload = (await response.json()) as {
+        organization?: Organization
+      }
+
+      if (payload.organization) {
+        setOrganizations((current) => [...current, payload.organization as Organization])
+        setOrganizationForm({ name: '', code: '', accent: '#334155' })
+        setTeamForm((current) => ({
+          ...current,
+          organizationId: payload.organization?.id ?? current.organizationId,
+        }))
+      }
+    } catch {
+      // Error handling
+    }
+  }
+
+  const updateOrganization = (organizationId: string, field: 'name' | 'code' | 'accent', value: string) => {
+    setOrganizations((current) =>
+      current.map((organization) =>
+        organization.id === organizationId
+          ? {
+              ...organization,
+              [field]: field === 'code' ? value.toUpperCase() : value,
+            }
+          : organization,
+      ),
+    )
+  }
+
+  const persistOrganization = async (organization: Organization) => {
+    const normalizedOrganization = {
+      ...organization,
+      name: organization.name.trim(),
+      code: organization.code.trim().toUpperCase(),
+      accent: organization.accent.trim(),
+    }
+
+    if (!normalizedOrganization.name || !normalizedOrganization.code || !normalizedOrganization.accent) {
+      return
+    }
+
+    try {
+      const response = await fetch(apiUrl(`/api/organizations/${normalizedOrganization.id}`), {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify(normalizedOrganization),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403 || !response.ok) {
+        return
+      }
+
+      const payload = (await response.json()) as {
+        organization?: Organization
+      }
+
+      if (payload.organization) {
+        setOrganizations((current) =>
+          current.map((entry) =>
+            entry.id === payload.organization?.id ? (payload.organization as Organization) : entry,
+          ),
+        )
+      }
+    } catch {
+      // Error handling
+    }
+  }
+
+  const addTeam = async () => {
+    if (!teamForm.organizationId || !teamForm.name.trim()) {
       return
     }
 
@@ -2590,7 +2806,7 @@ function App() {
         },
         credentials: 'include',
         body: JSON.stringify({
-          id: teamId,
+          organizationId: teamForm.organizationId,
           name: teamForm.name.trim(),
           code: teamForm.code.trim().toUpperCase() || teamForm.name.trim().slice(0, 3).toUpperCase(),
           accent: teamForm.accent,
@@ -2602,13 +2818,7 @@ function App() {
         return
       }
 
-      if (response.status === 403) {
-        // Admin required
-        return
-      }
-
-      if (!response.ok) {
-        // Error
+      if (response.status === 403 || !response.ok) {
         return
       }
 
@@ -2618,15 +2828,15 @@ function App() {
 
       if (payload.team) {
         setTeams((current) => [...current, payload.team as Team])
-        setTeamForm({ name: '', code: '', accent: '#0078d4' })
-        setCategoryForm((current) => ({ ...current, teamId }))
+        setTeamForm((current) => ({ ...current, name: '', code: '', accent: '#0078d4' }))
+        setCategoryForm((current) => ({ ...current, teamId: payload.team?.id ?? current.teamId }))
       }
     } catch {
       // Error
     }
   }
 
-  const updateTeam = (teamId: string, field: 'name' | 'code' | 'accent', value: string) => {
+  const updateTeam = (teamId: string, field: 'organizationId' | 'name' | 'code' | 'accent', value: string) => {
     setTeams((current) =>
       current.map((team) =>
         team.id === teamId
@@ -2660,6 +2870,7 @@ function App() {
         },
         credentials: 'include',
         body: JSON.stringify({
+          organizationId: normalizedTeam.organizationId,
           name: normalizedTeam.name,
           code: normalizedTeam.code,
           accent: normalizedTeam.accent,
@@ -2820,8 +3031,8 @@ function App() {
   }
 
   const addUser = async () => {
-    if (!userForm.name.trim() || !userForm.email.trim() || !userForm.teamId) {
-      setUserDirectoryError('Name, email, and team are required before adding a user.')
+    if (!userForm.name.trim() || !userForm.email.trim() || !userForm.organizationId || !userForm.teamId) {
+      setUserDirectoryError('Name, email, organization, and team are required before adding a user.')
       setUserDirectoryNotice('')
       return
     }
@@ -2847,6 +3058,7 @@ function App() {
         body: JSON.stringify({
           name: userForm.name.trim(),
           email: normalizedEmail,
+          organizationId: userForm.organizationId,
           teamId: userForm.teamId,
           role: userForm.role,
         }),
@@ -2878,7 +3090,13 @@ function App() {
       }
 
       setUsers((current) => [...current, payload.user as User])
-      setUserForm({ name: '', email: '', teamId: currentUser.teamId, role: 'Staff' })
+      setUserForm({
+        name: '',
+        email: '',
+        organizationId: currentUser.organizationId,
+        teamId: currentUser.teamId,
+        role: 'Staff',
+      })
       setUserDirectoryNotice('User added successfully.')
       await refreshAuthSession()
     } catch {
@@ -2890,7 +3108,7 @@ function App() {
 
   const updateUser = (
     userId: string,
-    field: 'name' | 'email' | 'teamId' | 'role',
+    field: 'name' | 'email' | 'organizationId' | 'teamId' | 'role',
     value: string,
   ) => {
     setUsers((current) =>
@@ -2910,11 +3128,12 @@ function App() {
       ...user,
       name: user.name.trim(),
       email: user.email.trim().toLowerCase(),
+      organizationId: user.organizationId.trim(),
       teamId: user.teamId.trim(),
     }
 
-    if (!normalizedUser.name || !normalizedUser.email || !normalizedUser.teamId) {
-      setUserDirectoryError('Each user needs a name, email, and team before changes can be saved.')
+    if (!normalizedUser.name || !normalizedUser.email || !normalizedUser.organizationId || !normalizedUser.teamId) {
+      setUserDirectoryError('Each user needs a name, email, organization, and team before changes can be saved.')
       setUserDirectoryNotice('')
       return
     }
@@ -3066,6 +3285,14 @@ function App() {
   const currentViewLabel =
     activeView === 'notifications'
       ? 'Notifications'
+      : activeView === 'manage-organizations'
+        ? 'Organizations'
+      : activeView === 'manage-users'
+        ? 'Manage Users'
+      : activeView === 'manage-teams'
+        ? 'Manage Teams'
+      : activeView === 'manage-categories'
+        ? 'Categories'
       : visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
 
   const resetDashboardLayout = () => {
@@ -3364,6 +3591,1258 @@ function App() {
     )
   }
 
+  const renderSettingsPageLauncher = (label: string, summary: string, action: () => void) => (
+    <div className="settings-accordion-content space-y-3">
+      <div className="text-sm text-[color:var(--text-muted)]">{summary}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-4 py-3">
+        <div>
+          <div className="text-sm font-semibold text-[color:var(--text)]">Open {label}</div>
+          <div className="text-xs text-[color:var(--text-muted)]">
+            Manage this area on a full-width page with Add and Edit tabs.
+          </div>
+        </div>
+        <button type="button" className="primary-button" onClick={action}>
+          Open Page
+        </button>
+      </div>
+    </div>
+  )
+
+  const getSettingsTabClassName = (isActive: boolean) =>
+    [
+      'border-b-2 px-1 py-2 text-sm font-semibold transition-colors',
+      isActive
+        ? 'border-[color:var(--accent)] text-[color:var(--accent)]'
+        : 'border-transparent text-[color:var(--text-muted)] hover:text-[color:var(--text)]',
+    ].join(' ')
+
+  const renderSettingsDrawerTabs = () => (
+    <div className="flex gap-6 border-b border-[color:var(--border)] px-5 py-3">
+      {(
+        [
+          ['add', 'Add'],
+          ['edit', 'Edit'],
+        ] as const
+      ).map(([value, label]) => {
+        const isActive = settingsDrawerTab === value
+
+        return (
+          <button
+            key={value}
+            type="button"
+            className={getSettingsTabClassName(isActive)}
+            onClick={() => setSettingsDrawerTab(value)}
+          >
+            {label}
+          </button>
+        )
+      })}
+    </div>
+  )
+
+  const renderManagementPageTabs = () => renderSettingsDrawerTabs()
+
+  const openManageOrganizationEdit = (organization: Organization) => {
+    setSettingsDrawerTab('edit')
+    setManageOrganizationEditDraft({ ...organization })
+    openSettingsDrawer('manageOrganizations')
+  }
+
+  const saveManageOrganizationEdit = async () => {
+    if (!manageOrganizationEditDraft) {
+      return
+    }
+
+    updateOrganization(manageOrganizationEditDraft.id, 'name', manageOrganizationEditDraft.name)
+    updateOrganization(manageOrganizationEditDraft.id, 'code', manageOrganizationEditDraft.code)
+    updateOrganization(manageOrganizationEditDraft.id, 'accent', manageOrganizationEditDraft.accent)
+    await persistOrganization(manageOrganizationEditDraft)
+  }
+
+  const renderManageOrganizationsEditPanelContent = () => {
+    if (!manageOrganizationEditDraft) {
+      return null
+    }
+
+    return (
+      <div className="flex h-full flex-col">
+        <div className="border-b border-[color:var(--border)] px-5 py-4">
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                Organizations
+              </div>
+              <h2 className="text-2xl font-semibold">Edit Organization</h2>
+              <div className="mt-1 text-sm text-[color:var(--text-muted)]">
+                Update the selected organization and save the record from this panel.
+              </div>
+            </div>
+
+            <button type="button" className="icon-button" onClick={closeSettingsDrawer}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="grid gap-4">
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization name</div>
+              <input
+                className="input-control"
+                value={manageOrganizationEditDraft.name}
+                onChange={(event) =>
+                  setManageOrganizationEditDraft((current) =>
+                    current ? { ...current, name: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Code</div>
+              <input
+                className="input-control font-mono"
+                value={manageOrganizationEditDraft.code}
+                onChange={(event) =>
+                  setManageOrganizationEditDraft((current) =>
+                    current ? { ...current, code: event.target.value.toUpperCase() } : current,
+                  )
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Accent</div>
+              <input
+                type="color"
+                className="h-10 w-full rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                value={manageOrganizationEditDraft.accent}
+                onChange={(event) =>
+                  setManageOrganizationEditDraft((current) =>
+                    current ? { ...current, accent: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="border-t border-[color:var(--border)] px-5 py-4">
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" className="secondary-button" onClick={closeSettingsDrawer}>
+              Cancel
+            </button>
+            <button type="button" className="primary-button" onClick={() => void saveManageOrganizationEdit()}>
+              Save Organization
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const openManageUsersEdit = (user: User) => {
+    setSettingsDrawerTab('edit')
+    setManageUsersEditDraft({ ...user })
+  }
+
+  const saveManageUsersEdit = async () => {
+    if (!manageUsersEditDraft) {
+      return
+    }
+
+    updateUser(manageUsersEditDraft.id, 'name', manageUsersEditDraft.name)
+    updateUser(manageUsersEditDraft.id, 'email', manageUsersEditDraft.email)
+    updateUser(manageUsersEditDraft.id, 'organizationId', manageUsersEditDraft.organizationId)
+    updateUser(manageUsersEditDraft.id, 'teamId', manageUsersEditDraft.teamId)
+    updateUser(manageUsersEditDraft.id, 'role', manageUsersEditDraft.role)
+    await persistUser(manageUsersEditDraft)
+  }
+
+  const renderManageUsersEditPanelContent = () => {
+    if (!manageUsersEditDraft) {
+      return null
+    }
+
+    return (
+      <div className="flex h-full flex-col">
+        <div className="border-b border-[color:var(--border)] px-5 py-4">
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                Manage Users
+              </div>
+              <h2 className="text-2xl font-semibold">Edit User</h2>
+              <div className="mt-1 text-sm text-[color:var(--text-muted)]">
+                Update the selected user and save the record from this panel.
+              </div>
+            </div>
+
+            <button type="button" className="icon-button" onClick={() => setManageUsersEditDraft(null)}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="grid gap-4">
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Full name</div>
+              <input
+                className="input-control"
+                value={manageUsersEditDraft.name}
+                onChange={(event) =>
+                  setManageUsersEditDraft((current) => (current ? { ...current, name: event.target.value } : current))
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Email</div>
+              <input
+                className="input-control"
+                value={manageUsersEditDraft.email}
+                onChange={(event) =>
+                  setManageUsersEditDraft((current) => (current ? { ...current, email: event.target.value } : current))
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+              <select
+                className="input-control"
+                value={manageUsersEditDraft.organizationId}
+                onChange={(event) => {
+                  const nextOrganizationId = event.target.value
+                  setManageUsersEditDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          organizationId: nextOrganizationId,
+                          teamId: getFirstTeamIdForOrganization(availableTeams, nextOrganizationId),
+                        }
+                      : current,
+                  )
+                }}
+              >
+                {availableOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+              <select
+                className="input-control"
+                value={manageUsersEditDraft.teamId}
+                onChange={(event) =>
+                  setManageUsersEditDraft((current) => (current ? { ...current, teamId: event.target.value } : current))
+                }
+              >
+                {getTeamsForOrganization(availableTeams, manageUsersEditDraft.organizationId).map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Role</div>
+              <select
+                className="input-control"
+                value={manageUsersEditDraft.role}
+                onChange={(event) =>
+                  setManageUsersEditDraft((current) =>
+                    current ? { ...current, role: event.target.value as User['role'] } : current,
+                  )
+                }
+              >
+                <option value="Admin">Admin</option>
+                <option value="Staff">Staff</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="border-t border-[color:var(--border)] px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {manageUsersEditDraft.name !== 'Administrator' ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  setChangePasswordValue('')
+                  setChangePasswordError('')
+                  setChangePasswordModal({
+                    userId: manageUsersEditDraft.id,
+                    userName: manageUsersEditDraft.name,
+                  })
+                }}
+              >
+                Change Password
+              </button>
+            ) : (
+              <div className="text-xs text-[color:var(--text-muted)]">Password changes are disabled for Administrator.</div>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-xs text-[color:var(--text-muted)]">
+                {userSavePendingIds.includes(manageUsersEditDraft.id) ? 'Saving...' : 'Ready to save'}
+              </div>
+              <button type="button" className="primary-button" onClick={() => void saveManageUsersEdit()}>
+                Save User
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const openManageTeamEdit = (team: Team) => {
+    setSettingsDrawerTab('edit')
+    setManageTeamEditDraft({ ...team })
+    openSettingsDrawer('manageTeams')
+  }
+
+  const saveManageTeamEdit = async () => {
+    if (!manageTeamEditDraft) {
+      return
+    }
+
+    updateTeam(manageTeamEditDraft.id, 'organizationId', manageTeamEditDraft.organizationId)
+    updateTeam(manageTeamEditDraft.id, 'name', manageTeamEditDraft.name)
+    updateTeam(manageTeamEditDraft.id, 'code', manageTeamEditDraft.code)
+    updateTeam(manageTeamEditDraft.id, 'accent', manageTeamEditDraft.accent)
+    await persistTeam(manageTeamEditDraft)
+  }
+
+  const renderManageTeamsEditPanelContent = () => {
+    if (!manageTeamEditDraft) {
+      return null
+    }
+
+    return (
+      <div className="flex h-full flex-col">
+        <div className="border-b border-[color:var(--border)] px-5 py-4">
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                Manage Teams
+              </div>
+              <h2 className="text-2xl font-semibold">Edit Team</h2>
+              <div className="mt-1 text-sm text-[color:var(--text-muted)]">
+                Update the selected team and save the record from this panel.
+              </div>
+            </div>
+
+            <button type="button" className="icon-button" onClick={closeSettingsDrawer}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="grid gap-4">
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+              <select
+                className="input-control"
+                value={manageTeamEditDraft.organizationId}
+                onChange={(event) =>
+                  setManageTeamEditDraft((current) =>
+                    current ? { ...current, organizationId: event.target.value } : current,
+                  )
+                }
+              >
+                {availableOrganizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team name</div>
+              <input
+                className="input-control"
+                value={manageTeamEditDraft.name}
+                onChange={(event) =>
+                  setManageTeamEditDraft((current) => (current ? { ...current, name: event.target.value } : current))
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Code</div>
+              <input
+                className="input-control font-mono"
+                value={manageTeamEditDraft.code}
+                onChange={(event) =>
+                  setManageTeamEditDraft((current) =>
+                    current ? { ...current, code: event.target.value.toUpperCase() } : current,
+                  )
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Accent</div>
+              <input
+                type="color"
+                className="h-10 w-full rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                value={manageTeamEditDraft.accent}
+                onChange={(event) =>
+                  setManageTeamEditDraft((current) => (current ? { ...current, accent: event.target.value } : current))
+                }
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="border-t border-[color:var(--border)] px-5 py-4">
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" className="secondary-button" onClick={closeSettingsDrawer}>
+              Cancel
+            </button>
+            <button type="button" className="primary-button" onClick={() => void saveManageTeamEdit()}>
+              Save Team
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const openManageCategoryEdit = (category: Category) => {
+    setSettingsDrawerTab('edit')
+    setManageCategoryEditDraft({ ...category })
+    openSettingsDrawer('categories')
+  }
+
+  const saveManageCategoryEdit = async () => {
+    if (!manageCategoryEditDraft) {
+      return
+    }
+
+    updateCategory(manageCategoryEditDraft.id, 'teamId', manageCategoryEditDraft.teamId)
+    updateCategory(manageCategoryEditDraft.id, 'name', manageCategoryEditDraft.name)
+    updateCategory(manageCategoryEditDraft.id, 'description', manageCategoryEditDraft.description)
+    await persistCategory(manageCategoryEditDraft)
+  }
+
+  const renderManageCategoriesEditPanelContent = () => {
+    if (!manageCategoryEditDraft) {
+      return null
+    }
+
+    return (
+      <div className="flex h-full flex-col">
+        <div className="border-b border-[color:var(--border)] px-5 py-4">
+          <div className="mb-3 flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                Categories
+              </div>
+              <h2 className="text-2xl font-semibold">Edit Category</h2>
+              <div className="mt-1 text-sm text-[color:var(--text-muted)]">
+                Update the selected category and save the record from this panel.
+              </div>
+            </div>
+
+            <button type="button" className="icon-button" onClick={closeSettingsDrawer}>
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="grid gap-4">
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+              <select
+                className="input-control"
+                value={manageCategoryEditDraft.teamId}
+                onChange={(event) =>
+                  setManageCategoryEditDraft((current) => (current ? { ...current, teamId: event.target.value } : current))
+                }
+              >
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {(getOrganizationById(team.organizationId)?.name ?? 'Organization')} / {team.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Category name</div>
+              <input
+                className="input-control"
+                value={manageCategoryEditDraft.name}
+                onChange={(event) =>
+                  setManageCategoryEditDraft((current) => (current ? { ...current, name: event.target.value } : current))
+                }
+              />
+            </label>
+            <label className="space-y-2">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Description</div>
+              <input
+                className="input-control"
+                value={manageCategoryEditDraft.description}
+                onChange={(event) =>
+                  setManageCategoryEditDraft((current) =>
+                    current ? { ...current, description: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="border-t border-[color:var(--border)] px-5 py-4">
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" className="secondary-button" onClick={closeSettingsDrawer}>
+              Cancel
+            </button>
+            <button type="button" className="primary-button" onClick={() => void saveManageCategoryEdit()}>
+              Save Category
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const renderManageUsersPage = () => {
+    const isEditing = settingsDrawerTab === 'edit'
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Manage Users</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Create users in the Add tab or edit existing records from the full-width table.
+              </div>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setActiveView('settings')}>
+              Back to Settings
+            </button>
+          </div>
+        </section>
+
+        {(userDirectoryError || userDirectoryNotice) && (
+          <section className="space-y-3">
+            {userDirectoryError && (
+              <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {userDirectoryError}
+              </div>
+            )}
+            {userDirectoryNotice && (
+              <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                {userDirectoryNotice}
+              </div>
+            )}
+          </section>
+        )}
+
+        <section className="surface overflow-hidden p-0">
+          {renderManagementPageTabs()}
+
+          <div className="p-5">
+            {!isEditing ? (
+              <div className="mx-auto max-w-3xl space-y-4 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4">
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Full name</div>
+                  <input
+                    className="input-control"
+                    placeholder="Full name"
+                    value={userForm.name}
+                    onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Email</div>
+                  <input
+                    className="input-control"
+                    placeholder="Email"
+                    value={userForm.email}
+                    onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+                  <select
+                    className="input-control"
+                    value={userForm.organizationId}
+                    onChange={(event) => {
+                      const nextOrganizationId = event.target.value
+                      setUserForm((current) => ({
+                        ...current,
+                        organizationId: nextOrganizationId,
+                        teamId: getFirstTeamIdForOrganization(availableTeams, nextOrganizationId),
+                      }))
+                    }}
+                  >
+                    {availableOrganizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {organization.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+                  <select
+                    className="input-control"
+                    value={userForm.teamId}
+                    onChange={(event) => setUserForm((current) => ({ ...current, teamId: event.target.value }))}
+                  >
+                    {getTeamsForOrganization(availableTeams, userForm.organizationId).map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Role</div>
+                  <select
+                    className="input-control"
+                    value={userForm.role}
+                    onChange={(event) =>
+                      setUserForm((current) => ({ ...current, role: event.target.value as User['role'] }))
+                    }
+                  >
+                    <option value="Admin">Admin</option>
+                    <option value="Staff">Staff</option>
+                  </select>
+                </label>
+                <button type="button" className="primary-button mt-2 w-full justify-center" onClick={addUser}>
+                  {userFormPending ? 'Adding...' : 'Add User'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                  <table className="min-w-full border-collapse text-left text-sm">
+                    <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Name</th>
+                        <th className="px-4 py-3 font-semibold">Email</th>
+                        <th className="px-4 py-3 font-semibold">Organization</th>
+                        <th className="px-4 py-3 font-semibold">Team</th>
+                        <th className="px-4 py-3 font-semibold">Role</th>
+                        <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((user) => {
+                        const organizationName = getOrganizationById(user.organizationId)?.name ?? 'Organization'
+                        const teamName = getTeamById(user.teamId)?.name ?? 'Team'
+                        const isSelected = manageUsersEditDraft?.id === user.id
+
+                        return (
+                          <tr
+                            key={user.id}
+                            className={isSelected ? 'bg-[color:var(--card-bg)]' : 'border-t border-[color:var(--border)]'}
+                          >
+                            <td className="px-4 py-3 font-medium text-[color:var(--text)]">{user.name}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.email}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{organizationName}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{teamName}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.role}</td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                className="secondary-button px-3"
+                                aria-label={`Edit ${user.name}`}
+                                title={`Edit ${user.name}`}
+                                onClick={() => openManageUsersEdit(user)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {!manageUsersEditDraft && (
+                  <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                    Select a user with the pencil icon to edit that record.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  const renderManageOrganizationsPage = () => {
+    const isEditing = settingsDrawerTab === 'edit'
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Organizations</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Add organizations in the Add tab or edit existing records from the full-width table.
+              </div>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setActiveView('settings')}>
+              Back to Settings
+            </button>
+          </div>
+        </section>
+
+        <section className="surface overflow-hidden p-0">
+          {renderManagementPageTabs()}
+
+          <div className="p-5">
+            {!isEditing ? (
+              <div className="mx-auto max-w-3xl space-y-4 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4">
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization name</div>
+                  <input
+                    className="input-control"
+                    placeholder="Organization name"
+                    value={organizationForm.name}
+                    onChange={(event) => setOrganizationForm((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Code</div>
+                  <input
+                    className="input-control"
+                    placeholder="Code"
+                    value={organizationForm.code}
+                    onChange={(event) => setOrganizationForm((current) => ({ ...current, code: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Accent</div>
+                  <input
+                    type="color"
+                    className="h-10 w-full rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                    value={organizationForm.accent}
+                    onChange={(event) => setOrganizationForm((current) => ({ ...current, accent: event.target.value }))}
+                  />
+                </label>
+                  <button type="button" className="primary-button mt-2 w-full justify-center" onClick={addOrganization}>
+                  Add Organization
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                  <table className="min-w-full border-collapse text-left text-sm">
+                    <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Name</th>
+                        <th className="px-4 py-3 font-semibold">Code</th>
+                        <th className="px-4 py-3 font-semibold">Accent</th>
+                        <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {organizations.map((organization) => {
+                        const isSelected = manageOrganizationEditDraft?.id === organization.id
+
+                        return (
+                          <tr
+                            key={organization.id}
+                            className={isSelected ? 'bg-[color:var(--card-bg)]' : 'border-t border-[color:var(--border)]'}
+                          >
+                            <td className="px-4 py-3 font-medium text-[color:var(--text)]">{organization.name}</td>
+                            <td className="px-4 py-3 font-mono text-[color:var(--text-muted)]">{organization.code}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-4 w-4 rounded-full border border-[color:var(--border)]" style={{ backgroundColor: organization.accent }} />
+                                {organization.accent}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                className="secondary-button px-3"
+                                aria-label={`Edit ${organization.name}`}
+                                title={`Edit ${organization.name}`}
+                                onClick={() => openManageOrganizationEdit(organization)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {!manageOrganizationEditDraft && (
+                  <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                    Select an organization with the pencil icon to edit that record.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  const renderManageTeamsPage = () => {
+    const isEditing = settingsDrawerTab === 'edit'
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Manage Teams</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Add teams in the Add tab or edit existing records from the full-width table.
+              </div>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setActiveView('settings')}>
+              Back to Settings
+            </button>
+          </div>
+        </section>
+
+        <section className="surface overflow-hidden p-0">
+          {renderManagementPageTabs()}
+
+          <div className="p-5">
+            {!isEditing ? (
+              <div className="mx-auto max-w-3xl space-y-4 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4">
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+                  <select
+                    className="input-control"
+                    value={teamForm.organizationId}
+                    onChange={(event) => setTeamForm((current) => ({ ...current, organizationId: event.target.value }))}
+                  >
+                    {availableOrganizations.map((organization) => (
+                      <option key={organization.id} value={organization.id}>
+                        {organization.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team name</div>
+                  <input
+                    className="input-control"
+                    placeholder="Team name"
+                    value={teamForm.name}
+                    onChange={(event) => setTeamForm((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Code</div>
+                  <input
+                    className="input-control"
+                    placeholder="Code"
+                    value={teamForm.code}
+                    onChange={(event) => setTeamForm((current) => ({ ...current, code: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Accent</div>
+                  <input
+                    type="color"
+                    className="h-10 w-full rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
+                    value={teamForm.accent}
+                    onChange={(event) => setTeamForm((current) => ({ ...current, accent: event.target.value }))}
+                  />
+                </label>
+                  <button type="button" className="primary-button mt-2 w-full justify-center" onClick={addTeam}>
+                  Add Team
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                  <table className="min-w-full border-collapse text-left text-sm">
+                    <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Organization</th>
+                        <th className="px-4 py-3 font-semibold">Team</th>
+                        <th className="px-4 py-3 font-semibold">Code</th>
+                        <th className="px-4 py-3 font-semibold">Accent</th>
+                        <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {teams.map((team) => {
+                        const isSelected = manageTeamEditDraft?.id === team.id
+
+                        return (
+                          <tr
+                            key={team.id}
+                            className={isSelected ? 'bg-[color:var(--card-bg)]' : 'border-t border-[color:var(--border)]'}
+                          >
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{getOrganizationById(team.organizationId)?.name ?? 'Organization'}</td>
+                            <td className="px-4 py-3 font-medium text-[color:var(--text)]">{team.name}</td>
+                            <td className="px-4 py-3 font-mono text-[color:var(--text-muted)]">{team.code}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-4 w-4 rounded-full border border-[color:var(--border)]" style={{ backgroundColor: team.accent }} />
+                                {team.accent}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                className="secondary-button px-3"
+                                aria-label={`Edit ${team.name}`}
+                                title={`Edit ${team.name}`}
+                                onClick={() => openManageTeamEdit(team)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {!manageTeamEditDraft && (
+                  <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                    Select a team with the pencil icon to edit that record.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  const renderManageCategoriesPage = () => {
+    const isEditing = settingsDrawerTab === 'edit'
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xl font-semibold">Categories</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Add categories in the Add tab or edit existing records from the full-width table.
+              </div>
+            </div>
+            <button type="button" className="secondary-button" onClick={() => setActiveView('settings')}>
+              Back to Settings
+            </button>
+          </div>
+        </section>
+
+        <section className="surface overflow-hidden p-0">
+          {renderManagementPageTabs()}
+
+          <div className="p-5">
+            {!isEditing ? (
+              <div className="mx-auto max-w-3xl space-y-4 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4">
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+                  <select
+                    className="input-control"
+                    value={categoryForm.teamId}
+                    onChange={(event) => setCategoryForm((current) => ({ ...current, teamId: event.target.value }))}
+                  >
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {(getOrganizationById(team.organizationId)?.name ?? 'Organization')} / {team.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Category name</div>
+                  <input
+                    className="input-control"
+                    placeholder="Category name"
+                    value={categoryForm.name}
+                    onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
+                  />
+                </label>
+                <label className="space-y-2">
+                  <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Description</div>
+                  <input
+                    className="input-control"
+                    placeholder="Category description"
+                    value={categoryForm.description}
+                    onChange={(event) => setCategoryForm((current) => ({ ...current, description: event.target.value }))}
+                  />
+                </label>
+                  <button type="button" className="primary-button mt-2 w-full justify-center" onClick={addCategory}>
+                  Add Category
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                  <table className="min-w-full border-collapse text-left text-sm">
+                    <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Organization</th>
+                        <th className="px-4 py-3 font-semibold">Team</th>
+                        <th className="px-4 py-3 font-semibold">Category</th>
+                        <th className="px-4 py-3 font-semibold">Description</th>
+                        <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {categories.map((category) => {
+                        const team = getTeamById(category.teamId)
+                        const isSelected = manageCategoryEditDraft?.id === category.id
+
+                        return (
+                          <tr
+                            key={category.id}
+                            className={isSelected ? 'bg-[color:var(--card-bg)]' : 'border-t border-[color:var(--border)]'}
+                          >
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{getOrganizationById(team?.organizationId ?? '')?.name ?? 'Organization'}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{team?.name ?? 'Team'}</td>
+                            <td className="px-4 py-3 font-medium text-[color:var(--text)]">{category.name}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{category.description}</td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                className="secondary-button px-3"
+                                aria-label={`Edit ${category.name}`}
+                                title={`Edit ${category.name}`}
+                                onClick={() => openManageCategoryEdit(category)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {!manageCategoryEditDraft && (
+                  <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                    Select a category with the pencil icon to edit that record.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  const renderSettingsDrawerContent = (section: ManagementDrawerSection) => {
+    switch (section) {
+      case 'manageOrganizations':
+        return renderManageOrganizationsEditPanelContent()
+      case 'manageUsers':
+        return (
+          <div>
+            {renderSettingsDrawerTabs()}
+            <div className="space-y-4 p-5">
+              {userDirectoryError && (
+                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {userDirectoryError}
+                </div>
+              )}
+              {userDirectoryNotice && (
+                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {userDirectoryNotice}
+                </div>
+              )}
+              {settingsDrawerTab === 'add' ? (
+                <div className="space-y-4 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4">
+                  <label className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Full name</div>
+                    <input
+                      className="input-control"
+                      placeholder="Full name"
+                      value={userForm.name}
+                      onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))}
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Email</div>
+                    <input
+                      className="input-control"
+                      placeholder="Email"
+                      value={userForm.email}
+                      onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </label>
+                  <label className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+                    <select
+                      className="input-control"
+                      value={userForm.organizationId}
+                      onChange={(event) => {
+                        const nextOrganizationId = event.target.value
+                        setUserForm((current) => ({
+                          ...current,
+                          organizationId: nextOrganizationId,
+                          teamId: getFirstTeamIdForOrganization(availableTeams, nextOrganizationId),
+                        }))
+                      }}
+                    >
+                      {availableOrganizations.map((organization) => (
+                        <option key={organization.id} value={organization.id}>
+                          {organization.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+                    <select
+                      className="input-control"
+                      value={userForm.teamId}
+                      onChange={(event) => setUserForm((current) => ({ ...current, teamId: event.target.value }))}
+                    >
+                      {getTeamsForOrganization(availableTeams, userForm.organizationId).map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-2">
+                    <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Role</div>
+                    <select
+                      className="input-control"
+                      value={userForm.role}
+                      onChange={(event) =>
+                        setUserForm((current) => ({ ...current, role: event.target.value as User['role'] }))
+                      }
+                    >
+                      <option value="Admin">Admin</option>
+                      <option value="Staff">Staff</option>
+                    </select>
+                  </label>
+                  <button type="button" className="primary-button w-full justify-center" onClick={addUser}>
+                    {userFormPending ? 'Adding...' : 'Add User'}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {users.map((user) => (
+                    <div
+                      key={user.id}
+                      className="surface-muted grid gap-3 p-3 md:grid-cols-[1.1fr_1.2fr_0.9fr_0.9fr_0.8fr_auto_auto] md:items-center"
+                    >
+                      <input
+                        className="input-control"
+                        value={user.name}
+                        onChange={(event) => updateUser(user.id, 'name', event.target.value)}
+                        onBlur={() => void persistUser(user)}
+                      />
+                      <input
+                        className="input-control"
+                        value={user.email}
+                        onChange={(event) => updateUser(user.id, 'email', event.target.value)}
+                        onBlur={() => void persistUser(user)}
+                      />
+                      <select
+                        className="input-control"
+                        value={user.organizationId}
+                        onChange={(event) => {
+                          const nextOrganizationId = event.target.value
+                          const nextTeamId = getFirstTeamIdForOrganization(availableTeams, nextOrganizationId)
+                          const nextUser = {
+                            ...user,
+                            organizationId: nextOrganizationId,
+                            teamId: nextTeamId,
+                          }
+                          updateUser(user.id, 'organizationId', nextOrganizationId)
+                          updateUser(user.id, 'teamId', nextTeamId)
+                          void persistUser(nextUser)
+                        }}
+                      >
+                        {availableOrganizations.map((organization) => (
+                          <option key={organization.id} value={organization.id}>
+                            {organization.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="input-control"
+                        value={user.teamId}
+                        onChange={(event) => {
+                          const nextUser = {
+                            ...user,
+                            teamId: event.target.value,
+                          }
+                          updateUser(user.id, 'teamId', event.target.value)
+                          void persistUser(nextUser)
+                        }}
+                      >
+                        {getTeamsForOrganization(availableTeams, user.organizationId).map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="input-control"
+                        value={user.role}
+                        onChange={(event) => {
+                          const nextUser = {
+                            ...user,
+                            role: event.target.value as User['role'],
+                          }
+                          updateUser(user.id, 'role', event.target.value)
+                          void persistUser(nextUser)
+                        }}
+                      >
+                        <option value="Admin">Admin</option>
+                        <option value="Staff">Staff</option>
+                      </select>
+                      {user.name !== 'Administrator' && (
+                        <button
+                          type="button"
+                          className="secondary-button whitespace-nowrap"
+                          onClick={() => {
+                            setChangePasswordValue('')
+                            setChangePasswordError('')
+                            setChangePasswordModal({ userId: user.id, userName: user.name })
+                          }}
+                        >
+                          Change Password
+                        </button>
+                      )}
+                      <div className="text-right text-xs text-[color:var(--text-muted)]">
+                        {userSavePendingIds.includes(user.id) ? 'Saving...' : 'Saved'}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      case 'manageTeams':
+        return renderManageTeamsEditPanelContent()
+      case 'categories':
+        return renderManageCategoriesEditPanelContent()
+    }
+  }
+
   const renderSettingsAccordionSection = (section: SettingsAccordionSection) => {
     const isOpen = settingsAccordions[section]
 
@@ -3458,195 +4937,23 @@ function App() {
               )}
             </div>
           )
-        case 'addUser':
-          return (
-            <div className="settings-accordion-content grid gap-3">
-              {userDirectoryError && (
-                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {userDirectoryError}
-                </div>
-              )}
-              {userDirectoryNotice && (
-                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {userDirectoryNotice}
-                </div>
-              )}
-              <input
-                className="input-control"
-                placeholder="Full name"
-                value={userForm.name}
-                onChange={(event) => setUserForm((current) => ({ ...current, name: event.target.value }))}
-              />
-              <input
-                className="input-control"
-                placeholder="Email"
-                value={userForm.email}
-                onChange={(event) => setUserForm((current) => ({ ...current, email: event.target.value }))}
-              />
-              <select
-                className="input-control"
-                value={userForm.teamId}
-                onChange={(event) => setUserForm((current) => ({ ...current, teamId: event.target.value }))}
-              >
-                {teams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="input-control"
-                value={userForm.role}
-                onChange={(event) =>
-                  setUserForm((current) => ({ ...current, role: event.target.value as User['role'] }))
-                }
-              >
-                <option value="Admin">Admin</option>
-                <option value="Staff">Staff</option>
-              </select>
-              <button type="button" className="primary-button" onClick={addUser}>
-                {userFormPending ? 'Adding...' : 'Add User'}
-              </button>
-            </div>
+        case 'manageOrganizations':
+          return renderSettingsPageLauncher(
+            'Organizations',
+            `${organizations.length} organization${organizations.length === 1 ? '' : 's'} available.`,
+            openManageOrganizationsPage,
           )
         case 'manageUsers':
-          return (
-            <div className="settings-accordion-content space-y-3">
-              {userDirectoryError && (
-                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  {userDirectoryError}
-                </div>
-              )}
-              {userDirectoryNotice && (
-                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                  {userDirectoryNotice}
-                </div>
-              )}
-              <p className="text-sm text-[color:var(--text-muted)]">
-                Changes save automatically when you leave a field.
-              </p>
-              {users.map((user) => (
-                <div
-                  key={user.id}
-                  className="surface-muted grid gap-3 p-3 md:grid-cols-[1.2fr_1.3fr_0.9fr_0.8fr_auto_auto] md:items-center"
-                >
-                  <input
-                    className="input-control"
-                    value={user.name}
-                    onChange={(event) => updateUser(user.id, 'name', event.target.value)}
-                    onBlur={() => void persistUser(user)}
-                  />
-                  <input
-                    className="input-control"
-                    value={user.email}
-                    onChange={(event) => updateUser(user.id, 'email', event.target.value)}
-                    onBlur={() => void persistUser(user)}
-                  />
-                  <select
-                    className="input-control"
-                    value={user.teamId}
-                    onChange={(event) => {
-                      const nextUser = {
-                        ...user,
-                        teamId: event.target.value,
-                      }
-                      updateUser(user.id, 'teamId', event.target.value)
-                      void persistUser(nextUser)
-                    }}
-                  >
-                    {teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="input-control"
-                    value={user.role}
-                    onChange={(event) => {
-                      const nextUser = {
-                        ...user,
-                        role: event.target.value as User['role'],
-                      }
-                      updateUser(user.id, 'role', event.target.value)
-                      void persistUser(nextUser)
-                    }}
-                  >
-                    <option value="Admin">Admin</option>
-                    <option value="Staff">Staff</option>
-                  </select>
-                  {user.name !== 'Administrator' && (
-                  <button
-                    type="button"
-                    className="secondary-button whitespace-nowrap"
-                    onClick={() => {
-                      setChangePasswordValue('')
-                      setChangePasswordError('')
-                      setChangePasswordModal({ userId: user.id, userName: user.name })
-                    }}
-                  >
-                    Change Password
-                  </button>
-                  )}
-                  <div className="text-right text-xs text-[color:var(--text-muted)]">
-                    {userSavePendingIds.includes(user.id) ? 'Saving...' : 'Saved'}
-                  </div>
-                </div>
-              ))}
-            </div>
+          return renderSettingsPageLauncher(
+            'Users',
+            `${users.length} user${users.length === 1 ? '' : 's'} across all organizations and teams.`,
+            openManageUsersPage,
           )
         case 'manageTeams':
-          return (
-            <div className="settings-accordion-content">
-              <div className="mb-4 grid gap-3 sm:grid-cols-[1.4fr_0.8fr_0.6fr_auto]">
-                <input
-                  className="input-control"
-                  placeholder="Team name"
-                  value={teamForm.name}
-                  onChange={(event) => setTeamForm((current) => ({ ...current, name: event.target.value }))}
-                />
-                <input
-                  className="input-control"
-                  placeholder="Code"
-                  value={teamForm.code}
-                  onChange={(event) => setTeamForm((current) => ({ ...current, code: event.target.value }))}
-                />
-                <input
-                  type="color"
-                  className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
-                  value={teamForm.accent}
-                  onChange={(event) => setTeamForm((current) => ({ ...current, accent: event.target.value }))}
-                />
-                <button type="button" className="primary-button" onClick={addTeam}>
-                  Add Team
-                </button>
-              </div>
-              <div className="space-y-3">
-                {teams.map((team) => (
-                  <div key={team.id} className="surface-muted grid gap-3 p-3 md:grid-cols-[1.4fr_0.7fr_0.4fr]">
-                    <input
-                      className="input-control"
-                      value={team.name}
-                      onChange={(event) => updateTeam(team.id, 'name', event.target.value)}
-                      onBlur={() => void persistTeam(team)}
-                    />
-                    <input
-                      className="input-control font-mono"
-                      value={team.code}
-                      onChange={(event) => updateTeam(team.id, 'code', event.target.value)}
-                      onBlur={() => void persistTeam(team)}
-                    />
-                    <input
-                      type="color"
-                      className="h-10 rounded-[2px] border border-[color:var(--border)] bg-transparent p-1"
-                      value={team.accent}
-                      onChange={(event) => updateTeam(team.id, 'accent', event.target.value)}
-                      onBlur={() => void persistTeam(team)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+          return renderSettingsPageLauncher(
+            'Teams',
+            `${teams.length} team${teams.length === 1 ? '' : 's'} available for assignment.`,
+            openManageTeamsPage,
           )
         case 'trendSeeding':
           return (
@@ -3727,67 +5034,10 @@ function App() {
             </div>
           )
         case 'categories':
-          return (
-            <div className="settings-accordion-content">
-              <div className="mb-4 grid gap-3 md:grid-cols-[0.8fr_1fr_1.6fr_auto]">
-                <select
-                  className="input-control"
-                  value={categoryForm.teamId}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, teamId: event.target.value }))}
-                >
-                  {teams.map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="input-control"
-                  placeholder="Category name"
-                  value={categoryForm.name}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, name: event.target.value }))}
-                />
-                <input
-                  className="input-control"
-                  placeholder="Category description"
-                  value={categoryForm.description}
-                  onChange={(event) => setCategoryForm((current) => ({ ...current, description: event.target.value }))}
-                />
-                <button type="button" className="primary-button" onClick={addCategory}>
-                  Add Category
-                </button>
-              </div>
-              <div className="grid gap-3 xl:grid-cols-2">
-                {categories.map((category) => (
-                  <div key={category.id} className="surface-muted grid gap-3 p-3 text-sm md:grid-cols-[0.85fr_1fr_1.4fr]">
-                    <select
-                      className="input-control"
-                      value={category.teamId}
-                      onChange={(event) => updateCategory(category.id, 'teamId', event.target.value)}
-                      onBlur={() => void persistCategory(category)}
-                    >
-                      {teams.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          {team.name}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="input-control"
-                      value={category.name}
-                      onChange={(event) => updateCategory(category.id, 'name', event.target.value)}
-                      onBlur={() => void persistCategory(category)}
-                    />
-                    <input
-                      className="input-control"
-                      value={category.description}
-                      onChange={(event) => updateCategory(category.id, 'description', event.target.value)}
-                      onBlur={() => void persistCategory(category)}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
+          return renderSettingsPageLauncher(
+            'Categories',
+            `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams.`,
+            openManageCategoriesPage,
           )
       }
     }
@@ -3804,17 +5054,17 @@ function App() {
         title: 'Authentication',
         description: 'Configure available login methods.',
       },
-      addUser: {
-        title: 'Add User',
-        description: 'Create a new admin or staff account.',
+      manageOrganizations: {
+        title: 'Organizations',
+        description: 'Add or update organization names, codes, and accent colors.',
       },
       manageUsers: {
         title: 'Manage Users',
-        description: 'Update names, emails, teams, and roles.',
+        description: 'Update names, emails, organizations, teams, and roles.',
       },
       manageTeams: {
         title: 'Manage Teams',
-        description: 'Add or update team names, codes, and accent colors.',
+        description: 'Add or update team names, organization assignments, codes, and accent colors.',
       },
       trendSeeding: {
         title: 'Trend Seeding',
@@ -4098,7 +5348,9 @@ function App() {
         {!collapsed && (
           <div>
             <div className="text-lg font-semibold">TeamSupportPro</div>
-            <div className="text-xs text-white/70">Enterprise staff support</div>
+            <div className="text-xs text-white/70">
+              {authSession?.organizationName || getOrganizationById(currentUser.organizationId)?.name || 'Enterprise staff support'}
+            </div>
           </div>
         )}
       </div>
@@ -4612,6 +5864,14 @@ function App() {
                     ? `${tickets.length} total tickets`
                     : activeView === 'notifications'
                       ? `${unreadNotificationCount} unread assigned or mention items`
+                    : activeView === 'manage-organizations'
+                      ? `${organizations.length} organization${organizations.length === 1 ? '' : 's'} available`
+                    : activeView === 'manage-users'
+                      ? `${users.length} user${users.length === 1 ? '' : 's'} across ${teams.length} teams`
+                    : activeView === 'manage-teams'
+                      ? `${teams.length} team${teams.length === 1 ? '' : 's'} available for assignment`
+                    : activeView === 'manage-categories'
+                      ? `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams`
                     : activeView === 'settings' || activeView === 'reports'
                       ? `${users.length} users across ${teams.length} teams`
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
@@ -4619,7 +5879,13 @@ function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {activeView !== 'settings' && activeView !== 'notifications' && activeView !== 'reports' && (
+                {activeView !== 'settings' &&
+                  activeView !== 'notifications' &&
+                  activeView !== 'reports' &&
+                  activeView !== 'manage-organizations' &&
+                  activeView !== 'manage-users' &&
+                  activeView !== 'manage-teams' &&
+                  activeView !== 'manage-categories' && (
                   <>
                     {activeView === 'dashboard' && (
                       <button
@@ -4722,6 +5988,14 @@ function App() {
             {activeView === 'reports' && currentUser.role === 'Admin' && <ReportsPage sessionToken={null} />}
 
             {activeView === 'settings' && currentUser.role === 'Admin' && renderAdminSettingsPage()}
+
+            {activeView === 'manage-organizations' && currentUser.role === 'Admin' && renderManageOrganizationsPage()}
+
+            {activeView === 'manage-users' && currentUser.role === 'Admin' && renderManageUsersPage()}
+
+            {activeView === 'manage-teams' && currentUser.role === 'Admin' && renderManageTeamsPage()}
+
+            {activeView === 'manage-categories' && currentUser.role === 'Admin' && renderManageCategoriesPage()}
 
             {activeView === 'new-ticket' && (
               <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
@@ -4918,6 +6192,31 @@ function App() {
       </div>
 
       <AnimatePresence>
+        {activeView === 'manage-users' && manageUsersEditDraft && (
+          <>
+            <motion.button
+              type="button"
+              aria-label="Close user editor"
+              className="fixed inset-0 z-30 bg-slate-950/35"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              onClick={() => setManageUsersEditDraft(null)}
+            />
+
+            <motion.aside
+              className="detail-panel fixed right-0 top-0 z-40 h-screen border-l border-[color:var(--border)] bg-[color:var(--panel-bg)]"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.28, ease: 'easeInOut' }}
+            >
+              <div className="detail-panel-shell">{renderManageUsersEditPanelContent()}</div>
+            </motion.aside>
+          </>
+        )}
+
         {selectedTicket && detailDraft && (
           <>
             {!detailPinned && (
@@ -5364,6 +6663,64 @@ function App() {
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {settingsDrawerSection && (
+          <>
+            <motion.button
+              type="button"
+              aria-label="Close settings panel"
+              className="fixed inset-0 z-30 bg-slate-950/35"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              onClick={closeSettingsDrawer}
+            />
+
+            <motion.aside
+              className="detail-panel fixed right-0 top-0 z-40 h-screen border-l border-[color:var(--border)] bg-[color:var(--panel-bg)]"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ duration: 0.28, ease: 'easeInOut' }}
+            >
+              <div className="detail-panel-shell flex h-full flex-col">
+                <div className="border-b border-[color:var(--border)] px-5 py-4">
+                  <div className="mb-3 flex items-start justify-between gap-4">
+                    <div>
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        Settings Management
+                      </div>
+                      <h2 className="text-2xl font-semibold">
+                        {
+                          {
+                            manageOrganizations: 'Organizations',
+                            manageUsers: 'Users',
+                            manageTeams: 'Teams',
+                            categories: 'Categories',
+                          }[settingsDrawerSection]
+                        }
+                      </h2>
+                      <div className="mt-1 text-sm text-[color:var(--text-muted)]">
+                        Add new entries or update existing records from this panel.
+                      </div>
+                    </div>
+
+                    <button type="button" className="icon-button" onClick={closeSettingsDrawer}>
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {renderSettingsDrawerContent(settingsDrawerSection)}
                 </div>
               </div>
             </motion.aside>

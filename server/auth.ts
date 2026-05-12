@@ -13,6 +13,10 @@ export interface SessionUser {
   name: string
   email: string
   role: 'Admin' | 'Staff'
+  organizationId: string
+  organizationName: string
+  organizationCode: string
+  organizationAccent: string
   teamId: string
   teamName: string
   teamCode: string

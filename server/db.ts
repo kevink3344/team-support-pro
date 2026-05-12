@@ -50,15 +50,68 @@ const isDatabaseEmpty = (database: Database.Database): boolean => {
   return row.count === 0
 }
 
+const tableHasColumn = (database: Database.Database, tableName: string, columnName: string) => {
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+  return columns.some((column) => column.name === columnName)
+}
+
+const migrateLegacySchema = (database: Database.Database) => {
+  if (!tableHasColumn(database, 'Teams', 'OrganizationId')) {
+    database.exec('ALTER TABLE Teams ADD COLUMN OrganizationId TEXT')
+  }
+
+  if (!tableHasColumn(database, 'Users', 'OrganizationId')) {
+    database.exec('ALTER TABLE Users ADD COLUMN OrganizationId TEXT')
+  }
+
+  const fallbackOrganization = serverConfig.fallbackOrganization
+  database
+    .prepare(
+      "INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?) ON CONFLICT(Id) DO UPDATE SET Name = excluded.Name, Code = excluded.Code, AccentColor = excluded.AccentColor, UpdatedAt = datetime('now')",
+    )
+    .run(
+      fallbackOrganization.id,
+      fallbackOrganization.name,
+      fallbackOrganization.code,
+      fallbackOrganization.accent,
+    )
+
+  database
+    .prepare("UPDATE Teams SET OrganizationId = ? WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''")
+    .run(fallbackOrganization.id)
+
+  database
+    .prepare(`
+      UPDATE Users
+      SET OrganizationId = COALESCE(
+        (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = Users.TeamId),
+        ?
+      )
+      WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''
+    `)
+    .run(fallbackOrganization.id)
+}
+
 const initializeSchema = (database: Database.Database) => {
   database.exec(`
+    CREATE TABLE IF NOT EXISTS Organizations (
+      Id TEXT PRIMARY KEY,
+      Name TEXT NOT NULL,
+      Code TEXT NOT NULL,
+      AccentColor TEXT NOT NULL DEFAULT '#334155',
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS Teams (
       Id TEXT PRIMARY KEY,
+      OrganizationId TEXT NOT NULL,
       Name TEXT NOT NULL,
       Code TEXT NOT NULL,
       AccentColor TEXT NOT NULL DEFAULT '#0078d4',
       CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now'))
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
     );
 
     CREATE TABLE IF NOT EXISTS Categories (
@@ -76,10 +129,12 @@ const initializeSchema = (database: Database.Database) => {
       Name TEXT NOT NULL,
       DisplayName TEXT,
       Email TEXT NOT NULL,
+      OrganizationId TEXT NOT NULL,
       TeamId TEXT NOT NULL,
       Role TEXT NOT NULL DEFAULT 'Staff',
       CreatedAt TEXT DEFAULT (datetime('now')),
       UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id),
       FOREIGN KEY (TeamId) REFERENCES Teams(Id)
     );
 
@@ -140,6 +195,8 @@ const initializeSchema = (database: Database.Database) => {
       UpdatedAt TEXT DEFAULT (datetime('now'))
     );
   `)
+
+  migrateLegacySchema(database)
 }
 
 const seedDatabase = (database: Database.Database) => {
@@ -148,11 +205,21 @@ const seedDatabase = (database: Database.Database) => {
   database.exec('BEGIN TRANSACTION')
 
   try {
+    const fallbackOrganization = serverConfig.fallbackOrganization
+
+    const insertOrganization = database.prepare('INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)')
+    insertOrganization.run(
+      fallbackOrganization.id,
+      fallbackOrganization.name,
+      fallbackOrganization.code,
+      fallbackOrganization.accent,
+    )
+
     // Teams
-    const insertTeam = database.prepare('INSERT INTO Teams (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)')
-    insertTeam.run('it', 'IT Support', 'IT', '#0078d4')
-    insertTeam.run('facilities', 'Facilities', 'FAC', '#2f9e44')
-    insertTeam.run('hr', 'Human Resources', 'HR', '#e8590c')
+    const insertTeam = database.prepare('INSERT INTO Teams (Id, OrganizationId, Name, Code, AccentColor) VALUES (?, ?, ?, ?, ?)')
+    insertTeam.run('it', fallbackOrganization.id, 'IT Support', 'IT', '#0078d4')
+    insertTeam.run('facilities', fallbackOrganization.id, 'Facilities', 'FAC', '#2f9e44')
+    insertTeam.run('hr', fallbackOrganization.id, 'Human Resources', 'HR', '#e8590c')
 
     // Categories
     const insertCategory = database.prepare('INSERT INTO Categories (Id, TeamId, Name, Description) VALUES (?, ?, ?, ?)')
@@ -166,13 +233,13 @@ const seedDatabase = (database: Database.Database) => {
     insertCategory.run('cat-hr-benefits', 'hr', 'Benefits', 'Benefits questions and requests')
 
     // Users
-    const insertUser = database.prepare('INSERT INTO Users (Id, Name, DisplayName, Email, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?)')
-    insertUser.run('u-kevin', 'Kevin Key', 'Kevin Key', 'kevin.key@company.com', 'it', 'Admin')
-    insertUser.run('u-diana', 'Diana Park', 'Diana Park', 'diana.park@company.com', 'it', 'Staff')
-    insertUser.run('u-alex', 'Alex Rivera', 'Alex Rivera', 'alex.rivera@company.com', 'it', 'Staff')
-    insertUser.run('u-michael', 'Michael Chen', 'Michael Chen', 'michael.chen@company.com', 'facilities', 'Staff')
-    insertUser.run('u-sarah', 'Sarah Johnson', 'Sarah Johnson', 'sarah.johnson@company.com', 'facilities', 'Admin')
-    insertUser.run('u-emily', 'Emily Davis', 'Emily Davis', 'emily.davis@company.com', 'hr', 'Staff')
+    const insertUser = database.prepare('INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    insertUser.run('u-kevin', 'Kevin Key', 'Kevin Key', 'kevin.key@company.com', fallbackOrganization.id, 'it', 'Admin')
+    insertUser.run('u-diana', 'Diana Park', 'Diana Park', 'diana.park@company.com', fallbackOrganization.id, 'it', 'Staff')
+    insertUser.run('u-alex', 'Alex Rivera', 'Alex Rivera', 'alex.rivera@company.com', fallbackOrganization.id, 'it', 'Staff')
+    insertUser.run('u-michael', 'Michael Chen', 'Michael Chen', 'michael.chen@company.com', fallbackOrganization.id, 'facilities', 'Staff')
+    insertUser.run('u-sarah', 'Sarah Johnson', 'Sarah Johnson', 'sarah.johnson@company.com', fallbackOrganization.id, 'facilities', 'Admin')
+    insertUser.run('u-emily', 'Emily Davis', 'Emily Davis', 'emily.davis@company.com', fallbackOrganization.id, 'hr', 'Staff')
 
     // Tickets
     const insertTicket = database.prepare(`

@@ -29,6 +29,10 @@ const envSchema = z.object({
   LOCAL_ADMIN_EMAIL: z.string().email().optional(),
   LOCAL_ADMIN_PASSWORD: z.string().min(8).optional(),
   AUTH_USER_LOOKUP_QUERY: z.string().optional(),
+  AUTH_FALLBACK_ORGANIZATION_ID: z.string().default('legacy-default'),
+  AUTH_FALLBACK_ORGANIZATION_NAME: z.string().default('Legacy Default'),
+  AUTH_FALLBACK_ORGANIZATION_CODE: z.string().default('LEG'),
+  AUTH_FALLBACK_ORGANIZATION_ACCENT: z.string().default('#334155'),
   AUTH_FALLBACK_TEAM_ID: z.string().default('it'),
   AUTH_FALLBACK_TEAM_NAME: z.string().default('IT Support'),
   AUTH_FALLBACK_TEAM_CODE: z.string().default('IT'),
@@ -83,6 +87,12 @@ export const serverConfig = {
     password: parsed.LOCAL_ADMIN_PASSWORD || '',
   },
   authUserLookupQuery: parsed.AUTH_USER_LOOKUP_QUERY || '',
+  fallbackOrganization: {
+    id: parsed.AUTH_FALLBACK_ORGANIZATION_ID,
+    name: parsed.AUTH_FALLBACK_ORGANIZATION_NAME,
+    code: parsed.AUTH_FALLBACK_ORGANIZATION_CODE,
+    accent: parsed.AUTH_FALLBACK_ORGANIZATION_ACCENT,
+  },
   fallbackTeam: {
     id: parsed.AUTH_FALLBACK_TEAM_ID,
     name: parsed.AUTH_FALLBACK_TEAM_NAME,

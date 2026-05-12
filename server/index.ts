@@ -31,19 +31,24 @@ import {
   listTicketAttachments,
 } from './attachments.js'
 import {
+  createOrganization,
   createCategory,
   createTeam,
   createUser,
+  deleteOrganization,
   deleteCategory,
   deleteTeam,
   deleteUser,
+  getOrganizationById,
   getCategoryById,
   getTeamById,
   getUserById,
+  listOrganizations,
   listCategories,
   listTeams,
   listUsers,
   loadDirectoryData,
+  updateOrganization,
   updateCategory,
   updateTeam,
   updateUser,
@@ -144,10 +149,14 @@ const readTestApiKeyUserFromRequest = (req: express.Request): SessionUser | null
     name: serverConfig.testApiUserName,
     email: serverConfig.testApiUserEmail,
     role: 'Staff',
-    teamId: 'it',
-    teamName: 'IT Support',
-    teamCode: 'IT',
-    teamAccent: '#0078d4',
+    organizationId: serverConfig.fallbackOrganization.id,
+    organizationName: serverConfig.fallbackOrganization.name,
+    organizationCode: serverConfig.fallbackOrganization.code,
+    organizationAccent: serverConfig.fallbackOrganization.accent,
+    teamId: serverConfig.fallbackTeam.id,
+    teamName: serverConfig.fallbackTeam.name,
+    teamCode: serverConfig.fallbackTeam.code,
+    teamAccent: serverConfig.fallbackTeam.accent,
   }
 }
 
@@ -472,6 +481,7 @@ app.post('/api/auth/register', async (req, res) => {
         name: appUser.name,
         email: appUser.email,
         role: appUser.role,
+        organizationId: appUser.organizationId,
         teamId: appUser.teamId,
       },
     })
@@ -510,6 +520,7 @@ app.post('/api/auth/local/login', async (req, res) => {
         name: appUser.name,
         email: appUser.email,
         role: appUser.role,
+        organizationId: appUser.organizationId,
         teamId: appUser.teamId,
       },
     })
@@ -555,11 +566,114 @@ app.get('/api/directory', async (req, res) => {
 
 app.get('/api/public/directory', async (_req, res) => {
   try {
-    const [teams, categories] = await Promise.all([listTeams(), listCategories()])
-    res.json({ teams, categories })
+    const [organizations, teams, categories] = await Promise.all([listOrganizations(), listTeams(), listCategories()])
+    res.json({ organizations, teams, categories })
   } catch (error) {
     console.error('Loading public directory data failed.', error)
     res.status(500).json({ error: 'public_directory_load_failed' })
+  }
+})
+
+app.get('/api/organizations', async (req, res) => {
+  if (!readSessionUserFromRequest(req)) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  try {
+    res.json({ organizations: await listOrganizations() })
+  } catch (error) {
+    console.error('Loading organizations failed.', error)
+    res.status(500).json({ error: 'organization_load_failed' })
+  }
+})
+
+app.get('/api/organizations/:organizationId', async (req, res) => {
+  if (!readSessionUserFromRequest(req)) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  const organization = await getOrganizationById(req.params.organizationId)
+  if (!organization) {
+    res.status(404).json({ error: 'organization_not_found' })
+    return
+  }
+
+  res.json({ organization })
+})
+
+app.post('/api/organizations', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  try {
+    const organization = await createOrganization({
+      id: typeof req.body?.id === 'string' ? req.body.id : undefined,
+      name: typeof req.body?.name === 'string' ? req.body.name : '',
+      code: typeof req.body?.code === 'string' ? req.body.code : '',
+      accent: typeof req.body?.accent === 'string' ? req.body.accent : '',
+    })
+
+    if (!organization) {
+      res.status(400).json({ error: 'organization_create_failed' })
+      return
+    }
+
+    res.status(201).json({ organization })
+  } catch (error) {
+    console.error('Creating organization failed.', error)
+    res.status(500).json({ error: 'organization_create_failed' })
+  }
+})
+
+app.patch('/api/organizations/:organizationId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  try {
+    const organization = await updateOrganization(req.params.organizationId, {
+      name: typeof req.body?.name === 'string' ? req.body.name : '',
+      code: typeof req.body?.code === 'string' ? req.body.code : '',
+      accent: typeof req.body?.accent === 'string' ? req.body.accent : '',
+    })
+
+    if (!organization) {
+      res.status(400).json({ error: 'organization_update_failed' })
+      return
+    }
+
+    res.json({ organization })
+  } catch (error) {
+    console.error('Updating organization failed.', error)
+    res.status(500).json({ error: 'organization_update_failed' })
+  }
+})
+
+app.delete('/api/organizations/:organizationId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+
+  try {
+    const deleted = await deleteOrganization(req.params.organizationId)
+    if (!deleted) {
+      res.status(400).json({ error: 'organization_delete_failed' })
+      return
+    }
+
+    res.status(204).end()
+  } catch (error) {
+    console.error('Deleting organization failed.', error)
+    res.status(500).json({ error: 'organization_delete_failed' })
   }
 })
 
@@ -602,6 +716,7 @@ app.post('/api/teams', async (req, res) => {
   try {
     const team = await createTeam({
       id: typeof req.body?.id === 'string' ? req.body.id : undefined,
+      organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       code: typeof req.body?.code === 'string' ? req.body.code : '',
       accent: typeof req.body?.accent === 'string' ? req.body.accent : '',
@@ -628,6 +743,7 @@ app.patch('/api/teams/:teamId', async (req, res) => {
 
   try {
     const team = await updateTeam(req.params.teamId, {
+      organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       code: typeof req.body?.code === 'string' ? req.body.code : '',
       accent: typeof req.body?.accent === 'string' ? req.body.accent : '',
@@ -810,6 +926,7 @@ app.post('/api/users', async (req, res) => {
       id: typeof req.body?.id === 'string' ? req.body.id : undefined,
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       email: typeof req.body?.email === 'string' ? req.body.email : '',
+      organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
       role: req.body?.role === 'Admin' ? 'Admin' : 'Staff',
     })
@@ -837,6 +954,7 @@ app.patch('/api/users/:userId', async (req, res) => {
     const updatedUser = await updateUser(req.params.userId, {
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       email: typeof req.body?.email === 'string' ? req.body.email : '',
+      organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
       role: req.body?.role === 'Admin' ? 'Admin' : 'Staff',
     })
@@ -847,12 +965,19 @@ app.patch('/api/users/:userId', async (req, res) => {
     }
 
     if (user && user.id === updatedUser.id) {
-      const updatedTeam = await getTeamById(updatedUser.teamId)
+      const [updatedTeam, updatedOrganization] = await Promise.all([
+        getTeamById(updatedUser.teamId),
+        getOrganizationById(updatedUser.organizationId),
+      ])
       const refreshedSessionUser: SessionUser = {
         ...user,
         name: updatedUser.name,
         email: updatedUser.email,
         role: updatedUser.role,
+        organizationId: updatedUser.organizationId,
+        organizationName: updatedOrganization?.name ?? user.organizationName,
+        organizationCode: updatedOrganization?.code ?? user.organizationCode,
+        organizationAccent: updatedOrganization?.accent ?? user.organizationAccent,
         teamId: updatedUser.teamId,
         teamName: updatedTeam?.name ?? user.teamName,
         teamCode: updatedTeam?.code ?? user.teamCode,

@@ -1,3 +1,4 @@
+export type OrganizationId = string
 export type TeamId = string
 export type UserId = string
 export type CategoryId = string
@@ -19,14 +20,26 @@ export type AppView =
   | 'my-tickets'
   | 'team-tickets'
   | 'new-ticket'
+  | 'manage-organizations'
+  | 'manage-users'
+  | 'manage-teams'
+  | 'manage-categories'
   | 'reports'
   | 'settings'
 
 export type ListViewMode = 'table' | 'cards'
 export type ThemeMode = 'light' | 'dark'
 
+export interface Organization {
+  id: OrganizationId
+  name: string
+  code: string
+  accent: string
+}
+
 export interface Team {
   id: TeamId
+  organizationId: OrganizationId
   name: string
   code: string
   accent: string
@@ -43,6 +56,7 @@ export interface User {
   id: UserId
   name: string
   email: string
+  organizationId: OrganizationId
   teamId: TeamId
   role: 'Admin' | 'Staff'
 }
@@ -53,11 +67,18 @@ export interface AuthSession {
   name: string
   email: string
   role?: 'Admin' | 'Staff'
+  organizationId?: string
+  organizationName?: string
+  organizationCode?: string
+  organizationAccent?: string
   teamId?: string
   picture?: string
 }
 
 export interface AuthenticatedUser extends User {
+  organizationName?: string
+  organizationCode?: string
+  organizationAccent?: string
   teamName?: string
   teamCode?: string
   teamAccent?: string
