@@ -3922,6 +3922,7 @@ function App() {
       const disableResolve = isPending
       const showAssignAction =
         activeView !== 'my-tickets' && ticket.assignedToId !== currentUser.id
+      const showInProgressAction = ticket.status !== 'In Progress'
       const showResolveAction = ticket.status !== 'Resolved'
 
       return (
@@ -3936,14 +3937,16 @@ function App() {
               {isPending ? 'Updating...' : 'Assign to me'}
             </button>
           )}
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={disableInProgress}
-            onClick={() => requestQuickTicketAction(ticket, 'mark-in-progress')}
-          >
-            In Progress
-          </button>
+          {showInProgressAction && (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={disableInProgress}
+              onClick={() => requestQuickTicketAction(ticket, 'mark-in-progress')}
+            >
+              In Progress
+            </button>
+          )}
           {showResolveAction && (
             <button
               type="button"
