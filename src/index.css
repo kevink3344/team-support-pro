@@ -184,7 +184,7 @@ button {
   align-items: center;
   gap: 8px;
   border: 1px solid var(--border);
-  background: transparent;
+  background: var(--app-bg);
   color: var(--text);
   padding: 10px 14px;
   font-size: 13px;
@@ -193,7 +193,10 @@ button {
   letter-spacing: 0.08em;
 }
 
-.secondary-button:hover,
+.secondary-button:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--app-bg));
+}
+
 .icon-button:hover,
 .view-toggle:hover,
 .tab-link:hover,
