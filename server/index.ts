@@ -205,6 +205,26 @@ app.get('/api/public/auth-settings', (_req, res) => {
   res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
 })
 
+app.get('/api/public/test-login-users', async (_req, res) => {
+  if (serverConfig.isProduction) {
+    res.status(404).json({ error: 'not_found' })
+    return
+  }
+
+  try {
+    const [organizations, teams, users] = await Promise.all([
+      listOrganizations(),
+      listTeams(),
+      listUsers(),
+    ])
+
+    res.json({ organizations, teams, users })
+  } catch (error) {
+    console.error('Loading test login users failed.', error)
+    res.status(500).json({ error: 'test_login_users_failed' })
+  }
+})
+
 app.get('/api/settings/auth', (req, res) => {
   const user = readSessionUserFromRequest(req)
 
@@ -527,6 +547,59 @@ app.post('/api/auth/local/login', async (req, res) => {
   } catch (error) {
     console.error('Local login session creation failed.', error)
     res.status(500).json({ error: 'local_login_failed' })
+  }
+})
+
+app.post('/api/auth/test-login', async (req, res) => {
+  if (serverConfig.isProduction) {
+    res.status(404).json({ error: 'not_found' })
+    return
+  }
+
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
+  const rememberMe = req.body?.rememberMe === true
+
+  if (!email) {
+    res.status(400).json({ error: 'invalid_email' })
+    return
+  }
+
+  try {
+    const directoryUsers = await listUsers()
+    const selectedUser = directoryUsers.find((user) => user.email.toLowerCase() === email)
+
+    if (!selectedUser) {
+      res.status(404).json({ error: 'user_not_found' })
+      return
+    }
+
+    const appUser = await resolveAuthenticatedUser({
+      subject: `test-login-${selectedUser.id}`,
+      email: selectedUser.email,
+      name: selectedUser.name,
+    })
+
+    const sessionMaxAgeMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+    const sessionToken = createSessionToken(appUser, rememberMe ? '30d' : '7d')
+    res.cookie(SESSION_COOKIE_NAME, sessionToken, buildCookieOptions(sessionMaxAgeMs))
+    res.json({
+      authenticated: true,
+      user: {
+        id: appUser.id,
+        subject: `test-login-${selectedUser.id}`,
+        name: appUser.name,
+        email: appUser.email,
+        role: appUser.role,
+        organizationId: appUser.organizationId,
+        organizationName: appUser.organizationName,
+        organizationCode: appUser.organizationCode,
+        organizationAccent: appUser.organizationAccent,
+        teamId: appUser.teamId,
+      },
+    })
+  } catch (error) {
+    console.error('Test login session creation failed.', error)
+    res.status(500).json({ error: 'test_login_failed' })
   }
 })
 

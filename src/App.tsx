@@ -32,6 +32,7 @@ import {
   Ticket,
   Trash2,
   TriangleAlert,
+  User as UserIcon,
   Users,
   Wrench,
   X,
@@ -812,15 +813,10 @@ function App() {
   const [authError, setAuthError] = useState('')
   const [localAuthError, setLocalAuthError] = useState('')
   const [localAuthNotice, setLocalAuthNotice] = useState('')
-  const [localRegisterName, setLocalRegisterName] = useState('')
-  const [localRegisterEmail, setLocalRegisterEmail] = useState('')
-  const [localRegisterPassword, setLocalRegisterPassword] = useState('')
   const [localLoginEmail, setLocalLoginEmail] = useState(() => readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE))
-  const [localLoginPassword, setLocalLoginPassword] = useState('')
   const [rememberMeNextLogin, setRememberMeNextLogin] = useState(
     () => Boolean(readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)),
   )
-  const [localRegisterPending, setLocalRegisterPending] = useState(false)
   const [localLoginPending, setLocalLoginPending] = useState(false)
   const [authReady, setAuthReady] = useState(true)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null)
@@ -843,6 +839,15 @@ function App() {
   const availableTeams = teams.length > 0 ? teams : initialTeams
   const availableCategories = categories.length > 0 ? categories : initialCategories
   const availableUsers = users.length > 0 ? users : initialUsers
+  const selectedLoginUser = availableUsers.find(
+    (user) => user.email.toLowerCase() === localLoginEmail.trim().toLowerCase(),
+  ) ?? availableUsers[0]
+  const selectedLoginOrganization = selectedLoginUser
+    ? availableOrganizations.find((organization) => organization.id === selectedLoginUser.organizationId) ?? null
+    : null
+  const selectedLoginTeam = selectedLoginUser
+    ? availableTeams.find((team) => team.id === selectedLoginUser.teamId) ?? null
+    : null
   const currentUser = authSession
     ? availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
       createMockSessionUser(authSession)
@@ -1091,12 +1096,59 @@ function App() {
       }
     }
 
+    const loadTestLoginUsers = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/public/test-login-users'))
+        if (!response.ok) {
+          return
+        }
+
+        const payload = (await response.json()) as {
+          organizations?: typeof initialOrganizations
+          teams?: typeof initialTeams
+          users?: typeof initialUsers
+        }
+
+        if (cancelled) {
+          return
+        }
+
+        if (Array.isArray(payload.organizations)) {
+          setOrganizations(payload.organizations)
+        }
+
+        if (Array.isArray(payload.teams)) {
+          setTeams(payload.teams)
+        }
+
+        if (Array.isArray(payload.users)) {
+          setUsers(payload.users)
+        }
+      } catch {
+        // The login screen can fall back to bundled mock users when the server list is unavailable.
+      }
+    }
+
     void loadPublicAuthSettings()
+    void loadTestLoginUsers()
 
     return () => {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (availableUsers.length === 0) {
+      return
+    }
+
+    const normalizedSelectedEmail = localLoginEmail.trim().toLowerCase()
+    const hasSelectedUser = availableUsers.some((user) => user.email.toLowerCase() === normalizedSelectedEmail)
+
+    if (!hasSelectedUser) {
+      setLocalLoginEmail(availableUsers[0].email)
+    }
+  }, [availableUsers, localLoginEmail])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2019,90 +2071,13 @@ function App() {
     setActiveView('dashboard')
   }
 
-  const handleLocalRegistration = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-
-    const name = localRegisterName.trim()
-    const email = localRegisterEmail.trim().toLowerCase()
-    const password = localRegisterPassword
-
-    if (name.length < 2) {
-      setLocalAuthError('Enter your full name to create an account.')
-      return
-    }
-
-    if (!email || !email.includes('@')) {
-      setLocalAuthError('Enter a valid work email address.')
-      return
-    }
-
-    if (password.length < 8) {
-      setLocalAuthError('Use at least 8 characters for your password.')
-      return
-    }
-
-    setLocalRegisterPending(true)
-    setLocalAuthError('')
-    setLocalAuthNotice('')
-
-    try {
-      const response = await fetch(apiUrl('/api/auth/register'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name, email, password, rememberMe: rememberMeNextLogin }),
-      })
-
-      if (response.status === 409) {
-        setLocalAuthError('That email is already registered. Use SIGN IN above.')
-        return
-      }
-
-      if (!response.ok) {
-        setLocalAuthError('Registration failed. Check your details and try again.')
-        return
-      }
-
-      const payload = (await response.json()) as {
-        authenticated?: boolean
-        user?: SessionApiUser
-      }
-
-      if (!payload.authenticated || !payload.user) {
-        setLocalAuthError('Registration succeeded, but session creation failed. Try signing in.')
-        return
-      }
-
-      setAuthSession(mapSessionApiUser(payload.user))
-      setAuthError('')
-      setLocalAuthError('')
-      setLocalAuthNotice('Account created successfully.')
-      setBackendAvailable(true)
-      setLocalRegisterPassword('')
-      setLocalLoginPassword('')
-    } catch {
-      setBackendAvailable(false)
-      setLocalAuthError('Registration failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
-    } finally {
-      setLocalRegisterPending(false)
-    }
-  }
-
   const handleLocalLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
     const email = localLoginEmail.trim().toLowerCase()
-    const password = localLoginPassword
 
     if (!email || !email.includes('@')) {
-      setLocalAuthError('Enter the email address you registered with.')
-      return
-    }
-
-    if (!password) {
-      setLocalAuthError('Enter your password.')
+      setLocalAuthError('Select a user to sign in.')
       return
     }
 
@@ -2111,22 +2086,22 @@ function App() {
     setLocalAuthNotice('')
 
     try {
-      const response = await fetch(apiUrl('/api/auth/local/login'), {
+      const response = await fetch(apiUrl('/api/auth/test-login'), {
         method: 'POST',
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password, rememberMe: rememberMeNextLogin }),
+        body: JSON.stringify({ email, rememberMe: rememberMeNextLogin }),
       })
 
-      if (response.status === 401) {
-        setLocalAuthError('Email or password is incorrect.')
+      if (response.status === 404) {
+        setLocalAuthError('The selected user is no longer available. Choose another user and try again.')
         return
       }
 
       if (!response.ok) {
-        setLocalAuthError('Email sign-in failed. Please try again.')
+        setLocalAuthError('Test sign-in failed. Please try again.')
         return
       }
 
@@ -2145,7 +2120,6 @@ function App() {
       setLocalAuthError('')
       setLocalAuthNotice('')
       setBackendAvailable(true)
-      setLocalLoginPassword('')
 
       if (rememberMeNextLogin) {
         setCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE, email, 30)
@@ -2154,7 +2128,7 @@ function App() {
       }
     } catch {
       setBackendAvailable(false)
-      setLocalAuthError('Email sign-in failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
+      setLocalAuthError('Test sign-in failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.')
     } finally {
       setLocalLoginPending(false)
     }
@@ -3285,6 +3259,8 @@ function App() {
   const currentViewLabel =
     activeView === 'notifications'
       ? 'Notifications'
+      : activeView === 'team-tickets'
+        ? `Team Tickets - ${currentTeam.name}`
       : activeView === 'manage-organizations'
         ? 'Organizations'
       : activeView === 'manage-users'
@@ -5470,7 +5446,7 @@ function App() {
                   </h1>
                 </div>
                 <p className="max-w-xl text-sm leading-7 text-white/75">
-                  Sign in with your email and password to access the support workspace.
+                  Choose a test user and sign in instantly. The correct organization and team context will be applied automatically.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
@@ -5497,7 +5473,7 @@ function App() {
                   </div>
                   <h2 className="text-2xl font-semibold">SIGN IN</h2>
                   <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
-                    Sign in with your local TeamSupportPro account credentials.
+                    Select a test user from the directory and create a session without entering email or password.
                   </p>
                 </div>
 
@@ -5510,89 +5486,72 @@ function App() {
 
                   <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
                     <div className="space-y-3">
-                      <input
-                        className="input-control"
-                        placeholder="Email"
-                        type="email"
-                        value={localLoginEmail}
-                        onChange={(event) => setLocalLoginEmail(event.target.value)}
-                        autoComplete="email"
-                      />
-                      <input
-                        className="input-control"
-                        placeholder="Password"
-                        type="password"
-                        value={localLoginPassword}
-                        onChange={(event) => setLocalLoginPassword(event.target.value)}
-                        autoComplete="current-password"
-                      />
+                      <label className="field">
+                        <span className="field-label">Test User</span>
+                        <select
+                          className="input-control"
+                          value={selectedLoginUser?.email ?? ''}
+                          onChange={(event) => setLocalLoginEmail(event.target.value)}
+                          disabled={localLoginPending || availableUsers.length === 0}
+                        >
+                          {availableUsers.map((user) => {
+                            const organization = availableOrganizations.find(
+                              (item) => item.id === user.organizationId,
+                            )
+                            const team = availableTeams.find((item) => item.id === user.teamId)
+                            const optionMeta = [organization?.code ?? organization?.name, team?.name]
+                              .filter(Boolean)
+                              .join(' - ')
+
+                            return (
+                              <option key={user.id} value={user.email}>
+                                {`${user.name}${optionMeta ? ` - ${optionMeta}` : ''}`}
+                              </option>
+                            )
+                          })}
+                        </select>
+                      </label>
+                      <div className="surface-muted grid gap-2 p-3 text-sm text-[color:var(--text-muted)]">
+                        <div>
+                          <span className="font-semibold text-[color:var(--text)]">Email:</span>{' '}
+                          {selectedLoginUser?.email ?? 'No user available'}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-[color:var(--text)]">Organization:</span>{' '}
+                          {selectedLoginOrganization?.name ?? 'Unknown'}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-[color:var(--text)]">Team:</span>{' '}
+                          {selectedLoginTeam?.name ?? 'Unknown'}
+                        </div>
+                        <div>
+                          <span className="font-semibold text-[color:var(--text)]">Role:</span>{' '}
+                          {selectedLoginUser?.role ?? 'Staff'}
+                        </div>
+                      </div>
                       <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
                         <input
                           type="checkbox"
                           checked={rememberMeNextLogin}
                           onChange={(event) => setRememberMeNextLogin(event.target.checked)}
                         />
-                        <span>Remember login</span>
+                        <span>Remember selected user</span>
                       </label>
                       <button
                         type="submit"
                         className="primary-button w-full"
-                        disabled={localLoginPending || localRegisterPending}
+                        disabled={localLoginPending || availableUsers.length === 0}
                       >
                         {localLoginPending ? 'Signing in...' : 'SIGN IN'}
                       </button>
                     </div>
                   </form>
 
-                  <div className="relative py-1">
-                    <div className="absolute inset-0 flex items-center" aria-hidden>
-                      <div className="w-full border-t border-[color:var(--border)]" />
+                  {availableUsers.length === 0 && (
+                    <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      No test users are available from the directory yet.
                     </div>
-                    <div className="relative flex justify-center">
-                      <span className="bg-[color:var(--card-bg)] px-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--text-muted)]">
-                        REGISTER BELOW
-                      </span>
-                    </div>
-                  </div>
-
-                  <form className="surface-muted space-y-3 p-4" onSubmit={handleLocalRegistration}>
-                    <div>
-                      <h3 className="text-sm font-semibold text-[color:var(--text)]">Create Account</h3>
-                      <p className="mt-1 text-xs text-[color:var(--text-muted)]">
-                        Create a local login saved on this server.
-                      </p>
-                    </div>
-                    <input
-                      className="input-control"
-                      placeholder="Full name"
-                      value={localRegisterName}
-                      onChange={(event) => setLocalRegisterName(event.target.value)}
-                      autoComplete="name"
-                    />
-                    <input
-                      className="input-control"
-                      placeholder="Work email"
-                      type="email"
-                      value={localRegisterEmail}
-                      onChange={(event) => setLocalRegisterEmail(event.target.value)}
-                      autoComplete="email"
-                    />
-                    <input
-                      className="input-control"
-                      placeholder="Password (minimum 8 characters)"
-                      type="password"
-                      value={localRegisterPassword}
-                      onChange={(event) => setLocalRegisterPassword(event.target.value)}
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="submit"
-                      className="secondary-button w-full"
-                      disabled={localRegisterPending || localLoginPending}
-                    >
-                      {localRegisterPending ? 'Creating account...' : 'REGISTER'}
-                    </button>
-                  </form>
+                  )}
                 </div>
 
                 {authError && (
@@ -5614,7 +5573,7 @@ function App() {
                 )}
 
                 <div className="text-xs leading-6 text-[color:var(--text-muted)]">
-                  Local accounts persist in a server file at .local-auth-accounts.json.
+                  Test sign-in options are loaded from the server directory and use the matching organization automatically.
                 </div>
               </div>
             </div>
@@ -5697,9 +5656,20 @@ function App() {
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="hidden text-right lg:block">
-                  <div className="text-sm font-semibold text-white">{currentUser.name}</div>
-                  <div className="text-xs text-white/65">{currentUser.email}</div>
+                <div className="group relative hidden sm:block">
+                  <div
+                    className="icon-button"
+                    style={{ color: currentUser.name === 'Administrator' ? '#facc15' : '#ffffff' }}
+                    aria-label="User profile"
+                    title={`${currentUser.name}\n${currentUser.email}\n${currentTeam.name}`}
+                  >
+                    <UserIcon className="h-5 w-5" />
+                  </div>
+                  <div className="pointer-events-none absolute right-0 top-full z-40 mt-2 hidden min-w-56 rounded-[2px] border border-white/10 bg-[color:var(--header-bg)] p-3 text-right shadow-[0_20px_60px_rgba(13,47,79,0.28)] group-hover:block">
+                    <div className="text-sm font-semibold text-white">{currentUser.name}</div>
+                    <div className="text-xs text-white/70">{currentUser.email}</div>
+                    <div className="mt-2 text-xs uppercase tracking-[0.12em] text-white/60">{currentTeam.name}</div>
+                  </div>
                 </div>
 
                 <button
