@@ -20,7 +20,7 @@ export interface DashboardSummaryRecord {
 
 const statusOrder = ['Open', 'In Progress', 'Pending', 'Resolved', 'Closed']
 
-export const getDashboardSummary = async (): Promise<DashboardSummaryRecord> => {
+export const getDashboardSummary = async (teamId: string): Promise<DashboardSummaryRecord> => {
   const db = getDb()
 
   const statsRow = db.prepare(`
@@ -31,7 +31,8 @@ export const getDashboardSummary = async (): Promise<DashboardSummaryRecord> => 
       SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending,
       SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
     FROM Tickets
-  `).get() as Record<string, unknown>
+    WHERE TeamId = ?
+  `).get(teamId) as Record<string, unknown>
 
   const statusRows = db.prepare(`
     SELECT Status AS status, COUNT(*) AS count FROM Tickets GROUP BY Status

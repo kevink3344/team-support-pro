@@ -38,6 +38,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
+
 import {
   Responsive,
   WidthProvider,
@@ -1691,13 +1692,14 @@ function App() {
   const unreadNotifications = visibleNotificationItems.filter((item) => !readNotificationIdSet.has(item.id))
   const unreadNotificationCount = unreadNotifications.length
   const notificationPreviewItems = visibleNotificationItems.slice(0, 3)
+  const currentTeamTickets = tickets.filter((ticket) => ticket.teamId === currentUser.teamId)
 
   const fallbackDashboardStats = {
-    total: tickets.length,
-    open: tickets.filter((ticket) => ticket.status === 'Open').length,
-    inProgress: tickets.filter((ticket) => ticket.status === 'In Progress').length,
-    pending: tickets.filter((ticket) => ticket.status === 'Pending').length,
-    critical: tickets.filter((ticket) => ticket.priority === 'Critical').length,
+    total: currentTeamTickets.length,
+    open: currentTeamTickets.filter((ticket) => ticket.status === 'Open').length,
+    inProgress: currentTeamTickets.filter((ticket) => ticket.status === 'In Progress').length,
+    pending: currentTeamTickets.filter((ticket) => ticket.status === 'Pending').length,
+    critical: currentTeamTickets.filter((ticket) => ticket.priority === 'Critical').length,
   }
 
   const fallbackStatusCounts = statusOptions.map((status) => ({
@@ -3205,7 +3207,7 @@ function App() {
   }> = [
     {
       id: 'metric-total',
-      label: 'Total Tickets',
+      label: 'Team Tickets',
       value: dashboardStats.total,
       accent: 'bg-blue-50 text-sky-700',
       icon: Ticket,

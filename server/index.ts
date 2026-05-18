@@ -1205,7 +1205,7 @@ app.get('/api/dashboard/summary', async (req, res) => {
   }
 
   try {
-    const summary = await getDashboardSummary()
+    const summary = await getDashboardSummary(user.teamId)
     res.json({ summary })
   } catch (error) {
     console.error('Loading dashboard summary failed.', error)
