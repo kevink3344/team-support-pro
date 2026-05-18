@@ -206,11 +206,6 @@ app.get('/api/public/auth-settings', (_req, res) => {
 })
 
 app.get('/api/public/test-login-users', async (_req, res) => {
-  if (serverConfig.isProduction) {
-    res.status(404).json({ error: 'not_found' })
-    return
-  }
-
   try {
     const [organizations, teams, users] = await Promise.all([
       listOrganizations(),
@@ -551,11 +546,6 @@ app.post('/api/auth/local/login', async (req, res) => {
 })
 
 app.post('/api/auth/test-login', async (req, res) => {
-  if (serverConfig.isProduction) {
-    res.status(404).json({ error: 'not_found' })
-    return
-  }
-
   const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : ''
   const rememberMe = req.body?.rememberMe === true
 
