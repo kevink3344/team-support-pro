@@ -24,12 +24,25 @@ const gitSha = (() => {
 
 const appVersion = `${packageJson.version || '0.0.0'}+${gitSha}`
 
+const anonymousPageAliasPlugin = () => ({
+  name: 'anonymous-page-alias',
+  configureServer(server: import('vite').ViteDevServer) {
+    server.middlewares.use((req, _res, next) => {
+      if (req.url && /^\/anon\/[^/]+\.html(?:\?.*)?$/i.test(req.url)) {
+        req.url = req.url.replace(/^\/anon\/[^/]+\.html/i, '/anon/index.html')
+      }
+
+      next()
+    })
+  },
+})
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
   },
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), anonymousPageAliasPlugin()],
   build: {
     rollupOptions: {
       input: {

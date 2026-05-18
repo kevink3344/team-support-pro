@@ -52,6 +52,14 @@ export interface Category {
   description: string
 }
 
+export interface AnonymousPageConfig {
+  id: string
+  name: string
+  organizationId: OrganizationId
+  pagePath: string
+  enabled: boolean
+}
+
 export interface User {
   id: UserId
   name: string

@@ -71,6 +71,7 @@ import {
 import { defaultThemeConfig } from './theme'
 import type {
   ActivityEntry,
+  AnonymousPageConfig,
   AppView,
   AuthSession,
   Category,
@@ -142,6 +143,7 @@ const clearCookieValue = (name: string) => {
 type SettingsAccordionSection =
   | 'appearance'
   | 'authentication'
+  | 'anonymousPages'
   | 'manageOrganizations'
   | 'manageUsers'
   | 'manageTeams'
@@ -174,6 +176,7 @@ type QuickActionToastState = {
 const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'appearance',
   'authentication',
+  'anonymousPages',
   'manageOrganizations',
   'manageUsers',
   'manageTeams',
@@ -193,6 +196,42 @@ const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefine
   ]
 }
 
+
+  const normalizeAnonymousPagePath = (value: string) => {
+    const trimmed = value.trim().replace(/\\/g, '/')
+    const fileName = trimmed.split('/').filter(Boolean).at(-1) ?? ''
+    const sanitized = fileName.toLowerCase().replace(/[^a-z0-9._-]/g, '')
+
+    if (!sanitized) {
+      return 'index.html'
+    }
+
+    return sanitized.endsWith('.html') ? sanitized : `${sanitized}.html`
+  }
+
+  const createAnonymousPageDraft = (organizationId: string, existingPages: AnonymousPageConfig[]): AnonymousPageConfig => {
+    const existingPaths = new Set(existingPages.map((page) => normalizeAnonymousPagePath(page.pagePath)))
+    let index = 1
+    let nextPagePath = 'index.html'
+
+    while (existingPaths.has(nextPagePath)) {
+      index += 1
+      nextPagePath = `index${index}.html`
+    }
+
+    return {
+      id: `anon-page-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: '',
+      organizationId,
+      pagePath: nextPagePath,
+      enabled: true,
+    }
+  }
+
+  const getAnonymousPageUrl = (pagePath: string) => {
+    const normalizedPath = normalizeAnonymousPagePath(pagePath)
+    return normalizedPath === 'index.html' ? '/anon/' : `/anon/${normalizedPath}`
+  }
 const ResponsiveDashboardGrid = WidthProvider(Responsive)
 type DashboardLayouts = ResponsiveLayouts<string>
 
@@ -731,10 +770,15 @@ function App() {
   const [rapidIdentityEnabled, setRapidIdentityEnabled] = useState(true)
   const [authSettingsPending, setAuthSettingsPending] = useState(false)
   const [authSettingsError, setAuthSettingsError] = useState('')
+  const [anonymousPageConfigs, setAnonymousPageConfigs] = useState<AnonymousPageConfig[]>([])
+  const [anonymousPageSettingsPending, setAnonymousPageSettingsPending] = useState(false)
+  const [anonymousPageSettingsError, setAnonymousPageSettingsError] = useState('')
+  const [anonymousPageSettingsNotice, setAnonymousPageSettingsNotice] = useState('')
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
     authentication: false,
+    anonymousPages: false,
     manageOrganizations: false,
     manageUsers: false,
     manageTeams: false,
@@ -1137,6 +1181,55 @@ function App() {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    if (authSession?.role !== 'Admin') {
+      setAnonymousPageConfigs([])
+      setAnonymousPageSettingsError('')
+      setAnonymousPageSettingsNotice('')
+      return
+    }
+
+    let cancelled = false
+
+    const loadAnonymousPageSettings = async () => {
+      setAnonymousPageSettingsPending(true)
+      setAnonymousPageSettingsError('')
+
+      try {
+        const response = await fetch(apiUrl('/api/settings/anonymous-pages'), {
+          credentials: 'include',
+        })
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setAnonymousPageSettingsError('Anonymous page settings could not be loaded.')
+          }
+          return
+        }
+
+        const payload = (await response.json()) as { pages?: AnonymousPageConfig[] }
+
+        if (!cancelled) {
+          setAnonymousPageConfigs(Array.isArray(payload.pages) ? payload.pages : [])
+        }
+      } catch {
+        if (!cancelled) {
+          setAnonymousPageSettingsError('Anonymous page settings could not be loaded. Confirm the backend server is running.')
+        }
+      } finally {
+        if (!cancelled) {
+          setAnonymousPageSettingsPending(false)
+        }
+      }
+    }
+
+    void loadAnonymousPageSettings()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authSession?.role])
 
   useEffect(() => {
     if (availableUsers.length === 0) {
@@ -2551,6 +2644,64 @@ function App() {
     }
   }
 
+  const updateAnonymousPageConfig = (pageId: string, updater: (current: AnonymousPageConfig) => AnonymousPageConfig) => {
+    setAnonymousPageConfigs((current) => current.map((page) => (page.id === pageId ? updater(page) : page)))
+    setAnonymousPageSettingsError('')
+    setAnonymousPageSettingsNotice('')
+  }
+
+  const saveAnonymousPageSettings = async () => {
+    if (currentUser.role !== 'Admin') {
+      setAnonymousPageSettingsError('Only admins can update anonymous page settings.')
+      return
+    }
+
+    setAnonymousPageSettingsPending(true)
+    setAnonymousPageSettingsError('')
+    setAnonymousPageSettingsNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/settings/anonymous-pages'), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          pages: anonymousPageConfigs.map((page) => ({
+            ...page,
+            name: page.name.trim(),
+            pagePath: normalizeAnonymousPagePath(page.pagePath),
+          })),
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setAnonymousPageSettingsError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setAnonymousPageSettingsError('Only admins can update anonymous page settings.')
+        return
+      }
+
+      if (!response.ok) {
+        setAnonymousPageSettingsError('Anonymous page settings could not be saved.')
+        return
+      }
+
+      const payload = (await response.json()) as { pages?: AnonymousPageConfig[] }
+      setAnonymousPageConfigs(Array.isArray(payload.pages) ? payload.pages : [])
+      setAnonymousPageSettingsNotice('Anonymous page settings saved.')
+    } catch {
+      setAnonymousPageSettingsError('Anonymous page settings could not be saved. Confirm the backend server is running.')
+    } finally {
+      setAnonymousPageSettingsPending(false)
+    }
+  }
+
   const createTicket = async () => {
     if (
       !newTicketForm.title.trim() ||
@@ -3509,7 +3660,7 @@ function App() {
               return (
                 <div
                   key={item.id}
-                  className="surface-muted relative flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between"
+                  className="surface-muted relative flex flex-col gap-3 p-4 pr-14 md:flex-row md:items-start md:justify-between md:pr-4"
                   data-unread={isUnread}
                 >
                   <button
@@ -3538,7 +3689,7 @@ function App() {
                       <span className="font-semibold text-[color:var(--text)]">{item.actor}</span> {item.message}
                     </div>
                   </div>
-                  <div className="flex shrink-0 flex-col items-start gap-3 md:items-end">
+                  <div className="flex shrink-0 flex-col items-start gap-3 pr-10 md:items-end md:pr-10">
                     <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
                       {formatDateTime(item.at)}
                     </div>
@@ -4914,6 +5065,134 @@ function App() {
               )}
             </div>
           )
+        case 'anonymousPages':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {currentUser.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to manage anonymous page mappings.
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-[color:var(--text-muted)]">
+                    Map each anonymous page file to an organization. The public form uses the page mapping automatically and does not ask the requestor to pick an organization.
+                  </div>
+                  {anonymousPageConfigs.map((page) => (
+                    <div key={page.id} className="surface-muted grid gap-3 p-4 md:grid-cols-[1fr_1fr_1fr_auto] md:items-end">
+                      <label className="space-y-2">
+                        <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Entry Name</div>
+                        <input
+                          className="input-control"
+                          value={page.name}
+                          onChange={(event) =>
+                            updateAnonymousPageConfig(page.id, (current) => ({ ...current, name: event.target.value }))
+                          }
+                          placeholder="Legacy Default"
+                        />
+                      </label>
+                      <label className="space-y-2">
+                        <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Page File</div>
+                        <input
+                          className="input-control"
+                          value={page.pagePath}
+                          onChange={(event) =>
+                            updateAnonymousPageConfig(page.id, (current) => ({ ...current, pagePath: event.target.value }))
+                          }
+                          placeholder="index2.html"
+                        />
+                      </label>
+                      <label className="space-y-2">
+                        <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Organization</div>
+                        <select
+                          className="input-control"
+                          value={page.organizationId}
+                          onChange={(event) =>
+                            updateAnonymousPageConfig(page.id, (current) => ({ ...current, organizationId: event.target.value }))
+                          }
+                        >
+                          {organizations.map((organization) => (
+                            <option key={organization.id} value={organization.id}>
+                              {organization.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="flex items-center gap-3 justify-self-end">
+                        <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
+                          <input
+                            type="checkbox"
+                            checked={page.enabled}
+                            onChange={(event) =>
+                              updateAnonymousPageConfig(page.id, (current) => ({ ...current, enabled: event.target.checked }))
+                            }
+                          />
+                          Enabled
+                        </label>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => {
+                            setAnonymousPageConfigs((current) => current.filter((entry) => entry.id !== page.id))
+                            setAnonymousPageSettingsError('')
+                            setAnonymousPageSettingsNotice('')
+                          }}
+                          disabled={anonymousPageConfigs.length === 1 || anonymousPageSettingsPending}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="md:col-span-4 text-xs text-[color:var(--text-muted)]">
+                        Public URL:{' '}
+                        <a
+                          className="underline"
+                          href={getAnonymousPageUrl(page.pagePath)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {getAnonymousPageUrl(page.pagePath)}
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        setAnonymousPageConfigs((current) => [
+                          ...current,
+                          createAnonymousPageDraft(organizations[0]?.id ?? '', current),
+                        ])
+                        setAnonymousPageSettingsError('')
+                        setAnonymousPageSettingsNotice('')
+                      }}
+                      disabled={organizations.length === 0 || anonymousPageSettingsPending}
+                    >
+                      Add Anonymous Page
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      onClick={() => void saveAnonymousPageSettings()}
+                      disabled={anonymousPageSettingsPending || anonymousPageConfigs.length === 0}
+                    >
+                      {anonymousPageSettingsPending ? 'Saving...' : 'Save Anonymous Pages'}
+                    </button>
+                  </div>
+                  {anonymousPageSettingsError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {anonymousPageSettingsError}
+                    </div>
+                  )}
+                  {anonymousPageSettingsNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {anonymousPageSettingsNotice}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )
         case 'manageOrganizations':
           return renderSettingsPageLauncher(
             'Organizations',
@@ -5030,6 +5309,10 @@ function App() {
       authentication: {
         title: 'Authentication',
         description: 'Configure available login methods.',
+      },
+      anonymousPages: {
+        title: 'Anonymous Pages',
+        description: 'Map anonymous page files to organizations and control public intake routing.',
       },
       manageOrganizations: {
         title: 'Organizations',
@@ -5214,8 +5497,9 @@ function App() {
                     onClick={() => openTicket(ticket.id)}
                   >
                     <div className="flex items-start justify-between gap-4 p-4">
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
                             {ticket.id}
                           </span>
@@ -5225,6 +5509,13 @@ function App() {
                               {attachmentCount}
                             </span>
                           )}
+                          </div>
+                          <div className="shrink-0 text-right text-xs text-[color:var(--text-muted)]">
+                            <div>{ticket.dueLabel}</div>
+                            <div>{formatDateTime(ticket.updatedAt)}</div>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
                           <span className={getPriorityBadgeClass(ticket.priority)}>{ticket.priority}</span>
                         </div>
@@ -5235,10 +5526,6 @@ function App() {
                           {ticket.requestorName} • {category?.name ?? 'Unmapped category'} •{' '}
                           {team?.name ?? 'Unknown team'}
                         </p>
-                      </div>
-                      <div className="text-right text-xs text-[color:var(--text-muted)]">
-                        <div>{ticket.dueLabel}</div>
-                        <div>{formatDateTime(ticket.updatedAt)}</div>
                       </div>
                     </div>
                   </button>
@@ -5320,7 +5607,7 @@ function App() {
     <>
       <div className="flex h-13 items-center gap-3 border-b border-white/10 px-3">
         <div className="flex h-8 w-8 items-center justify-center rounded-[2px] bg-[color:var(--accent)] text-sm font-bold text-white">
-          TA
+          <Ticket className="h-4 w-4" />
         </div>
         {!collapsed && (
           <div>
@@ -5436,7 +5723,7 @@ function App() {
           <div className="login-card grid max-w-5xl gap-0 overflow-hidden border border-[color:var(--border)] bg-[color:var(--card-bg)] md:grid-cols-[1.1fr_0.9fr]">
             <div className="border-r border-[color:var(--border)] bg-[linear-gradient(135deg,#0d2f4f_0%,#123555_50%,#0f3d63_100%)] p-8 text-white md:p-10">
               <div className="mb-8 flex h-10 w-10 items-center justify-center rounded-[2px] bg-[#0078d4] text-sm font-bold">
-                TA
+                <Ticket className="h-5 w-5" />
               </div>
               <div className="space-y-5">
                 <div>
@@ -5658,6 +5945,10 @@ function App() {
               </div>
 
               <div className="flex items-center gap-2">
+                <div className="hidden min-w-0 text-right sm:block">
+                  <div className="truncate text-sm font-semibold text-white">{currentUser.name}</div>
+                  <div className="truncate text-[11px] leading-4 text-white/70">{currentTeam.name}</div>
+                </div>
                 <div className="group relative hidden sm:block">
                   <div
                     className="icon-button"
@@ -6453,7 +6744,6 @@ function App() {
                         </div>
                         <textarea
                           className="input-control min-h-28 resize-y"
-                          placeholder="Add a comment for this ticket (for example: @kevin.key please review)"
                           value={commentDraft}
                           onChange={(event) => setCommentDraft(event.target.value)}
                         />
@@ -6558,7 +6848,7 @@ function App() {
                           </div>
                         ) : (
                           attachments.map((attachment) => (
-                            <div key={attachment.id} className="surface-muted flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+                            <div key={attachment.id} className="surface-muted flex flex-col gap-3 p-4">
                               <div>
                                 <div className="font-semibold text-[color:var(--text)]">{attachment.fileName}</div>
                                 <div className="text-sm text-[color:var(--text-muted)]">
@@ -6568,7 +6858,7 @@ function App() {
                                   Uploaded by {attachment.uploadedByName} on {formatDateTime(attachment.uploadedAt)}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2 border-t border-[color:var(--border)] pt-3 md:justify-end">
                                 {attachment.contentType.toLowerCase().includes('pdf') && (
                                   <button
                                     type="button"
@@ -6613,19 +6903,12 @@ function App() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                className="secondary-button"
-                                onClick={() => downloadAttachment(previewAttachment)}
-                              >
-                                <Download className="h-4 w-4" />
-                                Download
-                              </button>
-                              <button
-                                type="button"
-                                className="secondary-button"
+                                className="icon-button"
                                 onClick={closeAttachmentPreview}
+                                aria-label="Close PDF preview"
+                                title="Close preview"
                               >
                                 <X className="h-4 w-4" />
-                                Close
                               </button>
                             </div>
                           </div>

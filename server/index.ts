@@ -58,6 +58,12 @@ import {
   listTeamTicketTrends,
   seedTeamTicketTrends,
 } from './trends.js'
+import {
+  listAnonymousPageConfigs,
+  normalizeAnonymousPagePath,
+  resolveAnonymousPageConfig,
+  writeAnonymousPageConfigs,
+} from './anonymous-pages.js'
 import { resolveAuthenticatedUser } from './user-directory.js'
 import {
   createTicket,
@@ -105,6 +111,16 @@ const clientIndexPath = path.join(clientDistPath, 'index.html')
 const anonIndexPath = path.join(clientDistPath, 'anon', 'index.html')
 const hasClientBuild = fs.existsSync(clientIndexPath)
 const hasAnonBuild = fs.existsSync(anonIndexPath)
+
+const getAnonymousPagePathFromRequest = (requestPath: string) => {
+  if (requestPath === '/anon' || requestPath === '/anon/') {
+    return 'index.html'
+  }
+
+  const match = requestPath.match(/^\/anon\/([^/]+\.html)$/i)
+  return match ? normalizeAnonymousPagePath(match[1]) : null
+}
+
 const attachmentUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
@@ -246,6 +262,125 @@ app.patch('/api/settings/auth', (req, res) => {
 
   writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
   res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
+
+app.get('/api/settings/anonymous-pages', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  try {
+    const organizations = await listOrganizations()
+    res.json({ pages: listAnonymousPageConfigs(organizations.map((organization) => organization.id)) })
+  } catch (error) {
+    console.error('Loading anonymous page settings failed.', error)
+    res.status(500).json({ error: 'anonymous_page_settings_load_failed' })
+  }
+})
+
+app.put('/api/settings/anonymous-pages', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  if (!Array.isArray(req.body?.pages)) {
+    res.status(400).json({ error: 'invalid_anonymous_page_settings_payload' })
+    return
+  }
+
+  try {
+    const organizations = await listOrganizations()
+    const organizationIds = organizations.map((organization) => organization.id)
+    const validOrganizationIds = new Set(organizationIds)
+    const seenPagePaths = new Set<string>()
+
+    const nextPages = req.body.pages.flatMap((entry: unknown) => {
+      if (!entry || typeof entry !== 'object') {
+        return []
+      }
+
+      const candidate = entry as {
+        id?: string
+        name?: string
+        organizationId?: string
+        pagePath?: string
+        enabled?: boolean
+      }
+
+      const organizationId = typeof candidate.organizationId === 'string' ? candidate.organizationId.trim() : ''
+      const name = typeof candidate.name === 'string' ? candidate.name.trim() : ''
+      const pagePath = normalizeAnonymousPagePath(typeof candidate.pagePath === 'string' ? candidate.pagePath : '')
+
+      if (!organizationId || !validOrganizationIds.has(organizationId) || !name || seenPagePaths.has(pagePath)) {
+        return []
+      }
+
+      seenPagePaths.add(pagePath)
+
+      return [{
+        id: typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id.trim() : `anon-page-${pagePath.replace(/[^a-z0-9]+/g, '-')}`,
+        name,
+        organizationId,
+        pagePath,
+        enabled: candidate.enabled !== false,
+      }]
+    })
+
+    if (nextPages.length === 0) {
+      res.status(400).json({ error: 'anonymous_page_settings_empty' })
+      return
+    }
+
+    writeAnonymousPageConfigs(nextPages)
+    res.json({ pages: nextPages })
+  } catch (error) {
+    console.error('Saving anonymous page settings failed.', error)
+    res.status(500).json({ error: 'anonymous_page_settings_save_failed' })
+  }
+})
+
+app.get('/api/public/anonymous-page-config', async (req, res) => {
+  try {
+    const requestedPagePath = typeof req.query?.pagePath === 'string' ? req.query.pagePath : 'index.html'
+    const [organizations, teams, categories] = await Promise.all([
+      listOrganizations(),
+      listTeams(),
+      listCategories(),
+    ])
+    const page = resolveAnonymousPageConfig(requestedPagePath, organizations.map((organization) => organization.id))
+
+    if (!page) {
+      res.status(404).json({ error: 'anonymous_page_not_configured' })
+      return
+    }
+
+    const organization = organizations.find((entry) => entry.id === page.organizationId)
+
+    if (!organization) {
+      res.status(404).json({ error: 'anonymous_page_organization_not_found' })
+      return
+    }
+
+    const scopedTeams = teams.filter((team) => team.organizationId === organization.id)
+    const scopedTeamIds = new Set(scopedTeams.map((team) => team.id))
+    const scopedCategories = categories.filter((category) => scopedTeamIds.has(category.teamId))
+
+    res.json({
+      page,
+      organization,
+      teams: scopedTeams,
+      categories: scopedCategories,
+    })
+  } catch (error) {
+    console.error('Loading anonymous page config failed.', error)
+    res.status(500).json({ error: 'anonymous_page_config_load_failed' })
+  }
 })
 
 app.get('/api/reports/status', (req, res) => {
@@ -1269,6 +1404,7 @@ app.post('/api/tickets', async (req, res) => {
 })
 
 app.post('/api/public/tickets', async (req, res) => {
+  const pagePath = typeof req.body?.pagePath === 'string' ? req.body.pagePath : 'index.html'
   const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : ''
   const categoryId = typeof req.body?.categoryId === 'string' ? req.body.categoryId.trim() : ''
   const title = typeof req.body?.title === 'string' ? req.body.title : ''
@@ -1283,6 +1419,20 @@ app.post('/api/public/tickets', async (req, res) => {
   }
 
   try {
+    const [organizations, teams, categories] = await Promise.all([
+      listOrganizations(),
+      listTeams(),
+      listCategories(),
+    ])
+    const page = resolveAnonymousPageConfig(pagePath, organizations.map((organization) => organization.id))
+    const team = teams.find((entry) => entry.id === teamId)
+    const category = categories.find((entry) => entry.id === categoryId)
+
+    if (!page || !team || !category || category.teamId !== team.id || team.organizationId !== page.organizationId) {
+      res.status(400).json({ error: 'invalid_public_ticket_scope' })
+      return
+    }
+
     const ticket = await createTicket(
       {
         title,
@@ -1624,12 +1774,24 @@ if (hasClientBuild) {
   }))
 
   if (hasAnonBuild) {
-    app.get('/anon', (_req, res) => {
-      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
-      res.sendFile(anonIndexPath)
-    })
+    app.get(/^\/anon(?:\/[^/]+\.html)?\/?$/i, async (req, res, next) => {
+      const pagePath = getAnonymousPagePathFromRequest(req.path)
 
-    app.get('/anon/', (_req, res) => {
+      if (!pagePath) {
+        next()
+        return
+      }
+
+      if (pagePath !== 'index.html') {
+        const organizations = await listOrganizations()
+        const page = resolveAnonymousPageConfig(pagePath, organizations.map((organization) => organization.id))
+
+        if (!page) {
+          res.status(404).send('Anonymous page not found.')
+          return
+        }
+      }
+
       res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
       res.sendFile(anonIndexPath)
     })
