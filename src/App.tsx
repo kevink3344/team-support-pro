@@ -383,6 +383,22 @@ const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
   }, {})
 }
 
+const filterDashboardLayouts = (
+  layouts: DashboardLayouts,
+  widgetIds: readonly DashboardWidgetId[],
+) => {
+  const allowedWidgetIds = new Set(widgetIds)
+  const breakpoints = Object.keys(layouts) as Array<keyof DashboardLayouts>
+
+  return breakpoints.reduce<DashboardLayouts>((filtered, breakpoint) => {
+    filtered[breakpoint] = (layouts[breakpoint] ?? []).filter((layoutItem) =>
+      allowedWidgetIds.has(layoutItem.i as DashboardWidgetId),
+    )
+
+    return filtered
+  }, {})
+}
+
 const statusOptions: TicketStatus[] = [
   'Open',
   'In Progress',
@@ -3429,6 +3445,13 @@ function App() {
     setDashboardLayouts(mergeDashboardLayouts(null))
   }
 
+  const visibleDashboardWidgetIds: DashboardWidgetId[] =
+    currentUser.role === 'Admin'
+      ? [...dashboardWidgetOrder]
+      : dashboardWidgetOrder.filter((widgetId) => widgetId !== 'trends' && widgetId !== 'status')
+
+  const visibleDashboardLayouts = filterDashboardLayouts(dashboardLayouts, visibleDashboardWidgetIds)
+
   const renderDashboardWidget = (widgetId: DashboardWidgetId) => {
     const metricCard = metricCards.find((card) => card.id === widgetId)
 
@@ -6207,7 +6230,7 @@ function App() {
               <div className="space-y-4">
                 <ResponsiveDashboardGrid
                   className="dashboard-grid"
-                  layouts={dashboardLayouts}
+                  layouts={visibleDashboardLayouts}
                   breakpoints={{ lg: 1280, md: 1024, sm: 640, xs: 0 }}
                   cols={{ lg: 10, md: 10, sm: 5, xs: 1 }}
                   rowHeight={52}
@@ -6222,17 +6245,7 @@ function App() {
                     })
                   }}
                 >
-                  {([
-                    'metric-total',
-                    'metric-open',
-                    'metric-progress',
-                    'metric-pending',
-                    'metric-critical',
-                    'trends',
-                    'status',
-                    'queue',
-                    'notes',
-                  ] as DashboardWidgetId[]).map((widgetId) => (
+                  {visibleDashboardWidgetIds.map((widgetId) => (
                     <div key={widgetId} className="dashboard-widget-shell">
                       {renderDashboardWidget(widgetId)}
                     </div>
