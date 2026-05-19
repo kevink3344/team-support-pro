@@ -217,7 +217,7 @@ export function AnonymousTicketPage() {
               <div>
                 <div className="font-semibold">Request submitted</div>
                 <div className="text-sm">
-                  Your ticket number is <span className="font-mono font-semibold">{createdTicket.id}</span>. The support team will review it and assign priority internally.
+                  Your ticket number is <span className="font-mono text-[1.09375rem] font-semibold">{createdTicket.id}</span>. The support team will review it and assign priority internally.
                 </div>
               </div>
             </div>

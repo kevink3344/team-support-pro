@@ -3697,7 +3697,7 @@ function App() {
                   </button>
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                      <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
                         {item.ticketId}
                       </span>
                       {item.type === 'mention' && (
@@ -5141,6 +5141,14 @@ function App() {
                         </select>
                       </label>
                       <div className="flex items-center gap-3 justify-self-end">
+                        <a
+                          className="secondary-button"
+                          href={getAnonymousPageUrl(page.pagePath)}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Page
+                        </a>
                         <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
                           <input
                             type="checkbox"
@@ -5523,7 +5531,7 @@ function App() {
                       <div className="min-w-0 flex-1 space-y-2">
                         <div className="flex items-start justify-between gap-3">
                           <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
+                          <span className="font-mono text-[1.09375rem] font-semibold text-[color:var(--accent)]">
                             {ticket.id}
                           </span>
                           {attachmentCount > 0 && (
@@ -5593,7 +5601,7 @@ function App() {
                   <td className="px-4 py-3 align-top">
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1.5 font-mono font-semibold text-[color:var(--accent)]"
+                      className="inline-flex items-center gap-1.5 font-mono text-[1.09375rem] font-semibold text-[color:var(--accent)]"
                       onClick={() => openTicket(ticket.id)}
                     >
                       {ticket.id}
@@ -6067,7 +6075,7 @@ function App() {
                                     {!readNotificationIdSet.has(item.id) && (
                                       <span className="notification-unread-dot" aria-hidden="true" />
                                     )}
-                                    <span className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+                                    <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
                                       {item.ticketId}
                                     </span>
                                     {item.type === 'mention' && (
@@ -6170,7 +6178,8 @@ function App() {
                   activeView !== 'manage-organizations' &&
                   activeView !== 'manage-users' &&
                   activeView !== 'manage-teams' &&
-                  activeView !== 'manage-categories' && (
+                  activeView !== 'manage-categories' &&
+                  activeView !== 'new-ticket' && (
                   <>
                     {activeView === 'dashboard' && (
                       <button
@@ -6531,7 +6540,7 @@ function App() {
                   <div className="mb-3 flex items-start justify-between gap-4">
                     <div>
                       <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm font-semibold text-[color:var(--accent)]">
+                        <span className="font-mono text-[1.09375rem] font-semibold text-[color:var(--accent)]">
                           {selectedTicket.id}
                         </span>
                         <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2 py-0.5 text-xs text-[color:var(--text-muted)]">
@@ -7080,7 +7089,7 @@ function App() {
             </div>
 
             <div className="surface-muted mb-4 space-y-1 p-3">
-              <div className="font-mono text-xs font-semibold text-[color:var(--accent)]">
+              <div className="font-mono text-sm font-semibold text-[color:var(--accent)]">
                 {quickActionConfirmation.ticketId}
               </div>
               <div className="text-sm font-semibold text-[color:var(--text)]">
