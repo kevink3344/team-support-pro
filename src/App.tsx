@@ -870,6 +870,9 @@ function App() {
     priority: TicketPriority
     categoryId: string
     assignedToId: string
+    requestorName: string
+    requestorEmail: string
+    location: string
   } | null>(null)
   const [authError, setAuthError] = useState('')
   const [localAuthError, setLocalAuthError] = useState('')
@@ -1617,6 +1620,9 @@ function App() {
       priority: selectedTicket.priority,
       categoryId: selectedTicket.categoryId,
       assignedToId: selectedTicket.assignedToId ?? '',
+      requestorName: selectedTicket.requestorName,
+      requestorEmail: selectedTicket.requestorEmail,
+      location: selectedTicket.location,
     })
     setCommentDraft('')
     setCommentError('')
@@ -2267,6 +2273,9 @@ function App() {
           priority: detailDraft.priority,
           categoryId: detailDraft.categoryId,
           assignedToId: detailDraft.assignedToId || null,
+          requestorName: detailDraft.requestorName,
+          requestorEmail: detailDraft.requestorEmail,
+          location: detailDraft.location,
         }),
       })
 
@@ -3498,6 +3507,23 @@ function App() {
               Move / Resize
             </div>
           </div>
+          {isMobileViewport && (
+            <div className="mb-3 flex flex-wrap gap-2 text-xs text-[color:var(--text-muted)]">
+              {teams.map((team) => (
+                <div
+                  key={`${team.id}-trend-legend`}
+                  className="inline-flex items-center gap-2 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2 py-1"
+                >
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: team.accent }}
+                    aria-hidden="true"
+                  />
+                  <span>{team.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="dashboard-chart-body min-h-0 flex-1">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ left: 0, right: 12, top: 12, bottom: 0 }}>
@@ -3512,7 +3538,7 @@ function App() {
                     color: 'var(--text)',
                   }}
                 />
-                <Legend />
+                {!isMobileViewport && <Legend />}
                 {teams.map((team) => (
                   <Line
                     key={team.id}
@@ -6692,7 +6718,17 @@ function App() {
                         </label>
                         <label className="field">
                           <span className="field-label">Location</span>
-                          <input className="input-control" value={selectedTicket.location} disabled />
+                          <input
+                            className="input-control"
+                            value={detailDraft.location}
+                            onChange={(event) =>
+                              setDetailDraft((current) =>
+                                current
+                                  ? { ...current, location: event.target.value }
+                                  : current,
+                              )
+                            }
+                          />
                         </label>
                         <label className="field md:col-span-2">
                           <span className="field-label">Title</span>
@@ -6710,11 +6746,31 @@ function App() {
                         </label>
                         <label className="field">
                           <span className="field-label">Requester</span>
-                          <input className="input-control" value={selectedTicket.requestorName} disabled />
+                          <input
+                            className="input-control"
+                            value={detailDraft.requestorName}
+                            onChange={(event) =>
+                              setDetailDraft((current) =>
+                                current
+                                  ? { ...current, requestorName: event.target.value }
+                                  : current,
+                              )
+                            }
+                          />
                         </label>
                         <label className="field">
                           <span className="field-label">Req. Email</span>
-                          <input className="input-control" value={selectedTicket.requestorEmail} disabled />
+                          <input
+                            className="input-control"
+                            value={detailDraft.requestorEmail}
+                            onChange={(event) =>
+                              setDetailDraft((current) =>
+                                current
+                                  ? { ...current, requestorEmail: event.target.value }
+                                  : current,
+                              )
+                            }
+                          />
                         </label>
                         <label className="field md:col-span-2">
                           <span className="field-label">Description</span>

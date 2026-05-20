@@ -52,6 +52,9 @@ export interface UpdateTicketInput {
   priority: string
   categoryId: string
   assignedToId: string | null
+  requestorName: string
+  requestorEmail: string
+  location: string
 }
 
 const mapActivityRecord = (record: Record<string, unknown>): TicketActivityRecord => ({
@@ -107,7 +110,7 @@ const validateCreateTicketInput = (input: CreateTicketInput) => {
 }
 
 const validateUpdateTicketInput = (input: UpdateTicketInput) => {
-  if (!input.title.trim() || !input.description.trim() || !input.categoryId.trim()) return false
+  if (!input.title.trim() || !input.description.trim() || !input.categoryId.trim() || !input.requestorName.trim() || !input.requestorEmail.trim()) return false
   return ticketStatusValues.has(input.status) && ticketPriorityValues.has(input.priority)
 }
 
@@ -180,9 +183,12 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
   }
   if (existing.title !== input.title) changeMessages.push('Updated ticket title.')
   if (existing.description !== input.description) changeMessages.push('Updated ticket description.')
+  if (existing.location !== input.location) changeMessages.push('Updated ticket location.')
+  if (existing.requestorName !== input.requestorName) changeMessages.push('Updated requester name.')
+  if (existing.requestorEmail !== input.requestorEmail.trim().toLowerCase()) changeMessages.push('Updated requester email.')
 
   const tx = db.transaction(() => {
-    db.prepare('UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, CategoryId = ?, AssignedToId = ?, UpdatedAt = ? WHERE Id = ?').run(input.title.trim(), input.description.trim(), input.status, input.priority, input.categoryId, input.assignedToId, activityAt, ticketId)
+    db.prepare('UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ? WHERE Id = ?').run(input.title.trim(), input.description.trim(), input.status, input.priority, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', activityAt, ticketId)
     const ins = db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)')
     for (const msg of changeMessages) ins.run(`activity-${crypto.randomUUID()}`, ticketId, actor, msg, activityAt)
   })

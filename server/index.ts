@@ -1671,6 +1671,9 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
           typeof req.body?.assignedToId === 'string' && req.body.assignedToId.trim()
             ? req.body.assignedToId
             : null,
+        requestorName: typeof req.body?.requestorName === 'string' ? req.body.requestorName : '',
+        requestorEmail: typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : '',
+        location: typeof req.body?.location === 'string' ? req.body.location : '',
       },
       user.name,
     )
