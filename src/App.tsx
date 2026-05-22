@@ -879,9 +879,7 @@ function App() {
   const [localAuthNotice, setLocalAuthNotice] = useState('')
   const [localLoginEmail, setLocalLoginEmail] = useState(() => readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE))
   const [loginOrgId, setLoginOrgId] = useState('')
-  const [rememberMeNextLogin, setRememberMeNextLogin] = useState(
-    () => Boolean(readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)),
-  )
+  const rememberMeNextLogin = Boolean(readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE))
   const [localLoginPending, setLocalLoginPending] = useState(false)
   const [authReady, setAuthReady] = useState(true)
   const [backendAvailable, setBackendAvailable] = useState<boolean | null>(null)
@@ -915,12 +913,6 @@ function App() {
   const loginOrgTeamIds = new Set(loginOrgTeams.map((t) => t.id))
   const loginOrgCategories = availableCategories.filter((c) => loginOrgTeamIds.has(c.teamId))
   const loginOrgTicketCount = tickets.filter((tk) => loginOrgTeamIds.has(tk.teamId)).length
-  const selectedLoginOrganization = selectedLoginUser
-    ? availableOrganizations.find((organization) => organization.id === selectedLoginUser.organizationId) ?? null
-    : null
-  const selectedLoginTeam = selectedLoginUser
-    ? availableTeams.find((team) => team.id === selectedLoginUser.teamId) ?? null
-    : null
   const currentUser = authSession
     ? availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
       createMockSessionUser(authSession)
