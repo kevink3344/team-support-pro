@@ -878,6 +878,7 @@ function App() {
   const [localAuthError, setLocalAuthError] = useState('')
   const [localAuthNotice, setLocalAuthNotice] = useState('')
   const [localLoginEmail, setLocalLoginEmail] = useState(() => readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE))
+  const [loginOrgId, setLoginOrgId] = useState('')
   const [rememberMeNextLogin, setRememberMeNextLogin] = useState(
     () => Boolean(readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)),
   )
@@ -906,6 +907,14 @@ function App() {
   const selectedLoginUser = availableUsers.find(
     (user) => user.email.toLowerCase() === localLoginEmail.trim().toLowerCase(),
   ) ?? availableUsers[0]
+  const resolvedLoginOrgId = (loginOrgId && availableOrganizations.some((o) => o.id === loginOrgId))
+    ? loginOrgId
+    : selectedLoginUser?.organizationId ?? availableOrganizations[0]?.id ?? ''
+  const filteredLoginUsers = availableUsers.filter((u) => u.organizationId === resolvedLoginOrgId)
+  const loginOrgTeams = availableTeams.filter((t) => t.organizationId === resolvedLoginOrgId)
+  const loginOrgTeamIds = new Set(loginOrgTeams.map((t) => t.id))
+  const loginOrgCategories = availableCategories.filter((c) => loginOrgTeamIds.has(c.teamId))
+  const loginOrgTicketCount = tickets.filter((tk) => loginOrgTeamIds.has(tk.teamId)).length
   const selectedLoginOrganization = selectedLoginUser
     ? availableOrganizations.find((organization) => organization.id === selectedLoginUser.organizationId) ?? null
     : null
@@ -1256,12 +1265,17 @@ function App() {
     }
 
     const normalizedSelectedEmail = localLoginEmail.trim().toLowerCase()
-    const hasSelectedUser = availableUsers.some((user) => user.email.toLowerCase() === normalizedSelectedEmail)
+    const matchedUser = availableUsers.find((user) => user.email.toLowerCase() === normalizedSelectedEmail)
 
-    if (!hasSelectedUser) {
+    if (!matchedUser) {
       setLocalLoginEmail(availableUsers[0].email)
+      if (!loginOrgId) {
+        setLoginOrgId(availableUsers[0].organizationId)
+      }
+    } else if (!loginOrgId) {
+      setLoginOrgId(matchedUser.organizationId)
     }
-  }, [availableUsers, localLoginEmail])
+  }, [availableUsers, localLoginEmail, loginOrgId])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -5796,15 +5810,15 @@ function App() {
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">4</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgTeams.length}</div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Teams</div>
                   </div>
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">9</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgCategories.length}</div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Categories</div>
                   </div>
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">{tickets.length}</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgTicketCount}</div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Active Tickets</div>
                   </div>
                 </div>
@@ -5833,55 +5847,48 @@ function App() {
                   <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
                     <div className="space-y-3">
                       <label className="field">
+                        <span className="field-label">Organization</span>
+                        <select
+                          className="input-control"
+                          value={resolvedLoginOrgId}
+                          onChange={(event) => {
+                            const orgId = event.target.value
+                            setLoginOrgId(orgId)
+                            const firstUser = availableUsers.find((u) => u.organizationId === orgId)
+                            if (firstUser) {
+                              setLocalLoginEmail(firstUser.email)
+                            }
+                          }}
+                          disabled={localLoginPending || availableOrganizations.length === 0}
+                        >
+                          {availableOrganizations.map((org) => (
+                            <option key={org.id} value={org.id}>
+                              {org.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
                         <span className="field-label">Test User</span>
                         <select
                           className="input-control"
                           value={selectedLoginUser?.email ?? ''}
                           onChange={(event) => setLocalLoginEmail(event.target.value)}
-                          disabled={localLoginPending || availableUsers.length === 0}
+                          disabled={localLoginPending || filteredLoginUsers.length === 0}
                         >
-                          {availableUsers.map((user) => {
-                            const organization = availableOrganizations.find(
-                              (item) => item.id === user.organizationId,
-                            )
+                          {filteredLoginUsers.map((user) => {
                             const team = availableTeams.find((item) => item.id === user.teamId)
-                            const optionMeta = [organization?.code ?? organization?.name, team?.name]
-                              .filter(Boolean)
-                              .join(' - ')
+                            const label = team
+                              ? `${user.name}, ${team.name} (${user.role})`
+                              : `${user.name} (${user.role})`
 
                             return (
                               <option key={user.id} value={user.email}>
-                                {`${user.name}${optionMeta ? ` - ${optionMeta}` : ''}`}
+                                {label}
                               </option>
                             )
                           })}
                         </select>
-                      </label>
-                      <div className="surface-muted grid gap-2 p-3 text-sm text-[color:var(--text-muted)]">
-                        <div>
-                          <span className="font-semibold text-[color:var(--text)]">Email:</span>{' '}
-                          {selectedLoginUser?.email ?? 'No user available'}
-                        </div>
-                        <div>
-                          <span className="font-semibold text-[color:var(--text)]">Organization:</span>{' '}
-                          {selectedLoginOrganization?.name ?? 'Unknown'}
-                        </div>
-                        <div>
-                          <span className="font-semibold text-[color:var(--text)]">Team:</span>{' '}
-                          {selectedLoginTeam?.name ?? 'Unknown'}
-                        </div>
-                        <div>
-                          <span className="font-semibold text-[color:var(--text)]">Role:</span>{' '}
-                          {selectedLoginUser?.role ?? 'Staff'}
-                        </div>
-                      </div>
-                      <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
-                        <input
-                          type="checkbox"
-                          checked={rememberMeNextLogin}
-                          onChange={(event) => setRememberMeNextLogin(event.target.checked)}
-                        />
-                        <span>Remember selected user</span>
                       </label>
                       <button
                         type="submit"
@@ -5917,10 +5924,6 @@ function App() {
                     {localAuthNotice}
                   </div>
                 )}
-
-                <div className="text-xs leading-6 text-[color:var(--text-muted)]">
-                  Test sign-in options are loaded from the server directory and use the matching organization automatically.
-                </div>
               </div>
             </div>
           </div>
