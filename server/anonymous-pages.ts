@@ -103,7 +103,8 @@ export const listAnonymousPageConfigs = (organizationIds: string[]): AnonymousPa
     return stored
   }
 
-  return buildFallbackConfig(organizationIds[0])
+  const fallbackOrgId = organizationIds.includes('legacy-default') ? 'legacy-default' : organizationIds[0]
+  return buildFallbackConfig(fallbackOrgId)
 }
 
 export const writeAnonymousPageConfigs = (entries: AnonymousPageConfig[]) => {
