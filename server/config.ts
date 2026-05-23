@@ -38,6 +38,13 @@ const envSchema = z.object({
   AUTH_FALLBACK_TEAM_CODE: z.string().default('IT'),
   AUTH_FALLBACK_TEAM_ACCENT: z.string().default('#0078d4'),
   AUTH_FALLBACK_ROLE: z.enum(['Admin', 'Staff']).default('Staff'),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  EMAIL_REPLY_TO: z.string().optional(),
+  EMAIL_TEST_TO: z.string().optional(),
+  GMAIL_USER: z.string().optional(),
+  GMAIL_APP_PASSWORD: z.string().optional(),
+  GMAIL_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(120000),
 })
 
 const parsed = envSchema.parse(process.env)
@@ -100,5 +107,14 @@ export const serverConfig = {
     accent: parsed.AUTH_FALLBACK_TEAM_ACCENT,
   },
   fallbackRole: parsed.AUTH_FALLBACK_ROLE,
+  email: {
+    resendApiKey: parsed.RESEND_API_KEY?.trim() || '',
+    from: parsed.EMAIL_FROM?.trim() || '',
+    replyTo: parsed.EMAIL_REPLY_TO?.trim() || '',
+    testTo: parsed.EMAIL_TEST_TO?.trim() || '',
+    gmailUser: parsed.GMAIL_USER?.trim() || '',
+    gmailAppPassword: parsed.GMAIL_APP_PASSWORD?.trim() || '',
+    pollIntervalMs: parsed.GMAIL_POLL_INTERVAL_MS,
+  },
 }
 

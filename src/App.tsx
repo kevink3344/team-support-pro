@@ -149,6 +149,7 @@ type SettingsAccordionSection =
   | 'manageTeams'
   | 'trendSeeding'
   | 'categories'
+  | 'email'
 
 type ManagementDrawerSection =
   | 'manageOrganizations'
@@ -182,6 +183,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'manageTeams',
   'trendSeeding',
   'categories',
+  'email',
 ]
 
 const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefined) => {
@@ -786,6 +788,14 @@ function App() {
   const [rapidIdentityEnabled, setRapidIdentityEnabled] = useState(true)
   const [authSettingsPending, setAuthSettingsPending] = useState(false)
   const [authSettingsError, setAuthSettingsError] = useState('')
+  const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false)
+  const [emailSettingsPending, setEmailSettingsPending] = useState(false)
+  const [emailSettingsError, setEmailSettingsError] = useState('')
+  const [emailConfig, setEmailConfig] = useState<{ from: string | null; replyTo: string | null; pollIntervalSeconds: number; configured: boolean } | null>(null)
+  const [emailTestResendPending, setEmailTestResendPending] = useState(false)
+  const [emailTestResendResult, setEmailTestResendResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [emailTestImapPending, setEmailTestImapPending] = useState(false)
+  const [emailTestImapResult, setEmailTestImapResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [anonymousPageConfigs, setAnonymousPageConfigs] = useState<AnonymousPageConfig[]>([])
   const [anonymousPageSettingsPending, setAnonymousPageSettingsPending] = useState(false)
   const [anonymousPageSettingsError, setAnonymousPageSettingsError] = useState('')
@@ -800,6 +810,7 @@ function App() {
     manageTeams: false,
     trendSeeding: false,
     categories: false,
+    email: false,
   })
   const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
     normalizeSettingsAccordionOrder(
@@ -1207,10 +1218,37 @@ function App() {
       setAnonymousPageConfigs([])
       setAnonymousPageSettingsError('')
       setAnonymousPageSettingsNotice('')
+      setEmailConfig(null)
+      setEmailNotificationsEnabled(false)
       return
     }
 
     let cancelled = false
+
+    const loadEmailSettings = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/settings/email'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as {
+          enabled?: boolean
+          from?: string | null
+          replyTo?: string | null
+          pollIntervalSeconds?: number
+          configured?: boolean
+        }
+        if (!cancelled) {
+          if (typeof payload.enabled === 'boolean') setEmailNotificationsEnabled(payload.enabled)
+          setEmailConfig({
+            from: payload.from ?? null,
+            replyTo: payload.replyTo ?? null,
+            pollIntervalSeconds: payload.pollIntervalSeconds ?? 120,
+            configured: payload.configured ?? false,
+          })
+        }
+      } catch {
+        // Keep defaults if email settings cannot be loaded.
+      }
+    }
 
     const loadAnonymousPageSettings = async () => {
       setAnonymousPageSettingsPending(true)
@@ -1245,6 +1283,8 @@ function App() {
     }
 
     void loadAnonymousPageSettings()
+
+    void loadEmailSettings()
 
     return () => {
       cancelled = true
@@ -2672,6 +2712,80 @@ function App() {
       setAuthSettingsError('Authentication setting could not be updated. Confirm the backend server is running.')
     } finally {
       setAuthSettingsPending(false)
+    }
+  }
+
+  const updateEmailNotificationsEnabled = async (isEnabled: boolean) => {
+    setEmailSettingsPending(true)
+    setEmailSettingsError('')
+    try {
+      const response = await fetch(apiUrl('/api/settings/email'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: isEnabled }),
+      })
+      if (response.status === 401) {
+        setAuthSession(null)
+        setEmailSettingsError('Your session expired. Please sign in again.')
+        return
+      }
+      if (response.status === 403) {
+        setEmailSettingsError('Only admins can update email settings.')
+        return
+      }
+      if (!response.ok) {
+        setEmailSettingsError('Email setting could not be updated.')
+        return
+      }
+      const payload = (await response.json()) as { enabled?: boolean }
+      if (typeof payload.enabled === 'boolean') setEmailNotificationsEnabled(payload.enabled)
+    } catch {
+      setEmailSettingsError('Email setting could not be updated. Confirm the backend server is running.')
+    } finally {
+      setEmailSettingsPending(false)
+    }
+  }
+
+  const runEmailTestResend = async () => {
+    setEmailTestResendPending(true)
+    setEmailTestResendResult(null)
+    try {
+      const response = await fetch(apiUrl('/api/settings/email/test-resend'), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const payload = (await response.json()) as { ok?: boolean; messageId?: string; sentTo?: string; error?: string }
+      if (payload.ok) {
+        setEmailTestResendResult({ ok: true, message: `Sent! Message ID: ${payload.messageId ?? '?'} → ${payload.sentTo ?? ''}` })
+      } else {
+        setEmailTestResendResult({ ok: false, message: payload.error ?? 'Test email failed.' })
+      }
+    } catch (err) {
+      setEmailTestResendResult({ ok: false, message: err instanceof Error ? err.message : 'Request failed.' })
+    } finally {
+      setEmailTestResendPending(false)
+    }
+  }
+
+  const runEmailTestImap = async () => {
+    setEmailTestImapPending(true)
+    setEmailTestImapResult(null)
+    try {
+      const response = await fetch(apiUrl('/api/settings/email/test-imap'), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const payload = (await response.json()) as { ok?: boolean; messages?: number; unseen?: number; account?: string; error?: string }
+      if (payload.ok) {
+        setEmailTestImapResult({ ok: true, message: `Connected to ${payload.account ?? 'Gmail'}: ${payload.messages ?? 0} messages, ${payload.unseen ?? 0} unread.` })
+      } else {
+        setEmailTestImapResult({ ok: false, message: payload.error ?? 'IMAP connection failed.' })
+      }
+    } catch (err) {
+      setEmailTestImapResult({ ok: false, message: err instanceof Error ? err.message : 'Request failed.' })
+    } finally {
+      setEmailTestImapPending(false)
     }
   }
 
@@ -5358,6 +5472,110 @@ function App() {
             `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams.`,
             openManageCategoriesPage,
           )
+        case 'email':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {authSession?.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to manage email settings.
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-[color:var(--text-muted)]">
+                    Configure outbound email via Resend and inbound reply parsing via Gmail IMAP. Credentials are read from environment variables.
+                  </div>
+                  <label className="flex items-center gap-3 rounded-[2px] border border-[color:var(--border)] p-3">
+                    <input
+                      type="checkbox"
+                      checked={emailNotificationsEnabled}
+                      disabled={emailSettingsPending}
+                      onChange={(e) => void updateEmailNotificationsEnabled(e.target.checked)}
+                    />
+                    <div>
+                      <div className="text-sm font-semibold text-[color:var(--text)]">Enable email notifications</div>
+                      <div className="text-xs text-[color:var(--text-muted)]">
+                        When enabled, ticket updates will trigger outbound emails and inbound replies will be polled.
+                      </div>
+                    </div>
+                  </label>
+                  {emailSettingsPending && (
+                    <div className="text-xs text-[color:var(--text-muted)]">Saving email setting...</div>
+                  )}
+                  {emailSettingsError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {emailSettingsError}
+                    </div>
+                  )}
+                  {emailConfig && (
+                    <div className="surface-muted grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 rounded-[2px] p-3 text-sm">
+                      <span className="text-[color:var(--text-muted)]">From address</span>
+                      <span className="font-mono text-[color:var(--text)]">{emailConfig.from ?? <em>not set</em>}</span>
+                      <span className="text-[color:var(--text-muted)]">Reply-to</span>
+                      <span className="font-mono text-[color:var(--text)]">{emailConfig.replyTo ?? <em>not set</em>}</span>
+                      <span className="text-[color:var(--text-muted)]">IMAP poll interval</span>
+                      <span className="text-[color:var(--text)]">{emailConfig.pollIntervalSeconds}s</span>
+                      <span className="text-[color:var(--text-muted)]">Integration status</span>
+                      <span>
+                        {emailConfig.configured ? (
+                          <span className="rounded-[2px] bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                            Configured
+                          </span>
+                        ) : (
+                          <span className="rounded-[2px] bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                            Missing env vars
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-4">
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={emailTestResendPending}
+                        onClick={() => void runEmailTestResend()}
+                      >
+                        {emailTestResendPending ? 'Sending…' : 'Test Resend'}
+                      </button>
+                      {emailTestResendResult && (
+                        <div
+                          className={`rounded-[2px] px-3 py-2 text-xs ${
+                            emailTestResendResult.ok
+                              ? 'border border-emerald-200 bg-emerald-50 text-emerald-800'
+                              : 'border border-rose-200 bg-rose-50 text-rose-700'
+                          }`}
+                        >
+                          {emailTestResendResult.message}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        disabled={emailTestImapPending}
+                        onClick={() => void runEmailTestImap()}
+                      >
+                        {emailTestImapPending ? 'Connecting…' : 'Test Gmail IMAP'}
+                      </button>
+                      {emailTestImapResult && (
+                        <div
+                          className={`rounded-[2px] px-3 py-2 text-xs ${
+                            emailTestImapResult.ok
+                              ? 'border border-emerald-200 bg-emerald-50 text-emerald-800'
+                              : 'border border-rose-200 bg-rose-50 text-rose-700'
+                          }`}
+                        >
+                          {emailTestImapResult.message}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )
       }
     }
 
@@ -5396,6 +5614,10 @@ function App() {
       categories: {
         title: 'Categories',
         description: 'Add new categories and maintain team mappings.',
+      },
+      email: {
+        title: 'Email Notifications',
+        description: 'Configure outbound Resend email and inbound Gmail IMAP integration.',
       },
     }
 

@@ -213,6 +213,21 @@ const writeRapidIdentityEnabled = (isEnabled: boolean) => {
   ).run(isEnabled ? 'true' : 'false')
 }
 
+const readEmailNotificationsEnabled = () => {
+  const db = getDb()
+  const row = db
+    .prepare("SELECT Value AS value FROM AppSettings WHERE Key = 'emailNotificationsEnabled' LIMIT 1")
+    .get() as { value?: string } | undefined
+  return row?.value === 'true'
+}
+
+const writeEmailNotificationsEnabled = (isEnabled: boolean) => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('emailNotificationsEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
+  ).run(isEnabled ? 'true' : 'false')
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
@@ -262,6 +277,101 @@ app.patch('/api/settings/auth', (req, res) => {
 
   writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
   res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+})
+
+app.get('/api/settings/email', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const { resendApiKey, from, replyTo, gmailUser, gmailAppPassword, pollIntervalMs } = serverConfig.email
+  res.json({
+    enabled: readEmailNotificationsEnabled(),
+    from: from || null,
+    replyTo: replyTo || null,
+    pollIntervalSeconds: Math.round(pollIntervalMs / 1000),
+    configured: !!(resendApiKey && from && gmailUser && gmailAppPassword),
+  })
+})
+
+app.patch('/api/settings/email', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (typeof req.body?.enabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_email_settings_payload' })
+    return
+  }
+  writeEmailNotificationsEnabled(req.body.enabled)
+  res.json({ enabled: readEmailNotificationsEnabled() })
+})
+
+app.post('/api/settings/email/test-resend', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const { resendApiKey, from, replyTo, testTo } = serverConfig.email
+  if (!resendApiKey || !from) {
+    res.status(400).json({ ok: false, error: 'RESEND_API_KEY and EMAIL_FROM must be set in environment variables.' })
+    return
+  }
+  const sendTo = testTo || replyTo
+  if (!sendTo) {
+    res.status(400).json({ ok: false, error: 'EMAIL_TEST_TO or EMAIL_REPLY_TO must be set to a recipient address.' })
+    return
+  }
+  try {
+    const { Resend } = await import('resend')
+    const resend = new Resend(resendApiKey)
+    const { data, error } = await resend.emails.send({
+      from,
+      replyTo: replyTo || undefined,
+      to: sendTo,
+      subject: '[TKT-TEST] TeamSupportPro — Resend connectivity test',
+      text: 'This is an automated connectivity test from TeamSupportPro. If you received this, Resend is configured correctly.',
+    })
+    if (error) {
+      res.json({ ok: false, error: (error as { message?: string }).message ?? 'Resend returned an error.' })
+      return
+    }
+    res.json({ ok: true, messageId: data?.id, sentTo: sendTo })
+  } catch (err) {
+    res.json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error sending test email.' })
+  }
+})
+
+app.post('/api/settings/email/test-imap', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const { gmailUser, gmailAppPassword } = serverConfig.email
+  if (!gmailUser || !gmailAppPassword) {
+    res.status(400).json({ ok: false, error: 'GMAIL_USER and GMAIL_APP_PASSWORD must be set in environment variables.' })
+    return
+  }
+  try {
+    const { ImapFlow } = await import('imapflow')
+    const client = new ImapFlow({
+      host: 'imap.gmail.com',
+      port: 993,
+      secure: true,
+      auth: { user: gmailUser, pass: gmailAppPassword },
+      logger: false,
+    })
+    await client.connect()
+    const status = await client.status('INBOX', { messages: true, unseen: true })
+    await client.logout()
+    res.json({ ok: true, messages: status.messages, unseen: status.unseen, account: gmailUser })
+  } catch (err) {
+    res.json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error connecting to Gmail IMAP.' })
+  }
 })
 
 app.get('/api/settings/anonymous-pages', async (req, res) => {
