@@ -313,7 +313,7 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
                   <XAxis dataKey="priority" tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} unit=" d" />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v} days`, 'Avg. time']} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${Number(v).toFixed(1)} days`, 'Avg. time']} />
                   <Bar dataKey="avgDays" name="Avg. days" radius={[2, 2, 0, 0]}>
                     {avgByPriority.map((entry) => (
                       <Cell key={entry.priority} fill={PRIORITY_COLORS[entry.priority] ?? '#8884d8'} />
@@ -334,7 +334,7 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
                   <XAxis type="number" tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} unit=" d" />
                   <YAxis dataKey="teamName" type="category" width={110} tick={{ fill: 'var(--text-muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={tooltipStyle} formatter={(v: number) => [`${v} days`, 'Avg. time']} />
+                  <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${Number(v).toFixed(1)} days`, 'Avg. time']} />
                   <Bar dataKey="avgDays" name="Avg. days" fill="#22c55e" radius={[0, 2, 2, 0]} />
                 </BarChart>
               </ResponsiveContainer>

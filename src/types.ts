@@ -127,6 +127,7 @@ export interface Ticket {
   dueLabel: string
   createdAt: string
   updatedAt: string
+  resolvedAt?: string | null
   activity: ActivityEntry[]
 }
 
@@ -183,6 +184,13 @@ export interface OpenAgeBucket {
 export interface FirstResponseBucket {
   bucket: string
   count: number
+}
+
+export interface TicketWatcher {
+  userId: string
+  name: string
+  email: string
+  addedAt: string
 }
 
 export interface ThemePalette {

@@ -21,6 +21,7 @@ export interface TicketRecord {
   dueLabel: string
   createdAt: string
   updatedAt: string
+  resolvedAt: string | null
   activity: TicketActivityRecord[]
 }
 
@@ -46,6 +47,7 @@ export interface TicketActivityRecord {
 }
 
 export interface UpdateTicketInput {
+  teamId: string
   title: string
   description: string
   status: string
@@ -81,6 +83,7 @@ const mapTicketRecord = (record: Record<string, unknown>): Omit<TicketRecord, 'a
   dueLabel: String(record.dueLabel),
   createdAt: new Date(String(record.createdAt)).toISOString(),
   updatedAt: new Date(String(record.updatedAt)).toISOString(),
+  resolvedAt: typeof record.resolvedAt === 'string' ? new Date(record.resolvedAt).toISOString() : null,
 })
 
 const groupTicketsWithActivity = (
@@ -129,8 +132,8 @@ export const listTicketActivity = async (): Promise<TicketActivityRecord[]> => {
 export const listTickets = async (teamId?: string): Promise<TicketRecord[]> => {
   const db = getDb()
   const ticketRows = teamId
-    ? db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE TeamId = ? ORDER BY UpdatedAt DESC, CreatedAt DESC`).all(teamId) as Record<string, unknown>[]
-    : db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets ORDER BY UpdatedAt DESC, CreatedAt DESC`).all() as Record<string, unknown>[]
+    ? db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE TeamId = ? ORDER BY UpdatedAt DESC, CreatedAt DESC`).all(teamId) as Record<string, unknown>[]
+    : db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets ORDER BY UpdatedAt DESC, CreatedAt DESC`).all() as Record<string, unknown>[]
 
   const tickets = ticketRows.map(mapTicketRecord)
   const allActivity = await listTicketActivity()
@@ -140,7 +143,7 @@ export const listTickets = async (teamId?: string): Promise<TicketRecord[]> => {
 
 export const getTicketById = async (ticketId: string): Promise<TicketRecord | null> => {
   const db = getDb()
-  const row = db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE Id = ?`).get(ticketId) as Record<string, unknown> | undefined
+  const row = db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE Id = ?`).get(ticketId) as Record<string, unknown> | undefined
   if (!row) return null
   const ticket = mapTicketRecord(row)
   const activityRows = db.prepare('SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity WHERE TicketId = ? ORDER BY ActivityAt ASC').all(ticketId) as Record<string, unknown>[]
@@ -166,6 +169,13 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
 
   if (existing.status !== input.status) changeMessages.push(`Changed status from ${existing.status} to ${input.status}.`)
   if (existing.priority !== input.priority) changeMessages.push(`Changed priority from ${existing.priority} to ${input.priority}.`)
+  if (existing.teamId !== input.teamId) {
+    const getTeamName = (id: string) => {
+      const r = db.prepare('SELECT Name FROM Teams WHERE Id = ?').get(id) as Record<string, unknown> | undefined
+      return typeof r?.Name === 'string' && (r.Name as string).trim() ? (r.Name as string).trim() : 'Unknown'
+    }
+    changeMessages.push(`Transferred ticket from ${getTeamName(existing.teamId)} to ${getTeamName(input.teamId)}.`)
+  }
   if (existing.assignedToId !== input.assignedToId) {
     const getName = (id: string | null) => {
       if (!id) return 'Unassigned'
@@ -187,8 +197,13 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
   if (existing.requestorName !== input.requestorName) changeMessages.push('Updated requester name.')
   if (existing.requestorEmail !== input.requestorEmail.trim().toLowerCase()) changeMessages.push('Updated requester email.')
 
+  const resolvedStatuses = new Set(['Resolved', 'Closed'])
+  const newResolvedAt = resolvedStatuses.has(input.status)
+    ? (existing.resolvedAt ?? activityAt)
+    : null
+
   const tx = db.transaction(() => {
-    db.prepare('UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ? WHERE Id = ?').run(input.title.trim(), input.description.trim(), input.status, input.priority, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', activityAt, ticketId)
+    db.prepare('UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, TeamId = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ?, ResolvedAt = ? WHERE Id = ?').run(input.title.trim(), input.description.trim(), input.status, input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', activityAt, newResolvedAt, ticketId)
     const ins = db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)')
     for (const msg of changeMessages) ins.run(`activity-${crypto.randomUUID()}`, ticketId, actor, msg, activityAt)
   })
@@ -220,10 +235,58 @@ export const deleteTicket = async (ticketId: string): Promise<boolean> => {
   if (!isNonEmpty(ticketId)) return false
   const db = getDb()
   const tx = db.transaction(() => {
+    db.prepare('DELETE FROM TicketWatchers WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM TicketAttachments WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM TicketActivity WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM Tickets WHERE Id = ?').run(ticketId)
   })
   tx()
   return true
+}
+
+export interface TicketWatcher {
+  userId: string
+  name: string
+  email: string
+  addedAt: string
+}
+
+export const listTicketWatchers = (ticketId: string): TicketWatcher[] => {
+  const db = getDb()
+  return db
+    .prepare(
+      `SELECT u.Id AS userId, u.Name AS name, u.Email AS email, tw.AddedAt AS addedAt
+       FROM TicketWatchers tw
+       JOIN Users u ON tw.UserId = u.Id
+       WHERE tw.TicketId = ?
+       ORDER BY tw.AddedAt ASC`,
+    )
+    .all(ticketId) as TicketWatcher[]
+}
+
+export const addTicketWatcher = (ticketId: string, userId: string): boolean => {
+  const db = getDb()
+  try {
+    db.prepare(
+      "INSERT OR IGNORE INTO TicketWatchers (TicketId, UserId, AddedAt) VALUES (?, ?, datetime('now'))",
+    ).run(ticketId, userId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+export const removeTicketWatcher = (ticketId: string, userId: string): boolean => {
+  const db = getDb()
+  const result = db.prepare('DELETE FROM TicketWatchers WHERE TicketId = ? AND UserId = ?').run(ticketId, userId)
+  return result.changes > 0
+}
+
+export const listWatchedTicketIds = (userId: string): string[] => {
+  const db = getDb()
+  return (
+    db.prepare('SELECT TicketId AS ticketId FROM TicketWatchers WHERE UserId = ?').all(userId) as {
+      ticketId: string
+    }[]
+  ).map((r) => r.ticketId)
 }

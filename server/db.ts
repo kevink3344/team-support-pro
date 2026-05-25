@@ -64,6 +64,10 @@ const migrateLegacySchema = (database: Database.Database) => {
     database.exec('ALTER TABLE Users ADD COLUMN OrganizationId TEXT')
   }
 
+  if (!tableHasColumn(database, 'Tickets', 'ResolvedAt')) {
+    database.exec('ALTER TABLE Tickets ADD COLUMN ResolvedAt TEXT')
+  }
+
   const fallbackOrganization = serverConfig.fallbackOrganization
   database
     .prepare(
@@ -193,6 +197,15 @@ const initializeSchema = (database: Database.Database) => {
       Key TEXT PRIMARY KEY,
       Value TEXT NOT NULL,
       UpdatedAt TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS TicketWatchers (
+      TicketId TEXT NOT NULL,
+      UserId TEXT NOT NULL,
+      AddedAt TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (TicketId, UserId),
+      FOREIGN KEY (TicketId) REFERENCES Tickets(Id),
+      FOREIGN KEY (UserId) REFERENCES Users(Id)
     );
   `)
 

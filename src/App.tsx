@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Clock3,
   Download,
+  Eye,
   FileUp,
   Grip,
   Folder,
@@ -33,6 +34,7 @@ import {
   Trash2,
   TriangleAlert,
   User as UserIcon,
+  UserPlus,
   Users,
   Wrench,
   X,
@@ -84,6 +86,7 @@ import type {
   Ticket as TicketRecord,
   TicketPriority,
   TicketStatus,
+  TicketWatcher,
   TrendPoint,
   User,
 } from './types'
@@ -723,6 +726,8 @@ function App() {
   const [tickets, setTickets] = useState(initialTickets)
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>(initialTrendData)
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const [ticketWatchers, setTicketWatchers] = useState<TicketWatcher[]>([])
+  const [watchedTicketIds, setWatchedTicketIds] = useState<Set<string>>(new Set())
   const [authSession, setAuthSession] = useState<AuthSession | null>(null)
   const dashboardLayoutStorageKey = authSession
     ? `${STORAGE_KEYS.dashboardLayout}:${authSession.email.toLowerCase()}`
@@ -875,6 +880,7 @@ function App() {
     description: '',
   })
   const [detailDraft, setDetailDraft] = useState<{
+    teamId: string
     title: string
     description: string
     status: TicketStatus
@@ -994,8 +1000,9 @@ function App() {
       ticket.activity.forEach((entry) => {
         const isAssignedTicket = ticket.assignedToId === currentUser.id
         const isMentioned = extractMentionedUserIds(entry.message, mentionLookup).has(currentUser.id)
+        const isWatched = watchedTicketIds.has(ticket.id)
 
-        if (entry.actor === currentUser.name || (!isAssignedTicket && !isMentioned)) {
+        if (entry.actor === currentUser.name || (!isAssignedTicket && !isMentioned && !isWatched)) {
           return
         }
 
@@ -1012,7 +1019,7 @@ function App() {
     })
 
     return items
-  }, [teamScopeTickets, currentUser.id, currentUser.name, mentionLookup])
+  }, [teamScopeTickets, currentUser.id, currentUser.name, mentionLookup, watchedTicketIds])
   const notificationItems = useMemo(
     () =>
       [...seededNotificationItems, ...activityNotificationItems].sort(
@@ -1536,6 +1543,34 @@ function App() {
 
   useEffect(() => {
     if (!authSession) {
+      setWatchedTicketIds(new Set())
+      return
+    }
+
+    let cancelled = false
+
+    const loadWatchedTickets = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/watchers/my-tickets'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { ticketIds?: string[] }
+        if (!cancelled && Array.isArray(payload.ticketIds)) {
+          setWatchedTicketIds(new Set(payload.ticketIds))
+        }
+      } catch {
+        // Non-critical — fall back to empty set
+      }
+    }
+
+    void loadWatchedTickets()
+
+    return () => {
+      cancelled = true
+    }
+  }, [authSession])
+
+  useEffect(() => {
+    if (!authSession) {
       return
     }
 
@@ -1660,6 +1695,7 @@ function App() {
     }
 
     setDetailDraft({
+      teamId: selectedTicket.teamId,
       title: selectedTicket.title,
       description: selectedTicket.description,
       status: selectedTicket.status,
@@ -1733,6 +1769,36 @@ function App() {
       cancelled = true
     }
   }, [selectedTicket?.id, authSession])
+
+  useEffect(() => {
+    if (!selectedTicket) {
+      setTicketWatchers([])
+      return
+    }
+
+    let cancelled = false
+
+    const loadWatchers = async () => {
+      try {
+        const response = await fetch(apiUrl(`/api/tickets/${selectedTicket.id}/watchers`), {
+          credentials: 'include',
+        })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { watchers?: TicketWatcher[] }
+        if (!cancelled && Array.isArray(payload.watchers)) {
+          setTicketWatchers(payload.watchers)
+        }
+      } catch {
+        // Non-critical
+      }
+    }
+
+    void loadWatchers()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedTicket?.id])
 
   useEffect(() => {
     if (!previewAttachmentId) {
@@ -2297,6 +2363,52 @@ function App() {
     }
   }
 
+  const addWatcher = async (userId: string) => {
+    if (!selectedTicket) return
+    try {
+      const response = await fetch(apiUrl(`/api/tickets/${selectedTicket.id}/watchers`), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      })
+      if (!response.ok) return
+      const payload = (await response.json()) as { watchers?: TicketWatcher[] }
+      if (Array.isArray(payload.watchers)) {
+        setTicketWatchers(payload.watchers)
+        if (userId === currentUser.id) {
+          setWatchedTicketIds((current) => new Set([...current, selectedTicket.id]))
+        }
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+
+  const removeWatcher = async (userId: string) => {
+    if (!selectedTicket) return
+    try {
+      const response = await fetch(apiUrl(`/api/tickets/${selectedTicket.id}/watchers/${userId}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (!response.ok) return
+      const payload = (await response.json()) as { watchers?: TicketWatcher[] }
+      if (Array.isArray(payload.watchers)) {
+        setTicketWatchers(payload.watchers)
+        if (userId === currentUser.id) {
+          setWatchedTicketIds((current) => {
+            const next = new Set(current)
+            next.delete(selectedTicket.id)
+            return next
+          })
+        }
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+
   const saveTicketChanges = async () => {
     if (!selectedTicket || !detailDraft) {
       return
@@ -2313,6 +2425,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          teamId: detailDraft.teamId,
           title: detailDraft.title,
           description: detailDraft.description,
           status: detailDraft.status,
@@ -2940,10 +3053,11 @@ function App() {
       requestor: ticket.requestorName,
       email: ticket.requestorEmail,
       updatedAt: formatDateTime(ticket.updatedAt),
+      resolvedAt: ticket.resolvedAt ? formatDateTime(ticket.resolvedAt) : '',
     }))
 
     const csv = [
-      'Ticket ID,Title,Status,Priority,Team,Category,Assigned To,Requestor,Email,Updated',
+      'Ticket ID,Title,Status,Priority,Team,Category,Assigned To,Requestor,Email,Updated,Resolved At',
       ...rows.map((row) =>
         Object.values(row)
           .map((value) => `"${String(value).replaceAll('"', '""')}"`)
@@ -5843,6 +5957,7 @@ function App() {
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Assigned To</th>
                 <th className="px-4 py-3 font-semibold">Updated</th>
+                <th className="px-4 py-3 font-semibold">Resolved At</th>
                 <th className="px-4 py-3 font-semibold">Quick Actions</th>
               </tr>
             </thead>
@@ -5877,6 +5992,9 @@ function App() {
                   </td>
                   <td className="px-4 py-3 align-top text-[color:var(--text-muted)]">
                     {formatDateTime(ticket.updatedAt)}
+                  </td>
+                  <td className="px-4 py-3 align-top text-[color:var(--text-muted)]">
+                    {ticket.resolvedAt ? formatDateTime(ticket.resolvedAt) : <span className="opacity-30">—</span>}
                   </td>
                   <td className="px-4 py-3 align-top">{renderQuickActions(ticket)}</td>
                 </tr>
@@ -6886,11 +7004,30 @@ function App() {
                         </label>
                         <label className="field">
                           <span className="field-label">Team</span>
-                          <input
+                          <select
                             className="input-control"
-                            value={getTeamById(selectedTicket.teamId)?.name ?? 'Unknown'}
-                            disabled
-                          />
+                            value={detailDraft.teamId}
+                            onChange={(event) => {
+                              const newTeamId = event.target.value
+                              const firstCategory = categories.find((c) => c.teamId === newTeamId)
+                              setDetailDraft((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      teamId: newTeamId,
+                                      categoryId: firstCategory?.id ?? '',
+                                      assignedToId: '',
+                                    }
+                                  : current,
+                              )
+                            }}
+                          >
+                            {getTeamsForOrganization(teams, currentUser.organizationId).map((team) => (
+                              <option key={team.id} value={team.id}>
+                                {team.name}
+                              </option>
+                            ))}
+                          </select>
                         </label>
                         <label className="field">
                           <span className="field-label">Category</span>
@@ -6905,7 +7042,7 @@ function App() {
                               )
                             }
                           >
-                            {currentTeamCategories.map((category) => (
+                            {categories.filter((c) => c.teamId === detailDraft.teamId).map((category) => (
                               <option key={category.id} value={category.id}>
                                 {category.name}
                               </option>
@@ -6926,7 +7063,7 @@ function App() {
                             }
                           >
                             <option value="">Unassigned</option>
-                            {currentTeamMembers.map((member) => (
+                            {users.filter((u) => u.teamId === detailDraft.teamId).map((member) => (
                               <option key={member.id} value={member.id}>
                                 {member.name}
                               </option>
@@ -7005,9 +7142,94 @@ function App() {
                         </label>
                       </div>
 
+                      {/* Watchers */}
+                      {(() => {
+                        const orgUsers = users.filter(
+                          (u) => u.organizationId === currentUser.organizationId,
+                        )
+                        const watcherIds = new Set(ticketWatchers.map((w) => w.userId))
+                        const availableToAdd = orgUsers.filter((u) => !watcherIds.has(u.id))
+                        const isWatching = watcherIds.has(currentUser.id)
+
+                        return (
+                          <div className="border-t border-[color:var(--border)] pt-4">
+                            <div className="mb-2 flex items-center gap-2">
+                              <Eye className="h-4 w-4 text-[color:var(--text-muted)]" />
+                              <span className="text-sm font-semibold text-[color:var(--text-muted)] uppercase tracking-[0.1em]">
+                                Watchers
+                              </span>
+                              {!isWatching && (
+                                <button
+                                  type="button"
+                                  className="ml-auto inline-flex items-center gap-1 rounded-[2px] border border-[#a9c9ff] bg-[#eaf3ff] px-2 py-0.5 text-xs text-[#315dc6] hover:opacity-80"
+                                  onClick={() => addWatcher(currentUser.id)}
+                                >
+                                  <UserPlus className="h-3.5 w-3.5" />
+                                  Watch
+                                </button>
+                              )}
+                            </div>
+
+                            {ticketWatchers.length === 0 ? (
+                              <p className="text-sm text-[color:var(--text-muted)]">No watchers yet.</p>
+                            ) : (
+                              <div className="flex flex-wrap gap-2">
+                                {ticketWatchers.map((watcher) => (
+                                  <span
+                                    key={watcher.userId}
+                                    className="inline-flex items-center gap-1.5 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2.5 py-1 text-xs"
+                                  >
+                                    <UserIcon className="h-3.5 w-3.5 text-[color:var(--text-muted)]" />
+                                    {watcher.name}
+                                    {(watcher.userId === currentUser.id || currentUser.role === 'Admin') && (
+                                      <button
+                                        type="button"
+                                        aria-label={`Remove ${watcher.name} from watchers`}
+                                        className="ml-0.5 text-[color:var(--text-muted)] hover:text-red-500"
+                                        onClick={() => removeWatcher(watcher.userId)}
+                                      >
+                                        <X className="h-3 w-3" />
+                                      </button>
+                                    )}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            {availableToAdd.length > 0 && (
+                              <div className="mt-2 flex items-center gap-2">
+                                <select
+                                  className="input-control flex-1 text-sm"
+                                  defaultValue=""
+                                  onChange={(event) => {
+                                    const val = event.target.value
+                                    if (val) {
+                                      void addWatcher(val)
+                                      event.target.value = ''
+                                    }
+                                  }}
+                                >
+                                  <option value="" disabled>
+                                    Add watcher…
+                                  </option>
+                                  {availableToAdd.map((u) => (
+                                    <option key={u.id} value={u.id}>
+                                      {u.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
+
                       <div className="flex items-center justify-between border-t border-[color:var(--border)] pt-4">
                         <div className="text-sm text-[color:var(--text-muted)]">
-                          Last updated {formatDateTime(selectedTicket.updatedAt)}
+                          <div>Last updated {formatDateTime(selectedTicket.updatedAt)}</div>
+                          {selectedTicket.resolvedAt && (
+                            <div>Resolved {formatDateTime(selectedTicket.resolvedAt)}</div>
+                          )}
                         </div>
                         <div className="flex items-center gap-3">
                           {detailSaveError && (

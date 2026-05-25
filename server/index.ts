@@ -79,6 +79,10 @@ import {
   listTickets,
   ticketBelongsToTeam,
   updateTicket,
+  listTicketWatchers,
+  addTicketWatcher,
+  removeTicketWatcher,
+  listWatchedTicketIds,
 } from './tickets.js'
 import {
   authenticateLocalAccountPersisted,
@@ -1803,10 +1807,24 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
     return
   }
 
+  // If reassigning to a different team, verify the target team is in the same org
+  const db = getDb()
+  const newTeamId = typeof req.body?.teamId === 'string' && req.body.teamId.trim() ? req.body.teamId.trim() : user.teamId
+  if (newTeamId !== user.teamId) {
+    const targetTeam = db
+      .prepare('SELECT OrganizationId FROM Teams WHERE Id = ?')
+      .get(newTeamId) as { OrganizationId: string } | undefined
+    if (!targetTeam || targetTeam.OrganizationId !== user.organizationId) {
+      res.status(403).json({ error: 'cross_org_team_reassign_forbidden' })
+      return
+    }
+  }
+
   try {
     const ticket = await updateTicket(
       ticketId,
       {
+        teamId: newTeamId,
         title: typeof req.body?.title === 'string' ? req.body.title : '',
         description: typeof req.body?.description === 'string' ? req.body.description : '',
         status: typeof req.body?.status === 'string' ? req.body.status : '',
@@ -1867,6 +1885,86 @@ app.delete('/api/tickets/:ticketId', async (req, res) => {
     res.status(500).json({ error: 'ticket_delete_failed' })
   }
 })
+
+// ── Ticket Watcher routes ──────────────────────────────────────────────────
+
+app.get('/api/watchers/my-tickets', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  res.json({ ticketIds: listWatchedTicketIds(user.id) })
+})
+
+app.get('/api/tickets/:ticketId/watchers', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId) {
+    res.status(400).json({ error: 'invalid_ticket_id' })
+    return
+  }
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})
+
+app.post('/api/tickets/:ticketId/watchers', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const targetUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId || !targetUserId) {
+    res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  // Ensure the target user belongs to the same organization as the requester
+  const db = getDb()
+  const targetUser = db
+    .prepare('SELECT OrganizationId FROM Users WHERE Id = ?')
+    .get(targetUserId) as { OrganizationId: string } | undefined
+
+  if (!targetUser || targetUser.OrganizationId !== user.organizationId) {
+    res.status(403).json({ error: 'cross_org_watcher_forbidden' })
+    return
+  }
+
+  addTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})
+
+app.delete('/api/tickets/:ticketId/watchers/:userId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const targetUserId = typeof req.params.userId === 'string' ? req.params.userId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId || !targetUserId) {
+    res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  // Only admins or the watcher themselves can remove
+  if (targetUserId !== user.id && !isAdminUser(user)) {
+    res.status(403).json({ error: 'remove_watcher_forbidden' })
+    return
+  }
+
+  removeTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.post('/api/auth/logout', (_req, res) => {
   res.clearCookie(SESSION_COOKIE_NAME, buildCookieOptions(0))
