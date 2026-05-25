@@ -157,6 +157,34 @@ export interface TrendReport {
   resolved: number
 }
 
+export interface ResolutionTimeBucket {
+  bucket: string
+  count: number
+}
+
+export interface AvgResolutionByPriority {
+  priority: string
+  avgDays: number
+  count: number
+}
+
+export interface AvgResolutionByTeam {
+  teamId: string
+  teamName: string
+  avgDays: number
+  count: number
+}
+
+export interface OpenAgeBucket {
+  bucket: string
+  count: number
+}
+
+export interface FirstResponseBucket {
+  bucket: string
+  count: number
+}
+
 export interface ThemePalette {
   appBg: string
   headerBg: string

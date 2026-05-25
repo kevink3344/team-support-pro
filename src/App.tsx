@@ -3629,7 +3629,7 @@ function App() {
           </div>
           {isMobileViewport && (
             <div className="mb-3 flex flex-wrap gap-2 text-xs text-[color:var(--text-muted)]">
-              {teams.map((team) => (
+              {getTeamsForOrganization(teams, currentUser.organizationId).map((team) => (
                 <div
                   key={`${team.id}-trend-legend`}
                   className="inline-flex items-center gap-2 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-2 py-1"
@@ -3659,7 +3659,7 @@ function App() {
                   }}
                 />
                 {!isMobileViewport && <Legend />}
-                {teams.map((team) => (
+                {getTeamsForOrganization(teams, currentUser.organizationId).map((team) => (
                   <Line
                     key={team.id}
                     type="monotone"

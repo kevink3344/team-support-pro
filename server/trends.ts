@@ -93,8 +93,20 @@ const buildTrendRecords = (rows: TrendRow[], days: number) => {
     .map(([date, values]) => ({ date, values }))
 }
 
-const listDerivedTrendRows = (days: number): TrendRow[] => {
+const listDerivedTrendRows = (days: number, organizationId?: string): TrendRow[] => {
   const db = getDb()
+  const daysParam = `-${Math.max(clampTrendDays(days) - 1, 0)} days`
+
+  if (organizationId) {
+    return db.prepare(`
+      SELECT DATE(CreatedAt) AS date, TeamId AS teamId, COUNT(*) AS count
+      FROM Tickets
+      WHERE CreatedAt >= date('now', ?)
+        AND TeamId IN (SELECT Id FROM Teams WHERE OrganizationId = ?)
+      GROUP BY DATE(CreatedAt), TeamId
+      ORDER BY DATE(CreatedAt) ASC, TeamId ASC
+    `).all(daysParam, organizationId) as TrendRow[]
+  }
 
   return db.prepare(`
     SELECT DATE(CreatedAt) AS date, TeamId AS teamId, COUNT(*) AS count
@@ -102,7 +114,7 @@ const listDerivedTrendRows = (days: number): TrendRow[] => {
     WHERE CreatedAt >= date('now', ?)
     GROUP BY DATE(CreatedAt), TeamId
     ORDER BY DATE(CreatedAt) ASC, TeamId ASC
-  `).all(`-${Math.max(clampTrendDays(days) - 1, 0)} days`) as TrendRow[]
+  `).all(daysParam) as TrendRow[]
 }
 
 const listStoredTrendRows = (days: number, targetTeamIds: string[]): TrendRow[] => {
@@ -137,6 +149,11 @@ const hasActiveTrendSeed = (config: TrendSeedConfig | null) => {
 const listAllTeams = () => {
   const db = getDb()
   return db.prepare('SELECT Id AS id, Name AS name FROM Teams ORDER BY Name ASC').all() as SeedTargetTeam[]
+}
+
+const listTeamsByOrg = (organizationId: string) => {
+  const db = getDb()
+  return db.prepare('SELECT Id AS id, Name AS name FROM Teams WHERE OrganizationId = ? ORDER BY Name ASC').all(organizationId) as SeedTargetTeam[]
 }
 
 const resolveTrendSeedTargets = (categoryId?: string): { teams: SeedTargetTeam[]; category: SeedTargetCategory | null } => {
@@ -193,16 +210,19 @@ const getActiveTargetTeamIds = (config: TrendSeedConfig | null, fallbackTeams: S
   return fallbackTeams.map((team) => team.id)
 }
 
-export const listTeamTicketTrends = async (days: number = 21): Promise<TrendRecord[]> => {
+export const listTeamTicketTrends = async (days: number = 21, organizationId?: string): Promise<TrendRecord[]> => {
   const safeDays = clampTrendDays(days)
-  const derivedRows = listDerivedTrendRows(safeDays)
+  const derivedRows = listDerivedTrendRows(safeDays, organizationId)
   const seedConfig = readTrendSeedConfig()
 
   if (!hasActiveTrendSeed(seedConfig)) {
     return buildTrendRecords(derivedRows, safeDays)
   }
 
-  const storedRows = listStoredTrendRows(safeDays, getActiveTargetTeamIds(seedConfig, listAllTeams()))
+  const scopedTeams = organizationId ? listTeamsByOrg(organizationId) : listAllTeams()
+  const scopedTeamIdSet = new Set(scopedTeams.map((t) => t.id))
+  const targetTeamIds = getActiveTargetTeamIds(seedConfig, scopedTeams).filter((id) => scopedTeamIdSet.has(id))
+  const storedRows = listStoredTrendRows(safeDays, targetTeamIds)
   const mergedRows = new Map<string, TrendRow>()
 
   for (const row of derivedRows) {

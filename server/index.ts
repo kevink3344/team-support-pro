@@ -23,6 +23,11 @@ import {
   getAssigneeReport,
   getTrendReport,
   getAllTicketsForExport,
+  getResolutionTimeBuckets,
+  getAvgResolutionByPriority,
+  getAvgResolutionByTeam,
+  getOpenTicketAgeBuckets,
+  getFirstResponseTimeBuckets,
 } from './reports.js'
 import {
   createTicketAttachment,
@@ -536,6 +541,36 @@ app.get('/api/reports/trends', (req, res) => {
 
   const days = parseInt(req.query.days as string) || 30
   res.json(getTrendReport(days))
+})
+
+app.get('/api/reports/resolution-time', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getResolutionTimeBuckets())
+})
+
+app.get('/api/reports/avg-resolution-by-priority', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getAvgResolutionByPriority())
+})
+
+app.get('/api/reports/avg-resolution-by-team', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getAvgResolutionByTeam())
+})
+
+app.get('/api/reports/open-ticket-age', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getOpenTicketAgeBuckets())
+})
+
+app.get('/api/reports/first-response-time', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getFirstResponseTimeBuckets())
 })
 
 app.get('/api/reports/export/csv', (req, res) => {
@@ -1369,7 +1404,7 @@ app.get('/api/dashboard/trends', async (req, res) => {
   }
 
   try {
-    const trends = await listTeamTicketTrends()
+    const trends = await listTeamTicketTrends(21, user.organizationId)
     res.json({ trends })
   } catch (error) {
     console.error('Loading dashboard trends failed.', error)
