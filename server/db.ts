@@ -207,6 +207,61 @@ const initializeSchema = (database: Database.Database) => {
       FOREIGN KEY (TicketId) REFERENCES Tickets(Id),
       FOREIGN KEY (UserId) REFERENCES Users(Id)
     );
+
+    CREATE TABLE IF NOT EXISTS FeedbackForms (
+      Id TEXT PRIMARY KEY,
+      OrganizationId TEXT NOT NULL,
+      IsEnabled INTEGER NOT NULL DEFAULT 0,
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+    );
+
+    CREATE TABLE IF NOT EXISTS FeedbackFormFields (
+      Id TEXT PRIMARY KEY,
+      FormId TEXT NOT NULL,
+      FieldType TEXT NOT NULL,
+      Label TEXT NOT NULL,
+      IsRequired INTEGER NOT NULL DEFAULT 0,
+      SortOrder INTEGER NOT NULL DEFAULT 0,
+      OptionsJson TEXT NOT NULL DEFAULT '[]',
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (FormId) REFERENCES FeedbackForms(Id)
+    );
+
+    CREATE TABLE IF NOT EXISTS FeedbackTokens (
+      Token TEXT PRIMARY KEY,
+      TicketId TEXT,
+      OrganizationId TEXT NOT NULL,
+      IsTest INTEGER NOT NULL DEFAULT 0,
+      ExpiresAt TEXT NOT NULL,
+      UsedAt TEXT,
+      CreatedAt TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS FeedbackResponses (
+      Id TEXT PRIMARY KEY,
+      Token TEXT NOT NULL,
+      TicketId TEXT,
+      OrganizationId TEXT NOT NULL,
+      TeamId TEXT,
+      CategoryId TEXT,
+      RequestorEmail TEXT,
+      IsTest INTEGER NOT NULL DEFAULT 0,
+      FormSnapshotJson TEXT NOT NULL DEFAULT '[]',
+      SubmittedAt TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS FeedbackResponseAnswers (
+      Id TEXT PRIMARY KEY,
+      ResponseId TEXT NOT NULL,
+      FieldId TEXT NOT NULL,
+      FieldLabel TEXT NOT NULL,
+      FieldType TEXT NOT NULL,
+      Value TEXT NOT NULL,
+      FOREIGN KEY (ResponseId) REFERENCES FeedbackResponses(Id)
+    );
   `)
 
   migrateLegacySchema(database)

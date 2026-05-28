@@ -77,6 +77,10 @@ import type {
   AppView,
   AuthSession,
   Category,
+  FeedbackForm,
+  FeedbackFormField,
+  FeedbackFieldType,
+  FeedbackResponseSummary,
   ListViewMode,
   Organization,
   Team,
@@ -153,6 +157,7 @@ type SettingsAccordionSection =
   | 'trendSeeding'
   | 'categories'
   | 'email'
+  | 'feedbackForm'
 
 type ManagementDrawerSection =
   | 'manageOrganizations'
@@ -187,6 +192,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'trendSeeding',
   'categories',
   'email',
+  'feedbackForm',
 ]
 
 const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefined) => {
@@ -805,6 +811,25 @@ function App() {
   const [anonymousPageSettingsPending, setAnonymousPageSettingsPending] = useState(false)
   const [anonymousPageSettingsError, setAnonymousPageSettingsError] = useState('')
   const [anonymousPageSettingsNotice, setAnonymousPageSettingsNotice] = useState('')
+  // Feedback form state
+  const [feedbackFormGlobalEnabled, setFeedbackFormGlobalEnabled] = useState(false)
+  const [feedbackFormGlobalPending, setFeedbackFormGlobalPending] = useState(false)
+  const [feedbackForm, setFeedbackForm] = useState<FeedbackForm | null>(null)
+  const [feedbackFormPending, setFeedbackFormPending] = useState(false)
+  const [feedbackFormError, setFeedbackFormError] = useState('')
+  const [feedbackFormNotice, setFeedbackFormNotice] = useState('')
+  const [feedbackResponses, setFeedbackResponses] = useState<FeedbackResponseSummary[]>([])
+  const [feedbackResponsesLoading, setFeedbackResponsesLoading] = useState(false)
+  const [feedbackTestLink, setFeedbackTestLink] = useState('')
+  const [feedbackTestLinkPending, setFeedbackTestLinkPending] = useState(false)
+  const [feedbackExpandedResponseId, setFeedbackExpandedResponseId] = useState<string | null>(null)
+  const [feedbackEditField, setFeedbackEditField] = useState<Partial<FeedbackFormField> | null>(null)
+  const [feedbackEditFieldOptionsText, setFeedbackEditFieldOptionsText] = useState('')
+  const [feedbackAddFieldType, setFeedbackAddFieldType] = useState<FeedbackFieldType>('short_text')
+  const [feedbackAddFieldLabel, setFeedbackAddFieldLabel] = useState('')
+  const [feedbackAddFieldRequired, setFeedbackAddFieldRequired] = useState(false)
+  const [feedbackAddFieldOptions, setFeedbackAddFieldOptions] = useState('')
+  const [feedbackAddFieldOpen, setFeedbackAddFieldOpen] = useState(false)
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
@@ -816,6 +841,7 @@ function App() {
     trendSeeding: false,
     categories: false,
     email: false,
+    feedbackForm: false,
   })
   const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
     normalizeSettingsAccordionOrder(
@@ -1292,6 +1318,10 @@ function App() {
     void loadAnonymousPageSettings()
 
     void loadEmailSettings()
+
+    if (authSession?.organizationId) {
+      void loadFeedbackSettings(authSession.organizationId)
+    }
 
     return () => {
       cancelled = true
@@ -2957,6 +2987,194 @@ function App() {
       setAnonymousPageSettingsError('Anonymous page settings could not be saved. Confirm the backend server is running.')
     } finally {
       setAnonymousPageSettingsPending(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feedback form helpers
+  // ---------------------------------------------------------------------------
+
+  const loadFeedbackSettings = async (orgId: string) => {
+    try {
+      const [globalRes, formRes, responsesRes] = await Promise.all([
+        fetch(apiUrl('/api/settings/feedback'), { credentials: 'include' }),
+        fetch(apiUrl(`/api/feedback/form/${orgId}`), { credentials: 'include' }),
+        fetch(apiUrl(`/api/feedback/responses/${orgId}`), { credentials: 'include' }),
+      ])
+      if (globalRes.ok) {
+        const d = (await globalRes.json()) as { enabled?: boolean }
+        if (typeof d.enabled === 'boolean') setFeedbackFormGlobalEnabled(d.enabled)
+      }
+      if (formRes.ok) {
+        const d = (await formRes.json()) as { form?: FeedbackForm }
+        if (d.form) setFeedbackForm(d.form)
+      }
+      if (responsesRes.ok) {
+        const d = (await responsesRes.json()) as { responses?: FeedbackResponseSummary[] }
+        if (Array.isArray(d.responses)) setFeedbackResponses(d.responses)
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const updateFeedbackGlobalEnabled = async (isEnabled: boolean) => {
+    setFeedbackFormGlobalPending(true)
+    try {
+      const res = await fetch(apiUrl('/api/settings/feedback'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: isEnabled }),
+      })
+      if (res.ok) {
+        const d = (await res.json()) as { enabled?: boolean }
+        if (typeof d.enabled === 'boolean') setFeedbackFormGlobalEnabled(d.enabled)
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setFeedbackFormGlobalPending(false)
+    }
+  }
+
+  const updateFeedbackFormEnabled = async (orgId: string, isEnabled: boolean) => {
+    try {
+      const res = await fetch(apiUrl(`/api/feedback/form/${orgId}/enabled`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isEnabled }),
+      })
+      if (res.ok) {
+        const d = (await res.json()) as { form?: FeedbackForm }
+        if (d.form) setFeedbackForm(d.form)
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const saveFeedbackFormFields = async (orgId: string, fields: FeedbackFormField[]) => {
+    setFeedbackFormPending(true)
+    setFeedbackFormError('')
+    setFeedbackFormNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/feedback/form/${orgId}`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      })
+      if (!res.ok) {
+        setFeedbackFormError('Could not save form fields.')
+        return
+      }
+      const d = (await res.json()) as { form?: FeedbackForm }
+      if (d.form) setFeedbackForm(d.form)
+      setFeedbackFormNotice('Form saved.')
+      setTimeout(() => setFeedbackFormNotice(''), 3000)
+    } catch {
+      setFeedbackFormError('Could not save form fields.')
+    } finally {
+      setFeedbackFormPending(false)
+    }
+  }
+
+  const openEditFeedbackField = (field: FeedbackFormField) => {
+    setFeedbackEditField({ ...field })
+    setFeedbackEditFieldOptionsText((field.options ?? []).join('\n'))
+  }
+
+  const saveEditedFeedbackField = async () => {
+    if (!feedbackForm || !feedbackEditField?.id || !feedbackEditField.label?.trim()) return
+    const choiceTypes: FeedbackFieldType[] = ['single_choice', 'multi_choice']
+    const updated = feedbackForm.fields.map((f) =>
+      f.id === feedbackEditField.id
+        ? {
+            ...f,
+            label: feedbackEditField.label!.trim(),
+            isRequired: feedbackEditField.isRequired ?? f.isRequired,
+            options: choiceTypes.includes(f.fieldType)
+              ? feedbackEditFieldOptionsText.split('\n').map((o) => o.trim()).filter(Boolean)
+              : f.options,
+          }
+        : f,
+    )
+    await saveFeedbackFormFields(feedbackForm.organizationId, updated)
+    setFeedbackEditField(null)
+    setFeedbackEditFieldOptionsText('')
+  }
+
+  const addFeedbackField = async () => {    if (!feedbackForm || !feedbackAddFieldLabel.trim()) return
+    const newField: FeedbackFormField = {
+      id: '',
+      formId: feedbackForm.id,
+      fieldType: feedbackAddFieldType,
+      label: feedbackAddFieldLabel.trim(),
+      isRequired: feedbackAddFieldRequired,
+      sortOrder: feedbackForm.fields.length,
+      options:
+        feedbackAddFieldType === 'single_choice' || feedbackAddFieldType === 'multi_choice'
+          ? feedbackAddFieldOptions.split('\n').map((o) => o.trim()).filter(Boolean)
+          : [],
+    }
+    const updated = [...feedbackForm.fields, newField]
+    await saveFeedbackFormFields(feedbackForm.organizationId, updated)
+    setFeedbackAddFieldLabel('')
+    setFeedbackAddFieldOptions('')
+    setFeedbackAddFieldRequired(false)
+    setFeedbackAddFieldOpen(false)
+  }
+
+  const removeFeedbackField = async (fieldId: string) => {
+    if (!feedbackForm) return
+    const updated = feedbackForm.fields.filter((f) => f.id !== fieldId)
+    await saveFeedbackFormFields(feedbackForm.organizationId, updated)
+  }
+
+  const moveFeedbackField = async (fromIdx: number, toIdx: number) => {
+    if (!feedbackForm) return
+    const next = [...feedbackForm.fields]
+    const [moved] = next.splice(fromIdx, 1)
+    next.splice(toIdx, 0, moved)
+    await saveFeedbackFormFields(
+      feedbackForm.organizationId,
+      next.map((f, i) => ({ ...f, sortOrder: i })),
+    )
+  }
+
+  const generateFeedbackTestLink = async (orgId: string) => {
+    setFeedbackTestLinkPending(true)
+    setFeedbackTestLink('')
+    try {
+      const res = await fetch(apiUrl(`/api/feedback/form/${orgId}/test-token`), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (res.ok) {
+        const d = (await res.json()) as { url?: string }
+        if (d.url) setFeedbackTestLink(d.url)
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setFeedbackTestLinkPending(false)
+    }
+  }
+
+  const refreshFeedbackResponses = async (orgId: string) => {
+    setFeedbackResponsesLoading(true)
+    try {
+      const res = await fetch(apiUrl(`/api/feedback/responses/${orgId}`), { credentials: 'include' })
+      if (res.ok) {
+        const d = (await res.json()) as { responses?: FeedbackResponseSummary[] }
+        if (Array.isArray(d.responses)) setFeedbackResponses(d.responses)
+      }
+    } catch {
+      // non-fatal
+    } finally {
+      setFeedbackResponsesLoading(false)
     }
   }
 
@@ -5690,6 +5908,367 @@ function App() {
               )}
             </div>
           )
+
+        case 'feedbackForm': {
+          if (currentUser.role !== 'Admin') {
+            return (
+              <div className="px-4 py-6 text-sm text-gray-500">Only admins can manage the feedback form.</div>
+            )
+          }
+          const orgId = currentUser.organizationId
+          const choiceTypes: FeedbackFieldType[] = ['single_choice', 'multi_choice']
+          const fieldTypeLabel: Record<FeedbackFieldType, string> = {
+            short_text: 'Short text',
+            long_text: 'Long text',
+            rating: 'Star rating',
+            single_choice: 'Single choice',
+            multi_choice: 'Multi choice',
+          }
+          return (
+            <div className="space-y-6 px-4 py-4">
+              {/* Global toggle */}
+              <div className="flex items-center gap-3">
+                <input
+                  id="feedbackGlobalEnabled"
+                  type="checkbox"
+                  checked={feedbackFormGlobalEnabled}
+                  disabled={feedbackFormGlobalPending}
+                  onChange={(e) => void updateFeedbackGlobalEnabled(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 accent-[var(--color-primary)]"
+                />
+                <label htmlFor="feedbackGlobalEnabled" className="text-sm font-medium text-gray-800">
+                  Enable feedback emails globally
+                </label>
+              </div>
+
+              {/* Per-org toggle */}
+              {feedbackForm && (
+                <div className="flex items-center gap-3">
+                  <input
+                    id="feedbackOrgEnabled"
+                    type="checkbox"
+                    checked={feedbackForm.isEnabled}
+                    onChange={(e) => void updateFeedbackFormEnabled(orgId, e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 accent-[var(--color-primary)]"
+                  />
+                  <label htmlFor="feedbackOrgEnabled" className="text-sm font-medium text-gray-800">
+                    Enable for this organization
+                  </label>
+                </div>
+              )}
+
+              {/* Field list */}
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">Form Fields</p>
+                {feedbackForm && feedbackForm.fields.length > 0 ? (
+                  <div className="space-y-1">
+                    {feedbackForm.fields.map((field, idx) => (
+                      <div key={field.id || idx} className="rounded border border-gray-200 bg-white">
+                        {/* Row */}
+                        <div className="flex items-center gap-2 px-3 py-2">
+                          <span className="flex-1 truncate text-sm text-gray-800">{field.label}</span>
+                          <span className="shrink-0 rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                            {fieldTypeLabel[field.fieldType]}
+                          </span>
+                          {field.isRequired && (
+                            <span className="shrink-0 rounded bg-rose-50 px-2 py-0.5 text-xs text-rose-600">
+                              Required
+                            </span>
+                          )}
+                          <button
+                            className="shrink-0 text-gray-400 hover:text-blue-500"
+                            title="Edit"
+                            onClick={() =>
+                              feedbackEditField?.id === field.id
+                                ? (setFeedbackEditField(null), setFeedbackEditFieldOptionsText(''))
+                                : openEditFeedbackField(field)
+                            }
+                          >
+                            ✎
+                          </button>
+                          {idx > 0 && (
+                            <button
+                              className="shrink-0 text-gray-400 hover:text-gray-600"
+                              title="Move up"
+                              onClick={() => void moveFeedbackField(idx, idx - 1)}
+                            >
+                              ↑
+                            </button>
+                          )}
+                          {idx < feedbackForm.fields.length - 1 && (
+                            <button
+                              className="shrink-0 text-gray-400 hover:text-gray-600"
+                              title="Move down"
+                              onClick={() => void moveFeedbackField(idx, idx + 1)}
+                            >
+                              ↓
+                            </button>
+                          )}
+                          <button
+                            className="shrink-0 text-rose-400 hover:text-rose-600"
+                            title="Remove"
+                            onClick={() => void removeFeedbackField(field.id)}
+                          >
+                            ×
+                          </button>
+                        </div>
+                        {/* Inline edit form */}
+                        {feedbackEditField?.id === field.id && (
+                          <div className="border-t border-gray-100 space-y-3 px-3 py-3">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-600">
+                                Question text <span className="text-rose-500">*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={feedbackEditField.label ?? ''}
+                                onChange={(e) =>
+                                  setFeedbackEditField((f) => f ? { ...f, label: e.target.value } : f)
+                                }
+                                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                              />
+                            </div>
+                            {choiceTypes.includes(field.fieldType) && (
+                              <div>
+                                <label className="mb-1 block text-xs font-medium text-gray-600">
+                                  Options (one per line)
+                                </label>
+                                <textarea
+                                  value={feedbackEditFieldOptionsText}
+                                  onChange={(e) => setFeedbackEditFieldOptionsText(e.target.value)}
+                                  rows={3}
+                                  className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                                />
+                              </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                              <input
+                                id={`edit-required-${field.id}`}
+                                type="checkbox"
+                                checked={feedbackEditField.isRequired ?? false}
+                                onChange={(e) =>
+                                  setFeedbackEditField((f) => f ? { ...f, isRequired: e.target.checked } : f)
+                                }
+                                className="h-4 w-4 rounded border-gray-300"
+                              />
+                              <label htmlFor={`edit-required-${field.id}`} className="text-sm text-gray-700">
+                                Required
+                              </label>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={!feedbackEditField.label?.trim() || feedbackFormPending}
+                                onClick={() => void saveEditedFeedbackField()}
+                                className="primary-button"
+                              >
+                                {feedbackFormPending ? 'Saving…' : 'Save Changes'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setFeedbackEditField(null); setFeedbackEditFieldOptionsText('') }}
+                                className="secondary-button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-400 italic">No fields yet. Add a field below.</p>
+                )}
+              </div>
+
+              {/* Add field */}
+              <div className="rounded border border-dashed border-gray-300 p-3">
+                <button
+                  className="mb-3 text-sm font-medium text-[var(--color-primary)] hover:underline"
+                  onClick={() => setFeedbackAddFieldOpen((o) => !o)}
+                >
+                  {feedbackAddFieldOpen ? '− Cancel' : '+ Add Field'}
+                </button>
+                {feedbackAddFieldOpen && (
+                  <div className="space-y-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-gray-600">Field type</label>
+                      <select
+                        value={feedbackAddFieldType}
+                        onChange={(e) => setFeedbackAddFieldType(e.target.value as FeedbackFieldType)}
+                        className="w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-sm"
+                      >
+                        {(Object.keys(fieldTypeLabel) as FeedbackFieldType[]).map((t) => (
+                          <option key={t} value={t}>
+                            {fieldTypeLabel[t]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-gray-600">
+                        Question text <span className="text-rose-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={feedbackAddFieldLabel}
+                        onChange={(e) => setFeedbackAddFieldLabel(e.target.value)}
+                        placeholder="e.g. How would you rate your experience?"
+                        className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    {choiceTypes.includes(feedbackAddFieldType) && (
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-600">
+                          Options (one per line)
+                        </label>
+                        <textarea
+                          value={feedbackAddFieldOptions}
+                          onChange={(e) => setFeedbackAddFieldOptions(e.target.value)}
+                          rows={3}
+                          placeholder="Option A&#10;Option B&#10;Option C"
+                          className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+                        />
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <input
+                        id="feedbackAddRequired"
+                        type="checkbox"
+                        checked={feedbackAddFieldRequired}
+                        onChange={(e) => setFeedbackAddFieldRequired(e.target.checked)}
+                        className="h-4 w-4 rounded border-gray-300"
+                      />
+                      <label htmlFor="feedbackAddRequired" className="text-sm text-gray-700">
+                        Required
+                      </label>
+                    </div>
+                    {!feedbackAddFieldLabel.trim() && (
+                      <p className="text-xs text-gray-400">Enter a question text to enable saving.</p>
+                    )}
+                    <button
+                      type="button"
+                      disabled={!feedbackAddFieldLabel.trim() || feedbackFormPending}
+                      onClick={() => void addFeedbackField()}
+                      className="primary-button"
+                    >
+                      {feedbackFormPending ? 'Saving…' : 'Save Field'}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {feedbackFormError && (
+                <p className="text-sm text-rose-600">{feedbackFormError}</p>
+              )}
+              {feedbackFormNotice && (
+                <p className="text-sm text-emerald-600">{feedbackFormNotice}</p>
+              )}
+
+              {/* Test link */}
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Test Link</p>
+                <button
+                  disabled={feedbackTestLinkPending}
+                  onClick={() => void generateFeedbackTestLink(orgId)}
+                  className="self-start rounded border border-gray-300 bg-white px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {feedbackTestLinkPending ? 'Generating…' : 'Generate Test Link'}
+                </button>
+                {feedbackTestLink && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      readOnly
+                      value={feedbackTestLink}
+                      className="flex-1 rounded border border-gray-300 bg-gray-50 px-2 py-1.5 text-sm font-mono"
+                    />
+                    <button
+                      onClick={() => void navigator.clipboard.writeText(feedbackTestLink)}
+                      className="shrink-0 rounded border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50"
+                    >
+                      Copy
+                    </button>
+                    <a
+                      href={feedbackTestLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-sm text-[var(--color-primary)] hover:underline"
+                    >
+                      Open ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Responses */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Responses ({feedbackResponses.filter((r) => !r.isTest).length})
+                  </p>
+                  <button
+                    disabled={feedbackResponsesLoading}
+                    onClick={() => void refreshFeedbackResponses(orgId)}
+                    className="text-xs text-[var(--color-primary)] hover:underline disabled:opacity-50"
+                  >
+                    {feedbackResponsesLoading ? 'Loading…' : 'Refresh'}
+                  </button>
+                </div>
+                {feedbackResponses.filter((r) => !r.isTest).length === 0 ? (
+                  <p className="text-sm italic text-gray-400">No responses yet.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {feedbackResponses
+                      .filter((r) => !r.isTest)
+                      .map((resp) => (
+                        <div
+                          key={resp.id}
+                          className="rounded border border-gray-200 bg-white"
+                        >
+                          <button
+                            className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-gray-50"
+                            onClick={() =>
+                              setFeedbackExpandedResponseId((id) =>
+                                id === resp.id ? null : resp.id,
+                              )
+                            }
+                          >
+                            <span className="flex-1 truncate text-gray-700">
+                              {resp.requestorEmail ?? '(unknown)'}
+                            </span>
+                            {resp.ticketId && (
+                              <span className="shrink-0 text-xs text-gray-400">
+                                Ticket {resp.ticketId.slice(0, 8)}
+                              </span>
+                            )}
+                            <span className="shrink-0 text-xs text-gray-400">
+                              {new Date(resp.submittedAt).toLocaleDateString()}
+                            </span>
+                            <span className="shrink-0 text-gray-400">
+                              {feedbackExpandedResponseId === resp.id ? '▲' : '▼'}
+                            </span>
+                          </button>
+                          {feedbackExpandedResponseId === resp.id && resp.answers.length > 0 && (
+                            <div className="border-t border-gray-100 px-3 py-2 space-y-2">
+                              {resp.answers.map((ans) => (
+                                <div key={ans.fieldId}>
+                                  <p className="text-xs font-medium text-gray-500">{ans.fieldLabel}</p>
+                                  <p className="text-sm text-gray-800 whitespace-pre-wrap">
+                                    {ans.value ?? '—'}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        }
       }
     }
 
@@ -5732,6 +6311,10 @@ function App() {
       email: {
         title: 'Email Notifications',
         description: 'Configure outbound Resend email and inbound Gmail IMAP integration.',
+      },
+      feedbackForm: {
+        title: 'Feedback Form',
+        description: 'Design a post-resolution survey and collect submitter feedback.',
       },
     }
 

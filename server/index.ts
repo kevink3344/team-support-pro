@@ -91,6 +91,20 @@ import {
   upsertLocalAccountPersisted,
 } from './local-auth.js'
 import { getDb } from './db.js'
+import {
+  createTestFeedbackToken,
+  getFeedbackForm,
+  listFeedbackResponses,
+  maybeSendFeedbackEmail,
+  readFeedbackFormGlobalEnabled,
+  resolveToken,
+  saveFeedbackFormFields,
+  setFeedbackFormEnabled,
+  submitFeedbackResponse,
+  writeFeedbackFormGlobalEnabled,
+  type FeedbackAnswerInput,
+  type FeedbackFormField,
+} from './feedback.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -118,8 +132,10 @@ const resolveClientDistPath = () => {
 const clientDistPath = resolveClientDistPath()
 const clientIndexPath = path.join(clientDistPath, 'index.html')
 const anonIndexPath = path.join(clientDistPath, 'anon', 'index.html')
+const feedbackIndexPath = path.join(clientDistPath, 'feedback', 'index.html')
 const hasClientBuild = fs.existsSync(clientIndexPath)
 const hasAnonBuild = fs.existsSync(anonIndexPath)
+const hasFeedbackBuild = fs.existsSync(feedbackIndexPath)
 
 const getAnonymousPagePathFromRequest = (requestPath: string) => {
   if (requestPath === '/anon' || requestPath === '/anon/') {
@@ -381,6 +397,157 @@ app.post('/api/settings/email/test-imap', async (req, res) => {
   } catch (err) {
     res.json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error connecting to Gmail IMAP.' })
   }
+})
+
+// ---------------------------------------------------------------------------
+// Feedback Form settings
+// ---------------------------------------------------------------------------
+
+app.get('/api/settings/feedback', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  res.json({ enabled: readFeedbackFormGlobalEnabled() })
+})
+
+app.patch('/api/settings/feedback', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (typeof req.body?.enabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_feedback_settings_payload' })
+    return
+  }
+  writeFeedbackFormGlobalEnabled(req.body.enabled)
+  res.json({ enabled: readFeedbackFormGlobalEnabled() })
+})
+
+// ---------------------------------------------------------------------------
+// Feedback Form per-org design
+// ---------------------------------------------------------------------------
+
+app.get('/api/feedback/form/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const form = getFeedbackForm(req.params.orgId)
+  res.json({ form })
+})
+
+app.put('/api/feedback/form/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (!Array.isArray(req.body?.fields)) {
+    res.status(400).json({ error: 'invalid_feedback_form_payload' })
+    return
+  }
+  const form = saveFeedbackFormFields(req.params.orgId, req.body.fields as Array<Partial<FeedbackFormField>>)
+  res.json({ form })
+})
+
+app.patch('/api/feedback/form/:orgId/enabled', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (typeof req.body?.isEnabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_feedback_form_enabled_payload' })
+    return
+  }
+  const form = setFeedbackFormEnabled(req.params.orgId, req.body.isEnabled)
+  res.json({ form })
+})
+
+app.post('/api/feedback/form/:orgId/test-token', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const form = getFeedbackForm(req.params.orgId)
+  if (form.fields.length === 0) {
+    res.status(400).json({ error: 'feedback_form_has_no_fields' })
+    return
+  }
+  const { createTestFeedbackToken: _ctft } = { createTestFeedbackToken }
+  const token = createTestFeedbackToken(req.params.orgId)
+  const baseUrl = (serverConfig.allowedOrigins[0] ?? serverConfig.clientUrl).replace(/\/$/, '')
+  res.json({ token, url: `${baseUrl}/feedback/${token}` })
+})
+
+app.get('/api/feedback/responses/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const includeTest = req.query.includeTest === 'true'
+  const responses = listFeedbackResponses(req.params.orgId, includeTest)
+  res.json({ responses })
+})
+
+// ---------------------------------------------------------------------------
+// Public feedback endpoints (no auth)
+// ---------------------------------------------------------------------------
+
+app.get('/api/public/feedback/:token', (req, res) => {
+  const token = req.params.token
+  const resolution = resolveToken(token)
+
+  if (resolution.status !== 'valid' || !resolution.data) {
+    res.status(resolution.status === 'invalid' ? 404 : 410).json({ error: resolution.status })
+    return
+  }
+
+  const { organizationId, ticketId, isTest } = resolution.data
+  const form = getFeedbackForm(organizationId)
+
+  let ticketContext: { id: string; title: string } | null = null
+  if (ticketId) {
+    const db = getDb()
+    const row = db
+      .prepare('SELECT Id AS id, Title AS title FROM Tickets WHERE Id = ? LIMIT 1')
+      .get(ticketId) as { id: string; title: string } | undefined
+    ticketContext = row ?? null
+  }
+
+  res.json({ form, ticketContext, isTest })
+})
+
+app.post('/api/public/feedback/:token', (req, res) => {
+  const token = req.params.token
+
+  if (!Array.isArray(req.body?.answers)) {
+    res.status(400).json({ error: 'invalid_feedback_submission' })
+    return
+  }
+
+  const answers: FeedbackAnswerInput[] = (req.body.answers as unknown[]).flatMap((a) => {
+    if (!a || typeof a !== 'object') return []
+    const entry = a as Record<string, unknown>
+    const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+    const value = typeof entry.value === 'string' ? entry.value.trim() : ''
+    if (!fieldId) return []
+    return [{ fieldId, value }]
+  })
+
+  const result = submitFeedbackResponse(token, answers)
+  if (!result.ok) {
+    res.status(result.error === 'invalid' || result.error === 'expired' || result.error === 'used' ? 410 : 400).json({ error: result.error })
+    return
+  }
+
+  res.json({ ok: true })
 })
 
 app.get('/api/settings/anonymous-pages', async (req, res) => {
@@ -1821,6 +1988,9 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
   }
 
   try {
+    const existingTicket = await getTicketById(ticketId)
+    const wasAlreadyResolved = existingTicket?.resolvedAt != null
+
     const ticket = await updateTicket(
       ticketId,
       {
@@ -1844,6 +2014,11 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
     if (!ticket) {
       res.status(400).json({ error: 'ticket_update_failed' })
       return
+    }
+
+    // Send feedback email on first resolution
+    if (!wasAlreadyResolved && ticket.resolvedAt != null) {
+      void maybeSendFeedbackEmail(ticket, user.organizationId)
     }
 
     res.json({ ticket })
@@ -2043,6 +2218,13 @@ if (hasClientBuild) {
     })
   }
 
+  if (hasFeedbackBuild) {
+    app.get(/^\/feedback\/[0-9a-f]{64}\/?$/i, (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
+      res.sendFile(feedbackIndexPath)
+    })
+  }
+
   app.get(/^(?!\/api(?:\/|$))(?!\/auth(?:\/|$))(?!\/assets(?:\/|$))(?!.*\.[a-z0-9]+$).*/i, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate')
     res.sendFile(clientIndexPath)
@@ -2059,6 +2241,7 @@ const startServer = async () => {
   console.log(`Client build root resolved to: ${clientDistPath}`)
   console.log(`Client index found: ${hasClientBuild}`)
   console.log(`Anonymous index found: ${hasAnonBuild}`)
+  console.log(`Feedback index found: ${hasFeedbackBuild}`)
 
   app.listen(serverConfig.serverPort, () => {
     console.log(`TeamSupportPro server listening on port ${serverConfig.serverPort}`)

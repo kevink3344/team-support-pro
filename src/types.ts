@@ -212,3 +212,44 @@ export interface ThemeConfig {
   light: ThemePalette
   dark: ThemePalette
 }
+
+// ---------------------------------------------------------------------------
+// Feedback Form
+// ---------------------------------------------------------------------------
+
+export type FeedbackFieldType =
+  | 'short_text'
+  | 'long_text'
+  | 'rating'
+  | 'single_choice'
+  | 'multi_choice'
+
+export interface FeedbackFormField {
+  id: string
+  formId: string
+  fieldType: FeedbackFieldType
+  label: string
+  isRequired: boolean
+  sortOrder: number
+  options: string[]
+}
+
+export interface FeedbackForm {
+  id: string
+  organizationId: string
+  isEnabled: boolean
+  fields: FeedbackFormField[]
+}
+
+export interface FeedbackResponseSummary {
+  id: string
+  token: string
+  ticketId: string | null
+  organizationId: string
+  teamId: string | null
+  categoryId: string | null
+  requestorEmail: string | null
+  isTest: boolean
+  submittedAt: string
+  answers: Array<{ fieldId: string; fieldLabel: string; fieldType: string; value: string }>
+}

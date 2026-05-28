@@ -26,3 +26,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# SQLite WAL journal files
+*.sqlite3-shm
+*.sqlite3-wal

@@ -32,6 +32,10 @@ const anonymousPageAliasPlugin = () => ({
         req.url = req.url.replace(/^\/anon\/[^/]+\.html/i, '/anon/index.html')
       }
 
+      if (req.url && /^\/feedback\/[0-9a-f]{64}\/?(?:\?.*)?$/i.test(req.url)) {
+        req.url = '/feedback/index.html'
+      }
+
       next()
     })
   },
@@ -48,6 +52,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         anon: path.resolve(__dirname, 'anon', 'index.html'),
+        feedback: path.resolve(__dirname, 'feedback', 'index.html'),
       },
     },
   },
