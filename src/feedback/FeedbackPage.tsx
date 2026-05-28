@@ -85,11 +85,12 @@ export function FeedbackPage() {
   const token = getFeedbackToken()
 
   useEffect(() => {
-    const themeConfig = defaultThemeConfig
+    const palette = defaultThemeConfig.light
     const root = document.documentElement
-    root.style.setProperty('--accent', themeConfig.accentColor)
-    root.style.setProperty('--accent-fg', themeConfig.accentFg)
-    root.classList.toggle('dark', themeConfig.defaultMode === 'dark')
+    root.style.setProperty('--accent', palette.accent)
+    root.style.setProperty('--color-primary', palette.buttonBg)
+    root.style.setProperty('--button-bg', palette.buttonBg)
+    root.style.setProperty('--button-text', palette.buttonText)
   }, [])
 
   useEffect(() => {
