@@ -235,7 +235,7 @@ export const resolveToken = (
     .prepare(
       'SELECT Token AS token, TicketId AS ticketId, OrganizationId AS organizationId, IsTest AS isTest, ExpiresAt AS expiresAt, UsedAt AS usedAt FROM FeedbackTokens WHERE Token = ? LIMIT 1',
     )
-    .get(token) as (ResolvedToken & { isTest: number }) | undefined
+    .get(token) as (Omit<ResolvedToken, 'isTest'> & { isTest: number }) | undefined
 
   if (!row) return { status: 'invalid' }
   if (row.usedAt) return { status: 'used' }
