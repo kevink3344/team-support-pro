@@ -412,7 +412,10 @@ app.post('/api/settings/email/test-imap', async (req, res) => {
     await client.logout()
     res.json({ ok: true, messages: status.messages, unseen: status.unseen, account: gmailUser })
   } catch (err) {
-    res.json({ ok: false, error: err instanceof Error ? err.message : 'Unknown error connecting to Gmail IMAP.' })
+    const imapErr = err as { message?: string; responseText?: string; responseStatus?: string }
+    const detail = imapErr.responseText ?? imapErr.message ?? 'Unknown error connecting to Gmail IMAP.'
+    const status = imapErr.responseStatus ? `[${imapErr.responseStatus}] ` : ''
+    res.json({ ok: false, error: `${status}${detail}` })
   }
 })
 
