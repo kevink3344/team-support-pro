@@ -5479,7 +5479,7 @@ function App() {
                 onChange={(e) => handleTeamChange(e.target.value)}
               >
                 <option value="">— Select a team —</option>
-                {teams.map((t) => (
+                {teams.filter((t) => t.organizationId === currentUser.organizationId).map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
@@ -7490,6 +7490,8 @@ function App() {
                       ? `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams`
                     : activeView === 'settings' || activeView === 'reports'
                       ? `${users.length} users across ${teams.length} teams`
+                    : activeView === 'ticket-designer'
+                      ? 'Configure custom fields per team'
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
                 </div>
               </div>
@@ -7502,6 +7504,7 @@ function App() {
                   activeView !== 'manage-users' &&
                   activeView !== 'manage-teams' &&
                   activeView !== 'manage-categories' &&
+                  activeView !== 'ticket-designer' &&
                   activeView !== 'new-ticket' && (
                   <>
                     {activeView === 'dashboard' && (
