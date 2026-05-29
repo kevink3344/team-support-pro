@@ -83,6 +83,7 @@ import {
   addTicketWatcher,
   removeTicketWatcher,
   listWatchedTicketIds,
+  upsertCustomFieldValues,
 } from './tickets.js'
 import {
   authenticateLocalAccountPersisted,
@@ -105,6 +106,11 @@ import {
   type FeedbackAnswerInput,
   type FeedbackFormField,
 } from './feedback.js'
+import {
+  getTicketFieldDefinitions,
+  saveTicketFieldDefinitions,
+  type TicketFieldDefinition,
+} from './ticket-designer.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -494,6 +500,34 @@ app.get('/api/feedback/responses/:orgId', (req, res) => {
   const includeTest = req.query.includeTest === 'true'
   const responses = listFeedbackResponses(req.params.orgId, includeTest)
   res.json({ responses })
+})
+
+// ---------------------------------------------------------------------------
+// Ticket Designer — field definitions per team
+// ---------------------------------------------------------------------------
+
+app.get('/api/teams/:teamId/ticket-fields', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  const fields = getTicketFieldDefinitions(req.params.teamId)
+  res.json({ fields })
+})
+
+app.put('/api/teams/:teamId/ticket-fields', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
+    return
+  }
+  if (!Array.isArray(req.body?.fields)) {
+    res.status(400).json({ error: 'invalid_ticket_fields_payload' })
+    return
+  }
+  const fields = saveTicketFieldDefinitions(req.params.teamId, req.body.fields as Array<Partial<TicketFieldDefinition>>)
+  res.json({ fields })
 })
 
 // ---------------------------------------------------------------------------
@@ -1703,6 +1737,15 @@ app.post('/api/tickets', async (req, res) => {
         requestorName: typeof req.body?.requestorName === 'string' ? req.body.requestorName : '',
         requestorEmail: typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : '',
         location: typeof req.body?.location === 'string' ? req.body.location : '',
+        customFields: Array.isArray(req.body?.customFields)
+          ? (req.body.customFields as unknown[]).flatMap((cf) => {
+              if (!cf || typeof cf !== 'object') return []
+              const entry = cf as Record<string, unknown>
+              const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+              if (!fieldId) return []
+              return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
+            })
+          : [],
       },
       user.name,
     )
@@ -2016,12 +2059,28 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
       return
     }
 
+    // Upsert custom field values if provided
+    if (Array.isArray(req.body?.customFields)) {
+      const cfInputs = (req.body.customFields as unknown[]).flatMap((cf) => {
+        if (!cf || typeof cf !== 'object') return []
+        const entry = cf as Record<string, unknown>
+        const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+        if (!fieldId) return []
+        return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
+      })
+      if (cfInputs.length) {
+        upsertCustomFieldValues(ticketId, ticket.teamId, cfInputs)
+      }
+    }
+
     // Send feedback email on first resolution
     if (!wasAlreadyResolved && ticket.resolvedAt != null) {
       void maybeSendFeedbackEmail(ticket, user.organizationId)
     }
 
-    res.json({ ticket })
+    // Re-fetch so response includes updated custom field values
+    const refreshed = await getTicketById(ticketId)
+    res.json({ ticket: refreshed ?? ticket })
   } catch (error) {
     console.error('Updating ticket failed.', error)
     res.status(500).json({ error: 'ticket_update_failed' })

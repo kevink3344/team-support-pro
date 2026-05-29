@@ -6,7 +6,9 @@ import {
 import {
   Bell,
   Building2,
+  Check,
   ChevronDown,
+  ChevronUp,
   Clock3,
   Download,
   Eye,
@@ -88,6 +90,8 @@ import type {
   ThemeMode,
   TicketAttachment,
   Ticket as TicketRecord,
+  TicketCustomFieldValue,
+  TicketFieldDefinition,
   TicketPriority,
   TicketStatus,
   TicketWatcher,
@@ -433,6 +437,7 @@ const navItems: Array<{
 ]
 
 const adminNavItems = [
+  { id: 'ticket-designer' as AppView, label: 'Ticket Designer', icon: Pencil },
   { id: 'reports' as AppView, label: 'Reports', icon: FileUp },
   { id: 'settings' as AppView, label: 'Settings', icon: Settings2 },
 ]
@@ -830,6 +835,19 @@ function App() {
   const [feedbackAddFieldRequired, setFeedbackAddFieldRequired] = useState(false)
   const [feedbackAddFieldOptions, setFeedbackAddFieldOptions] = useState('')
   const [feedbackAddFieldOpen, setFeedbackAddFieldOpen] = useState(false)
+  // Ticket Designer state
+  const [ticketFieldDefs, setTicketFieldDefs] = useState<TicketFieldDefinition[]>([])
+  const [ticketFieldDefsPending, setTicketFieldDefsPending] = useState(false)
+  const [ticketFieldDefsError, setTicketFieldDefsError] = useState('')
+  const [ticketFieldDefsNotice, setTicketFieldDefsNotice] = useState('')
+  const [ticketDesignerTeamId, setTicketDesignerTeamId] = useState('')
+  const [ticketDesignerAddField, setTicketDesignerAddField] = useState(false)
+  const [ticketDesignerNewField, setTicketDesignerNewField] = useState<Partial<TicketFieldDefinition>>({})
+  const [ticketDesignerNewFieldOptions, setTicketDesignerNewFieldOptions] = useState('')
+  const [createTicketFieldDefs, setCreateTicketFieldDefs] = useState<TicketFieldDefinition[]>([])
+  const [newTicketCustomFields, setNewTicketCustomFields] = useState<Record<string, string>>({})
+  const [detailCustomFieldDefs, setDetailCustomFieldDefs] = useState<TicketFieldDefinition[]>([])
+  const [detailCustomFieldValues, setDetailCustomFieldValues] = useState<Record<string, string>>({})
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
@@ -1161,6 +1179,41 @@ function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    if (activeView === 'new-ticket' && currentTeam?.id) {
+      fetch(apiUrl(`/api/teams/${encodeURIComponent(currentTeam.id)}/ticket-fields`), { credentials: 'include' })
+        .then((res) => res.ok ? res.json() : { fields: [] })
+        .then((data) => setCreateTicketFieldDefs(data.fields ?? []))
+        .catch(() => setCreateTicketFieldDefs([]))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, currentTeam?.id])
+
+  useEffect(() => {
+    const ticket = tickets.find((t) => t.id === detailTicketId) ?? null
+    if (!ticket) {
+      setDetailCustomFieldDefs([])
+      setDetailCustomFieldValues({})
+      return
+    }
+    fetch(apiUrl(`/api/teams/${encodeURIComponent(ticket.teamId)}/ticket-fields`), { credentials: 'include' })
+      .then((res) => res.ok ? res.json() : { fields: [] })
+      .then((data: { fields?: TicketFieldDefinition[] }) => {
+        const defs: TicketFieldDefinition[] = data.fields ?? []
+        setDetailCustomFieldDefs(defs)
+        const existing: Record<string, string> = {}
+        for (const cf of ticket.customFields ?? []) existing[cf.fieldId] = cf.value
+        const merged: Record<string, string> = {}
+        for (const def of defs) merged[def.id] = existing[def.id] ?? ''
+        setDetailCustomFieldValues(merged)
+      })
+      .catch(() => {
+        setDetailCustomFieldDefs([])
+        setDetailCustomFieldValues({})
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailTicketId])
 
   const fetchDashboardTrends = async () => {
     const response = await fetch(apiUrl('/api/dashboard/trends'), {
@@ -2465,6 +2518,7 @@ function App() {
           requestorName: detailDraft.requestorName,
           requestorEmail: detailDraft.requestorEmail,
           location: detailDraft.location,
+          customFields: Object.entries(detailCustomFieldValues).map(([fieldId, value]) => ({ fieldId, value })),
         }),
       })
 
@@ -2493,6 +2547,13 @@ function App() {
           ticket.id === payload.ticket?.id ? payload.ticket : ticket,
         ),
       )
+      // Sync editable custom field values from freshly-saved ticket
+      const refreshed = payload.ticket
+      if (refreshed) {
+        const updatedVals: Record<string, string> = {}
+        for (const cf of refreshed.customFields ?? []) updatedVals[cf.fieldId] = cf.value
+        setDetailCustomFieldValues((prev) => ({ ...prev, ...updatedVals }))
+      }
     } catch {
       setDetailSaveError('Ticket changes could not be saved. Confirm the backend server is running.')
     } finally {
@@ -3209,6 +3270,10 @@ function App() {
           requestorName: newTicketForm.requestorName.trim(),
           requestorEmail: newTicketForm.requestorEmail.trim(),
           location: newTicketForm.location.trim(),
+          customFields: createTicketFieldDefs.map((def) => ({
+            fieldId: def.id,
+            value: newTicketCustomFields[def.id] ?? '',
+          })),
         }),
       })
 
@@ -3238,6 +3303,7 @@ function App() {
       }
 
       setTickets((current) => [payload.ticket as TicketRecord, ...current])
+      setNewTicketCustomFields({})
       setNewTicketForm({
         title: '',
         requestorName: '',
@@ -5277,6 +5343,320 @@ function App() {
     )
   }
 
+  const refreshTicketFieldDefs = async (teamId: string) => {
+    if (!teamId) return
+    setTicketFieldDefsError('')
+    try {
+      const res = await fetch(apiUrl(`/api/teams/${encodeURIComponent(teamId)}/ticket-fields`), { credentials: 'include' })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setTicketFieldDefs(data.fields ?? [])
+    } catch {
+      setTicketFieldDefsError('Failed to load ticket fields.')
+    }
+  }
+
+  const saveTicketFieldDefs = async (teamId: string, fields: TicketFieldDefinition[]) => {
+    if (!teamId) return
+    setTicketFieldDefsPending(true)
+    setTicketFieldDefsError('')
+    setTicketFieldDefsNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/teams/${encodeURIComponent(teamId)}/ticket-fields`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setTicketFieldDefs(data.fields ?? [])
+      setTicketFieldDefsNotice('Saved.')
+      setTimeout(() => setTicketFieldDefsNotice(''), 2500)
+    } catch {
+      setTicketFieldDefsError('Failed to save ticket fields.')
+    } finally {
+      setTicketFieldDefsPending(false)
+    }
+  }
+
+  const renderTicketDesignerPage = () => {
+    const FIELD_TYPES: { value: TicketFieldDefinition['fieldType']; label: string }[] = [
+      { value: 'text', label: 'Text' },
+      { value: 'select', label: 'Dropdown' },
+      { value: 'checkbox', label: 'Checkbox' },
+      { value: 'number', label: 'Number' },
+      { value: 'date', label: 'Date' },
+    ]
+
+    const handleTeamChange = (teamId: string) => {
+      setTicketDesignerTeamId(teamId)
+      setTicketFieldDefs([])
+      setTicketFieldDefsError('')
+      setTicketFieldDefsNotice('')
+      setTicketDesignerAddField(false)
+      setTicketDesignerNewField({})
+      setTicketDesignerNewFieldOptions('')
+      refreshTicketFieldDefs(teamId)
+    }
+
+    const handleAddField = () => {
+      if (!ticketDesignerNewField.label?.trim()) return
+      const fieldType = (ticketDesignerNewField.fieldType ?? 'text') as TicketFieldDefinition['fieldType']
+      const optionsList = fieldType === 'select'
+        ? ticketDesignerNewFieldOptions.split('\n').map((o) => o.trim()).filter(Boolean)
+        : []
+      const newField: TicketFieldDefinition = {
+        id: `tfd-new-${Date.now()}`,
+        teamId: ticketDesignerTeamId,
+        fieldType,
+        label: ticketDesignerNewField.label.trim(),
+        isRequired: ticketDesignerNewField.isRequired ?? false,
+        sortOrder: ticketFieldDefs.length,
+        options: optionsList,
+      }
+      const updated = [...ticketFieldDefs, newField]
+      setTicketFieldDefs(updated)
+      setTicketDesignerAddField(false)
+      setTicketDesignerNewField({})
+      setTicketDesignerNewFieldOptions('')
+      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+    }
+
+    const handleDeleteField = (id: string) => {
+      const updated = ticketFieldDefs.filter((f) => f.id !== id)
+      setTicketFieldDefs(updated)
+      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+    }
+
+    const handleMoveField = (id: string, direction: -1 | 1) => {
+      const idx = ticketFieldDefs.findIndex((f) => f.id === id)
+      if (idx < 0) return
+      const newIdx = idx + direction
+      if (newIdx < 0 || newIdx >= ticketFieldDefs.length) return
+      const updated = [...ticketFieldDefs]
+      const temp = updated[idx]
+      updated[idx] = updated[newIdx]
+      updated[newIdx] = temp
+      setTicketFieldDefs(updated)
+      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+    }
+
+    const handleToggleRequired = (id: string) => {
+      const updated = ticketFieldDefs.map((f) => f.id === id ? { ...f, isRequired: !f.isRequired } : f)
+      setTicketFieldDefs(updated)
+      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+    }
+
+    return (
+      <div className="space-y-4">
+        <section className="surface p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <div className="text-xl font-semibold">Ticket Designer</div>
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Define custom fields that appear on the Create Ticket form for a specific team.
+              </div>
+            </div>
+          </div>
+
+          {ticketFieldDefsError && (
+            <div className="mb-3 rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              {ticketFieldDefsError}
+            </div>
+          )}
+          {ticketFieldDefsNotice && (
+            <div className="mb-3 rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+              {ticketFieldDefsNotice}
+            </div>
+          )}
+
+          <div className="mb-5 max-w-xs">
+            <label className="space-y-1">
+              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
+              <select
+                className="input-control"
+                value={ticketDesignerTeamId}
+                onChange={(e) => handleTeamChange(e.target.value)}
+              >
+                <option value="">— Select a team —</option>
+                {teams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          {ticketDesignerTeamId && (
+            <>
+              {ticketFieldDefs.length === 0 && !ticketDesignerAddField && (
+                <div className="mb-4 rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                  No custom fields defined for this team. Add one below.
+                </div>
+              )}
+
+              {ticketFieldDefs.length > 0 && (
+                <div className="mb-4 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[color:var(--border)] text-left">
+                        <th className="pb-2 pr-4 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Label</th>
+                        <th className="pb-2 pr-4 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Type</th>
+                        <th className="pb-2 pr-4 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Options</th>
+                        <th className="pb-2 pr-4 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Required</th>
+                        <th className="pb-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ticketFieldDefs.map((field, idx) => (
+                        <tr key={field.id} className="border-b border-[color:var(--border)] last:border-0">
+                          <td className="py-2 pr-4 font-medium">{field.label}</td>
+                          <td className="py-2 pr-4 capitalize text-[color:var(--text-muted)]">{field.fieldType}</td>
+                          <td className="py-2 pr-4 text-[color:var(--text-muted)]">
+                            {field.options.length > 0 ? field.options.join(', ') : '—'}
+                          </td>
+                          <td className="py-2 pr-4">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleRequired(field.id)}
+                              className={`inline-flex h-5 w-5 items-center justify-center rounded-[2px] border text-xs ${
+                                field.isRequired
+                                  ? 'border-[color:var(--accent)] bg-[color:var(--accent)] text-white'
+                                  : 'border-[color:var(--border)]'
+                              }`}
+                              title={field.isRequired ? 'Required — click to make optional' : 'Optional — click to make required'}
+                            >
+                              {field.isRequired && <Check className="h-3 w-3" />}
+                            </button>
+                          </td>
+                          <td className="py-2">
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                disabled={idx === 0}
+                                onClick={() => handleMoveField(field.id, -1)}
+                                className="rounded p-1 hover:bg-[color:var(--surface-hover)] disabled:opacity-30"
+                                title="Move up"
+                              >
+                                <ChevronUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={idx === ticketFieldDefs.length - 1}
+                                onClick={() => handleMoveField(field.id, 1)}
+                                className="rounded p-1 hover:bg-[color:var(--surface-hover)] disabled:opacity-30"
+                                title="Move down"
+                              >
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteField(field.id)}
+                                className="rounded p-1 text-rose-500 hover:bg-rose-50"
+                                title="Delete field"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {ticketDesignerAddField ? (
+                <div className="rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] p-4 space-y-3">
+                  <div className="text-sm font-semibold">New Field</div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="space-y-1">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Label</div>
+                      <input
+                        className="input-control"
+                        placeholder="Field label"
+                        value={ticketDesignerNewField.label ?? ''}
+                        onChange={(e) => setTicketDesignerNewField((p) => ({ ...p, label: e.target.value }))}
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Type</div>
+                      <select
+                        className="input-control"
+                        value={ticketDesignerNewField.fieldType ?? 'text'}
+                        onChange={(e) =>
+                          setTicketDesignerNewField((p) => ({
+                            ...p,
+                            fieldType: e.target.value as TicketFieldDefinition['fieldType'],
+                          }))
+                        }
+                      >
+                        {FIELD_TYPES.map((ft) => (
+                          <option key={ft.value} value={ft.value}>{ft.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  {(ticketDesignerNewField.fieldType ?? 'text') === 'select' && (
+                    <label className="space-y-1">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        Options (one per line)
+                      </div>
+                      <textarea
+                        className="input-control min-h-[80px]"
+                        placeholder={"Virtual\nIn-Person"}
+                        value={ticketDesignerNewFieldOptions}
+                        onChange={(e) => setTicketDesignerNewFieldOptions(e.target.value)}
+                      />
+                    </label>
+                  )}
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={ticketDesignerNewField.isRequired ?? false}
+                      onChange={(e) => setTicketDesignerNewField((p) => ({ ...p, isRequired: e.target.checked }))}
+                    />
+                    Required field
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary text-sm"
+                      disabled={!ticketDesignerNewField.label?.trim() || ticketFieldDefsPending}
+                      onClick={handleAddField}
+                    >
+                      Add Field
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-sm"
+                      onClick={() => {
+                        setTicketDesignerAddField(false)
+                        setTicketDesignerNewField({})
+                        setTicketDesignerNewFieldOptions('')
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary flex items-center gap-1 text-sm"
+                  onClick={() => setTicketDesignerAddField(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Field
+                </button>
+              )}
+            </>
+          )}
+        </section>
+      </div>
+    )
+  }
+
   const renderSettingsDrawerContent = (section: ManagementDrawerSection) => {
     switch (section) {
       case 'manageOrganizations':
@@ -7225,6 +7605,8 @@ function App() {
 
             {activeView === 'manage-categories' && currentUser.role === 'Admin' && renderManageCategoriesPage()}
 
+            {activeView === 'ticket-designer' && currentUser.role === 'Admin' && renderTicketDesignerPage()}
+
             {activeView === 'new-ticket' && (
               <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
                 <div className="surface p-4">
@@ -7365,6 +7747,47 @@ function App() {
                         }
                       />
                     </label>
+
+                    {createTicketFieldDefs.map((def) => (
+                      <label key={def.id} className="field">
+                        <span className="field-label">
+                          {def.label}
+                          {def.isRequired && <span className="ml-1 text-rose-500">*</span>}
+                        </span>
+                        {def.fieldType === 'select' ? (
+                          <select
+                            className="input-control"
+                            value={newTicketCustomFields[def.id] ?? ''}
+                            onChange={(e) =>
+                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.value }))
+                            }
+                          >
+                            <option value="">— Select —</option>
+                            {def.options.map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        ) : def.fieldType === 'checkbox' ? (
+                          <input
+                            type="checkbox"
+                            className="mt-1 h-4 w-4"
+                            checked={newTicketCustomFields[def.id] === 'true'}
+                            onChange={(e) =>
+                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.checked ? 'true' : 'false' }))
+                            }
+                          />
+                        ) : (
+                          <input
+                            type={def.fieldType === 'number' ? 'number' : def.fieldType === 'date' ? 'date' : 'text'}
+                            className="input-control"
+                            value={newTicketCustomFields[def.id] ?? ''}
+                            onChange={(e) =>
+                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.value }))
+                            }
+                          />
+                        )}
+                      </label>
+                    ))}
                   </div>
 
                   <div className="mt-4 flex items-center justify-end gap-3">
@@ -7724,6 +8147,56 @@ function App() {
                           />
                         </label>
                       </div>
+
+                      {detailCustomFieldDefs.length > 0 && (
+                        <div className="border-t border-[color:var(--border)] pt-4">
+                          <div className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                            Additional Fields
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {detailCustomFieldDefs.map((def) => (
+                              <label key={def.id} className="field">
+                                <span className="field-label">
+                                  {def.label}
+                                  {def.isRequired && <span className="ml-1 text-rose-500">*</span>}
+                                </span>
+                                {def.fieldType === 'select' ? (
+                                  <select
+                                    className="input-control"
+                                    value={detailCustomFieldValues[def.id] ?? ''}
+                                    onChange={(e) =>
+                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.value }))
+                                    }
+                                  >
+                                    <option value="">— Select —</option>
+                                    {def.options.map((opt) => (
+                                      <option key={opt} value={opt}>{opt}</option>
+                                    ))}
+                                  </select>
+                                ) : def.fieldType === 'checkbox' ? (
+                                  <input
+                                    type="checkbox"
+                                    className="mt-1 h-4 w-4"
+                                    checked={detailCustomFieldValues[def.id] === 'true'}
+                                    onChange={(e) =>
+                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.checked ? 'true' : 'false' }))
+                                    }
+                                  />
+                                ) : (
+                                  <input
+                                    type={def.fieldType === 'number' ? 'number' : def.fieldType === 'date' ? 'date' : 'text'}
+                                    className="input-control"
+                                    value={detailCustomFieldValues[def.id] ?? ''}
+                                    onChange={(e) =>
+                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.value }))
+                                    }
+                                  />
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Watchers */}
                       {(() => {

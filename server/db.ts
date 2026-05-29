@@ -262,6 +262,30 @@ const initializeSchema = (database: Database.Database) => {
       Value TEXT NOT NULL,
       FOREIGN KEY (ResponseId) REFERENCES FeedbackResponses(Id)
     );
+
+    CREATE TABLE IF NOT EXISTS TicketFieldDefinitions (
+      Id TEXT PRIMARY KEY,
+      TeamId TEXT NOT NULL,
+      FieldType TEXT NOT NULL,
+      Label TEXT NOT NULL,
+      IsRequired INTEGER NOT NULL DEFAULT 0,
+      SortOrder INTEGER NOT NULL DEFAULT 0,
+      OptionsJson TEXT NOT NULL DEFAULT '[]',
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (TeamId) REFERENCES Teams(Id)
+    );
+
+    CREATE TABLE IF NOT EXISTS TicketCustomFieldValues (
+      Id TEXT PRIMARY KEY,
+      TicketId TEXT NOT NULL,
+      FieldId TEXT NOT NULL,
+      FieldLabel TEXT NOT NULL,
+      FieldType TEXT NOT NULL,
+      Value TEXT NOT NULL,
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
+    );
   `)
 
   migrateLegacySchema(database)

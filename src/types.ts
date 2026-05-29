@@ -24,11 +24,33 @@ export type AppView =
   | 'manage-users'
   | 'manage-teams'
   | 'manage-categories'
+  | 'ticket-designer'
   | 'reports'
   | 'settings'
 
 export type ListViewMode = 'table' | 'cards'
 export type ThemeMode = 'light' | 'dark'
+
+export type CustomFieldType = 'text' | 'select' | 'checkbox' | 'number' | 'date'
+
+export interface TicketFieldDefinition {
+  id: string
+  teamId: TeamId
+  fieldType: CustomFieldType
+  label: string
+  isRequired: boolean
+  sortOrder: number
+  options: string[]
+}
+
+export interface TicketCustomFieldValue {
+  id: string
+  ticketId: TicketId
+  fieldId: string
+  fieldLabel: string
+  fieldType: CustomFieldType
+  value: string
+}
 
 export interface Organization {
   id: OrganizationId
@@ -129,6 +151,7 @@ export interface Ticket {
   updatedAt: string
   resolvedAt?: string | null
   activity: ActivityEntry[]
+  customFields?: TicketCustomFieldValue[]
 }
 
 export interface TrendPoint {

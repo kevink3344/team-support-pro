@@ -5,6 +5,15 @@ import { getDb } from './db.js'
 const ticketStatusValues = new Set(['Open', 'In Progress', 'Pending', 'Resolved', 'Closed'])
 const ticketPriorityValues = new Set(['Low', 'Medium', 'High', 'Critical'])
 
+export interface TicketCustomFieldValue {
+  id: string
+  ticketId: string
+  fieldId: string
+  fieldLabel: string
+  fieldType: string
+  value: string
+}
+
 export interface TicketRecord {
   id: string
   title: string
@@ -23,6 +32,12 @@ export interface TicketRecord {
   updatedAt: string
   resolvedAt: string | null
   activity: TicketActivityRecord[]
+  customFields: TicketCustomFieldValue[]
+}
+
+export interface CreateTicketCustomFieldInput {
+  fieldId: string
+  value: string
 }
 
 export interface CreateTicketInput {
@@ -36,6 +51,7 @@ export interface CreateTicketInput {
   requestorName: string
   requestorEmail: string
   location: string
+  customFields?: CreateTicketCustomFieldInput[]
 }
 
 export interface TicketActivityRecord {
@@ -67,7 +83,7 @@ const mapActivityRecord = (record: Record<string, unknown>): TicketActivityRecor
   at: new Date(String(record.activityAt)).toISOString(),
 })
 
-const mapTicketRecord = (record: Record<string, unknown>): Omit<TicketRecord, 'activity'> => ({
+const mapTicketRecord = (record: Record<string, unknown>): Omit<TicketRecord, 'activity' | 'customFields'> => ({
   id: String(record.id),
   title: String(record.title),
   description: String(record.description),
@@ -87,8 +103,9 @@ const mapTicketRecord = (record: Record<string, unknown>): Omit<TicketRecord, 'a
 })
 
 const groupTicketsWithActivity = (
-  tickets: Array<Omit<TicketRecord, 'activity'>>,
+  tickets: Array<Omit<TicketRecord, 'activity' | 'customFields'>>,
   activity: TicketActivityRecord[],
+  customFieldsByTicket: Map<string, TicketCustomFieldValue[]>,
 ): TicketRecord[] => {
   const activityByTicket = new Map<string, TicketActivityRecord[]>()
   activity.forEach((entry) => {
@@ -101,6 +118,7 @@ const groupTicketsWithActivity = (
     activity: (activityByTicket.get(ticket.id) ?? []).sort(
       (left, right) => new Date(left.at).getTime() - new Date(right.at).getTime(),
     ),
+    customFields: customFieldsByTicket.get(ticket.id) ?? [],
   }))
 }
 
@@ -138,7 +156,27 @@ export const listTickets = async (teamId?: string): Promise<TicketRecord[]> => {
   const tickets = ticketRows.map(mapTicketRecord)
   const allActivity = await listTicketActivity()
   const ticketIds = new Set(tickets.map((t) => t.id))
-  return groupTicketsWithActivity(tickets, allActivity.filter((a) => ticketIds.has(a.ticketId)))
+
+  type CFRow = { id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }
+  const cfRows = db
+    .prepare('SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId IN (SELECT Id FROM Tickets' + (teamId ? ' WHERE TeamId = ?' : '') + ') ORDER BY rowid ASC')
+    .all(...(teamId ? [teamId] : [])) as CFRow[]
+  const customFieldsByTicket = new Map<string, TicketCustomFieldValue[]>()
+  for (const row of cfRows) {
+    const current = customFieldsByTicket.get(row.ticketId) ?? []
+    current.push(row)
+    customFieldsByTicket.set(row.ticketId, current)
+  }
+
+  return groupTicketsWithActivity(tickets, allActivity.filter((a) => ticketIds.has(a.ticketId)), customFieldsByTicket)
+}
+
+const getCustomFieldValues = (db: import('better-sqlite3').Database, ticketId: string): TicketCustomFieldValue[] => {
+  type CFRow = { id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }
+  const rows = db
+    .prepare('SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId = ? ORDER BY rowid ASC')
+    .all(ticketId) as CFRow[]
+  return rows
 }
 
 export const getTicketById = async (ticketId: string): Promise<TicketRecord | null> => {
@@ -147,7 +185,7 @@ export const getTicketById = async (ticketId: string): Promise<TicketRecord | nu
   if (!row) return null
   const ticket = mapTicketRecord(row)
   const activityRows = db.prepare('SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity WHERE TicketId = ? ORDER BY ActivityAt ASC').all(ticketId) as Record<string, unknown>[]
-  return { ...ticket, activity: activityRows.map(mapActivityRecord) }
+  return { ...ticket, activity: activityRows.map(mapActivityRecord), customFields: getCustomFieldValues(db, ticketId) }
 }
 
 export const createTicketComment = async (input: { ticketId: string; actor: string; message: string }): Promise<TicketActivityRecord> => {
@@ -223,9 +261,35 @@ export const createTicket = async (input: CreateTicketInput, actor: string): Pro
   let ticketId = input.id?.trim() || generateTicketId()
   while (await getTicketById(ticketId)) ticketId = generateTicketId()
   const createdAt = new Date().toISOString()
+
+  // Validate and enrich custom fields using field definitions
+  type FieldDefRow = { id: string; fieldType: string; label: string; isRequired: number }
+  const fieldDefs = db
+    .prepare('SELECT Id AS id, FieldType AS fieldType, Label AS label, IsRequired AS isRequired FROM TicketFieldDefinitions WHERE TeamId = ?')
+    .all(input.teamId) as FieldDefRow[]
+  const fieldDefMap = new Map(fieldDefs.map((f) => [f.id, f]))
+
+  const customFieldInserts: Array<{ id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }> = []
+  if (Array.isArray(input.customFields)) {
+    for (const cf of input.customFields) {
+      const def = fieldDefMap.get(cf.fieldId)
+      if (!def) continue
+      customFieldInserts.push({
+        id: `tcfv-${crypto.randomUUID()}`,
+        ticketId,
+        fieldId: def.id,
+        fieldLabel: def.label,
+        fieldType: def.fieldType,
+        value: String(cf.value ?? ''),
+      })
+    }
+  }
+
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt) VALUES (?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?, 'New in queue', ?, ?)`).run(ticketId, input.title.trim(), input.description.trim(), input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', createdAt, createdAt)
     db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(`activity-${crypto.randomUUID()}`, ticketId, actor, 'Ticket created from TeamSupportPro.', createdAt)
+    const insCF = db.prepare('INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value) VALUES (?, ?, ?, ?, ?, ?)')
+    for (const cf of customFieldInserts) insCF.run(cf.id, cf.ticketId, cf.fieldId, cf.fieldLabel, cf.fieldType, cf.value)
   })
   tx()
   return getTicketById(ticketId)
@@ -238,6 +302,7 @@ export const deleteTicket = async (ticketId: string): Promise<boolean> => {
     db.prepare('DELETE FROM TicketWatchers WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM TicketAttachments WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM TicketActivity WHERE TicketId = ?').run(ticketId)
+    db.prepare('DELETE FROM TicketCustomFieldValues WHERE TicketId = ?').run(ticketId)
     db.prepare('DELETE FROM Tickets WHERE Id = ?').run(ticketId)
   })
   tx()
@@ -289,4 +354,30 @@ export const listWatchedTicketIds = (userId: string): string[] => {
       ticketId: string
     }[]
   ).map((r) => r.ticketId)
+}
+
+export const upsertCustomFieldValues = (
+  ticketId: string,
+  teamId: string,
+  fields: { fieldId: string; value: string }[],
+): void => {
+  if (!fields.length) return
+  const db = getDb()
+  const defs = db
+    .prepare('SELECT Id, Label, FieldType FROM TicketFieldDefinitions WHERE TeamId = ?')
+    .all(teamId) as { Id: string; Label: string; FieldType: string }[]
+  const defMap = new Map(defs.map((d) => [d.Id, d]))
+  const validFields = fields.filter((f) => defMap.has(f.fieldId))
+  if (!validFields.length) return
+  const tx = db.transaction(() => {
+    for (const f of validFields) {
+      const def = defMap.get(f.fieldId)!
+      db.prepare('DELETE FROM TicketCustomFieldValues WHERE TicketId = ? AND FieldId = ?').run(ticketId, f.fieldId)
+      db.prepare(
+        `INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value, CreatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).run(`tcfv-${crypto.randomUUID()}`, ticketId, f.fieldId, def.Label, def.FieldType, f.value)
+    }
+  })
+  tx()
 }
