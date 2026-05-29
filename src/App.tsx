@@ -96,6 +96,8 @@ import type {
   TicketWatcher,
   TrendPoint,
   User,
+  WebhookConfig,
+  WebhookEvent,
 } from './types'
 import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
@@ -161,6 +163,7 @@ type SettingsAccordionSection =
   | 'categories'
   | 'email'
   | 'feedbackForm'
+  | 'webhooks'
 
 type ManagementDrawerSection =
   | 'manageOrganizations'
@@ -196,6 +199,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'categories',
   'email',
   'feedbackForm',
+  'webhooks',
 ]
 
 const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefined) => {
@@ -847,6 +851,20 @@ function App() {
   const [newTicketCustomFields, setNewTicketCustomFields] = useState<Record<string, string>>({})
   const [detailCustomFieldDefs, setDetailCustomFieldDefs] = useState<TicketFieldDefinition[]>([])
   const [detailCustomFieldValues, setDetailCustomFieldValues] = useState<Record<string, string>>({})
+  // Webhook state
+  const [webhooks, setWebhooks] = useState<WebhookConfig[]>([])
+  const [webhooksPending, setWebhooksPending] = useState(false)
+  const [webhooksError, setWebhooksError] = useState('')
+  const [webhooksNotice, setWebhooksNotice] = useState('')
+  const [webhookAddOpen, setWebhookAddOpen] = useState(false)
+  const [webhookAddUrl, setWebhookAddUrl] = useState('')
+  const [webhookAddSecret, setWebhookAddSecret] = useState('')
+  const [webhookAddEvents, setWebhookAddEvents] = useState<WebhookEvent[]>(['ticket.created', 'ticket.updated', 'ticket.assigned', 'ticket.resolved', 'ticket.closed'])
+  const [webhookEditId, setWebhookEditId] = useState<string | null>(null)
+  const [webhookEditUrl, setWebhookEditUrl] = useState('')
+  const [webhookEditSecret, setWebhookEditSecret] = useState('')
+  const [webhookEditEvents, setWebhookEditEvents] = useState<WebhookEvent[]>([])
+  const [webhookTestingId, setWebhookTestingId] = useState<string | null>(null)
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
@@ -859,6 +877,7 @@ function App() {
     categories: false,
     email: false,
     feedbackForm: false,
+    webhooks: false,
   })
   const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
     normalizeSettingsAccordionOrder(
@@ -1373,6 +1392,10 @@ function App() {
 
     if (authSession?.organizationId) {
       void loadFeedbackSettings(authSession.organizationId)
+    }
+
+    if (authSession?.role === 'Admin') {
+      void refreshWebhooks()
     }
 
     return () => {
@@ -3235,6 +3258,148 @@ function App() {
       // non-fatal
     } finally {
       setFeedbackResponsesLoading(false)
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Webhook helpers
+  // ---------------------------------------------------------------------------
+
+  const ALL_WEBHOOK_EVENTS: WebhookEvent[] = [
+    'ticket.created',
+    'ticket.updated',
+    'ticket.assigned',
+    'ticket.resolved',
+    'ticket.closed',
+    'feedback.submitted',
+  ]
+
+  const refreshWebhooks = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/settings/webhooks'), { credentials: 'include' })
+      if (res.ok) {
+        const d = (await res.json()) as { webhooks?: WebhookConfig[] }
+        if (Array.isArray(d.webhooks)) setWebhooks(d.webhooks)
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const saveWebhook = async () => {
+    const url = webhookAddUrl.trim()
+    if (!url) return
+    setWebhooksPending(true)
+    setWebhooksError('')
+    setWebhooksNotice('')
+    try {
+      const res = await fetch(apiUrl('/api/settings/webhooks'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ url, secret: webhookAddSecret.trim(), events: webhookAddEvents }),
+      })
+      if (!res.ok) {
+        setWebhooksError('Could not save webhook. Check the URL and events.')
+        return
+      }
+      const d = (await res.json()) as { webhook?: WebhookConfig }
+      if (d.webhook) setWebhooks((prev) => [...prev, d.webhook!])
+      setWebhookAddOpen(false)
+      setWebhookAddUrl('')
+      setWebhookAddSecret('')
+      setWebhookAddEvents(['ticket.created', 'ticket.updated', 'ticket.assigned', 'ticket.resolved', 'ticket.closed'])
+      setWebhooksNotice('Webhook saved.')
+    } catch {
+      setWebhooksError('Request failed. Confirm the server is running.')
+    } finally {
+      setWebhooksPending(false)
+    }
+  }
+
+  const saveWebhookEdit = async (id: string) => {
+    if (!webhookEditUrl.trim()) return
+    setWebhooksPending(true)
+    setWebhooksError('')
+    setWebhooksNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/webhooks/${id}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ url: webhookEditUrl.trim(), secret: webhookEditSecret, events: webhookEditEvents }),
+      })
+      if (!res.ok) {
+        setWebhooksError('Could not update webhook.')
+        return
+      }
+      const d = (await res.json()) as { webhook?: WebhookConfig }
+      if (d.webhook) {
+        setWebhooks((prev) => prev.map((w) => (w.id === id ? d.webhook! : w)))
+      }
+      setWebhookEditId(null)
+      setWebhooksNotice('Webhook updated.')
+    } catch {
+      setWebhooksError('Request failed.')
+    } finally {
+      setWebhooksPending(false)
+    }
+  }
+
+  const toggleWebhookEnabled = async (wh: WebhookConfig) => {
+    try {
+      const res = await fetch(apiUrl(`/api/settings/webhooks/${wh.id}`), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ isEnabled: !wh.isEnabled }),
+      })
+      if (res.ok) {
+        const d = (await res.json()) as { webhook?: WebhookConfig }
+        if (d.webhook) setWebhooks((prev) => prev.map((w) => (w.id === wh.id ? d.webhook! : w)))
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const deleteWebhook = async (id: string) => {
+    setWebhooksError('')
+    setWebhooksNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/webhooks/${id}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.ok) {
+        setWebhooks((prev) => prev.filter((w) => w.id !== id))
+        setWebhooksNotice('Webhook deleted.')
+      } else {
+        setWebhooksError('Could not delete webhook.')
+      }
+    } catch {
+      setWebhooksError('Request failed.')
+    }
+  }
+
+  const testWebhook = async (id: string) => {
+    setWebhookTestingId(id)
+    setWebhooksNotice('')
+    setWebhooksError('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/webhooks/${id}/test`), {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (res.ok) {
+        setWebhooksNotice('Test ping sent.')
+      } else {
+        setWebhooksError('Test ping failed.')
+      }
+    } catch {
+      setWebhooksError('Request failed.')
+    } finally {
+      setWebhookTestingId(null)
     }
   }
 
@@ -6648,6 +6813,203 @@ function App() {
             </div>
           )
         }
+        case 'webhooks': {
+          const eventLabels: Record<WebhookEvent, string> = {
+            'ticket.created': 'Ticket Created',
+            'ticket.updated': 'Ticket Updated',
+            'ticket.assigned': 'Ticket Assigned',
+            'ticket.resolved': 'Ticket Resolved',
+            'ticket.closed': 'Ticket Closed',
+            'feedback.submitted': 'Feedback Submitted',
+          }
+          return (
+            <div className="space-y-4">
+              {webhooksError && (
+                <p className="text-sm text-red-600">{webhooksError}</p>
+              )}
+              {webhooksNotice && (
+                <p className="text-sm text-green-700">{webhooksNotice}</p>
+              )}
+
+              {/* Existing webhooks */}
+              {webhooks.length > 0 && (
+                <div className="space-y-3">
+                  {webhooks.map((wh) => (
+                    <div key={wh.id} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                      {webhookEditId === wh.id ? (
+                        <div className="space-y-2">
+                          <input
+                            type="url"
+                            className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                            placeholder="https://example.com/webhook"
+                            value={webhookEditUrl}
+                            onChange={(e) => setWebhookEditUrl(e.target.value)}
+                          />
+                          <input
+                            type="text"
+                            className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                            placeholder="Secret (optional)"
+                            value={webhookEditSecret}
+                            onChange={(e) => setWebhookEditSecret(e.target.value)}
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            {ALL_WEBHOOK_EVENTS.map((ev) => (
+                              <label key={ev} className="flex items-center gap-1 text-xs cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={webhookEditEvents.includes(ev)}
+                                  onChange={(e) =>
+                                    setWebhookEditEvents((prev) =>
+                                      e.target.checked ? [...prev, ev] : prev.filter((x) => x !== ev),
+                                    )
+                                  }
+                                />
+                                {eventLabels[ev]}
+                              </label>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              disabled={webhooksPending}
+                              onClick={() => void saveWebhookEdit(wh.id)}
+                              className="px-3 py-1 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setWebhookEditId(null)}
+                              className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-mono truncate flex-1">{wh.url}</span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              {/* Enabled toggle */}
+                              <button
+                                type="button"
+                                title={wh.isEnabled ? 'Disable' : 'Enable'}
+                                onClick={() => void toggleWebhookEnabled(wh)}
+                                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${wh.isEnabled ? 'bg-blue-600' : 'bg-gray-300'}`}
+                              >
+                                <span
+                                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${wh.isEnabled ? 'translate-x-4' : 'translate-x-1'}`}
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                disabled={webhookTestingId === wh.id}
+                                onClick={() => void testWebhook(wh.id)}
+                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                {webhookTestingId === wh.id ? 'Sending…' : 'Test'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setWebhookEditId(wh.id)
+                                  setWebhookEditUrl(wh.url)
+                                  setWebhookEditSecret(wh.secret)
+                                  setWebhookEditEvents([...wh.events])
+                                }}
+                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void deleteWebhook(wh.id)}
+                                className="px-2 py-0.5 text-xs rounded border border-red-300 text-red-600 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {wh.events.map((ev) => (
+                              <span key={ev} className="inline-block px-1.5 py-0.5 bg-gray-100 rounded text-xs text-gray-600">
+                                {eventLabels[ev]}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add webhook form */}
+              {webhookAddOpen ? (
+                <div className="border border-gray-200 rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium text-gray-700">Add Webhook</p>
+                  <input
+                    type="url"
+                    className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                    placeholder="https://example.com/webhook"
+                    value={webhookAddUrl}
+                    onChange={(e) => setWebhookAddUrl(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    className="w-full rounded border border-gray-300 px-3 py-1.5 text-sm"
+                    placeholder="Secret for HMAC signing (optional)"
+                    value={webhookAddSecret}
+                    onChange={(e) => setWebhookAddSecret(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500 font-medium">Events to subscribe:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {ALL_WEBHOOK_EVENTS.map((ev) => (
+                      <label key={ev} className="flex items-center gap-1 text-xs cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={webhookAddEvents.includes(ev)}
+                          onChange={(e) =>
+                            setWebhookAddEvents((prev) =>
+                              e.target.checked ? [...prev, ev] : prev.filter((x) => x !== ev),
+                            )
+                          }
+                        />
+                        {eventLabels[ev]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={webhooksPending || !webhookAddUrl.trim() || webhookAddEvents.length === 0}
+                      onClick={() => void saveWebhook()}
+                      className="px-3 py-1 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      Save Webhook
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setWebhookAddOpen(false); setWebhookAddUrl(''); setWebhookAddSecret('') }}
+                      className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setWebhookAddOpen(true)}
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm rounded border border-dashed border-gray-400 text-gray-600 hover:bg-gray-50"
+                >
+                  + Add Webhook
+                </button>
+              )}
+            </div>
+          )
+        }
       }
     }
 
@@ -6694,6 +7056,10 @@ function App() {
       feedbackForm: {
         title: 'Feedback Form',
         description: 'Design a post-resolution survey and collect submitter feedback.',
+      },
+      webhooks: {
+        title: 'Webhooks',
+        description: 'Send real-time event notifications to external URLs when tickets are created, updated, or resolved.',
       },
     }
 

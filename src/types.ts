@@ -52,6 +52,25 @@ export interface TicketCustomFieldValue {
   value: string
 }
 
+export type WebhookEvent =
+  | 'ticket.created'
+  | 'ticket.updated'
+  | 'ticket.assigned'
+  | 'ticket.resolved'
+  | 'ticket.closed'
+  | 'feedback.submitted'
+
+export interface WebhookConfig {
+  id: string
+  organizationId: string
+  url: string
+  secret: string
+  events: WebhookEvent[]
+  isEnabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Organization {
   id: OrganizationId
   name: string

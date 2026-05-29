@@ -111,6 +111,17 @@ import {
   saveTicketFieldDefinitions,
   type TicketFieldDefinition,
 } from './ticket-designer.js'
+import {
+  listWebhookConfigs,
+  createWebhookConfig,
+  updateWebhookConfig,
+  deleteWebhookConfig,
+  dispatchWebhookEvent,
+  WEBHOOK_EVENTS,
+  type CreateWebhookInput,
+  type UpdateWebhookInput,
+  type WebhookEvent,
+} from './webhooks.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -430,6 +441,101 @@ app.patch('/api/settings/feedback', (req, res) => {
   }
   writeFeedbackFormGlobalEnabled(req.body.enabled)
   res.json({ enabled: readFeedbackFormGlobalEnabled() })
+})
+
+// ---------------------------------------------------------------------------
+// Webhook settings (admin)
+// ---------------------------------------------------------------------------
+
+app.get('/api/settings/webhooks', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const configs = listWebhookConfigs(user.organizationId)
+  res.json({ webhooks: configs })
+})
+
+app.post('/api/settings/webhooks', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
+  const events: WebhookEvent[] = Array.isArray(req.body?.events)
+    ? (req.body.events as unknown[]).filter((e): e is WebhookEvent =>
+        typeof e === 'string' && (WEBHOOK_EVENTS as string[]).includes(e),
+      )
+    : []
+  if (!url || !events.length) {
+    res.status(400).json({ error: 'invalid_webhook_payload' })
+    return
+  }
+  const input: CreateWebhookInput = {
+    url,
+    secret: typeof req.body?.secret === 'string' ? req.body.secret : undefined,
+    events,
+    isEnabled: req.body?.isEnabled !== false,
+  }
+  const webhook = createWebhookConfig(user.organizationId, input)
+  if (!webhook) {
+    res.status(400).json({ error: 'webhook_create_failed' })
+    return
+  }
+  res.status(201).json({ webhook })
+})
+
+app.patch('/api/settings/webhooks/:id', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const input: UpdateWebhookInput = {}
+  if (typeof req.body?.url === 'string') input.url = req.body.url.trim()
+  if (typeof req.body?.secret === 'string') input.secret = req.body.secret
+  if (Array.isArray(req.body?.events)) {
+    input.events = (req.body.events as unknown[]).filter((e): e is WebhookEvent =>
+      typeof e === 'string' && (WEBHOOK_EVENTS as string[]).includes(e),
+    )
+  }
+  if (typeof req.body?.isEnabled === 'boolean') input.isEnabled = req.body.isEnabled
+  const webhook = updateWebhookConfig(req.params.id, input)
+  if (!webhook) {
+    res.status(404).json({ error: 'webhook_not_found' })
+    return
+  }
+  res.json({ webhook })
+})
+
+app.delete('/api/settings/webhooks/:id', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const deleted = deleteWebhookConfig(req.params.id)
+  if (!deleted) {
+    res.status(404).json({ error: 'webhook_not_found' })
+    return
+  }
+  res.json({ success: true })
+})
+
+app.post('/api/settings/webhooks/:id/test', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  dispatchWebhookEvent(user.organizationId, 'ticket.created', {
+    test: true,
+    message: 'This is a test ping from Team Support Pro.',
+    triggeredBy: user.name,
+  })
+  res.json({ success: true })
 })
 
 // ---------------------------------------------------------------------------
@@ -1755,6 +1861,11 @@ app.post('/api/tickets', async (req, res) => {
       return
     }
 
+    dispatchWebhookEvent(user.organizationId, 'ticket.created', { ticket })
+    if (ticket.assignedToId) {
+      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket })
+    }
+
     res.status(201).json({ ticket })
   } catch (error) {
     console.error('Creating ticket failed.', error)
@@ -2080,7 +2191,19 @@ app.patch('/api/tickets/:ticketId', async (req, res) => {
 
     // Re-fetch so response includes updated custom field values
     const refreshed = await getTicketById(ticketId)
-    res.json({ ticket: refreshed ?? ticket })
+    const finalTicket = refreshed ?? ticket
+
+    // Dispatch webhook events
+    dispatchWebhookEvent(user.organizationId, 'ticket.updated', { ticket: finalTicket })
+    if (existingTicket && existingTicket.assignedToId !== finalTicket.assignedToId && finalTicket.assignedToId) {
+      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket: finalTicket })
+    }
+    if (!wasAlreadyResolved && finalTicket.resolvedAt != null) {
+      const resolvedEvent: WebhookEvent = finalTicket.status === 'Closed' ? 'ticket.closed' : 'ticket.resolved'
+      dispatchWebhookEvent(user.organizationId, resolvedEvent, { ticket: finalTicket })
+    }
+
+    res.json({ ticket: finalTicket })
   } catch (error) {
     console.error('Updating ticket failed.', error)
     res.status(500).json({ error: 'ticket_update_failed' })

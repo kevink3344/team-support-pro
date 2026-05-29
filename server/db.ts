@@ -286,6 +286,17 @@ const initializeSchema = (database: Database.Database) => {
       CreatedAt TEXT DEFAULT (datetime('now')),
       FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
     );
+    CREATE TABLE IF NOT EXISTS WebhookConfigs (
+      Id TEXT PRIMARY KEY,
+      OrganizationId TEXT NOT NULL,
+      Url TEXT NOT NULL,
+      Secret TEXT NOT NULL DEFAULT '',
+      Events TEXT NOT NULL DEFAULT '[]',
+      IsEnabled INTEGER NOT NULL DEFAULT 1,
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+    );
   `)
 
   migrateLegacySchema(database)

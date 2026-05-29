@@ -74,6 +74,15 @@ This document provides product, architecture, role, API, and data model coverage
 - Email notification setting toggle and connectivity tests (Admin)
 - Anonymous page configuration (Admin)
 - Trend seed and clear actions (Admin)
+- Webhook notification configuration (Admin)
+
+### Webhook Notifications
+
+- Per-organization webhook endpoint registration
+- Configurable event subscriptions per webhook
+- Optional HMAC-SHA256 payload signing
+- Enabled/disabled toggle per endpoint
+- Test ping dispatch from admin UI
 
 ## 4. Authentication and Authorization
 
@@ -115,6 +124,7 @@ Administrative users can:
 - Run Resend and IMAP connectivity tests
 - Configure anonymous intake pages
 - Seed and clear dashboard trend data
+- Configure per-organization outbound webhooks
 
 Administrative users are still team-scoped for ticket operations unless explicitly using admin-only reporting endpoints.
 
@@ -152,6 +162,7 @@ Staff users cannot:
 | Auth and email settings management | No | Yes |
 | Anonymous page settings management | No | Yes |
 | Dashboard trend seed/clear operations | No | Yes |
+| Webhook configuration (create/update/delete) | No | Yes |
 
 ## 7. Core User Workflows
 
@@ -256,6 +267,11 @@ Staff users cannot:
 - POST /api/users/:userId/change-password
 - POST /api/admin/dashboard/trends/seed
 - POST /api/admin/dashboard/trends/clear
+- GET /api/settings/webhooks
+- POST /api/settings/webhooks
+- PATCH /api/settings/webhooks/:id
+- DELETE /api/settings/webhooks/:id
+- POST /api/settings/webhooks/:id/test
 
 ## 9. Data Model
 
@@ -377,6 +393,16 @@ Stores feature and operational flags including:
 - emailNotificationsEnabled
 - dashboard-trend-seed-config
 
+### WebhookConfigs
+
+- Id (PK)
+- OrganizationId (FK → Organizations)
+- Url — target HTTPS endpoint
+- Secret — optional string used for HMAC-SHA256 request signing
+- Events — JSON array of subscribed event names
+- IsEnabled — 1 enabled / 0 disabled
+- CreatedAt / UpdatedAt
+
 ## 9.3 Data Rules and Constraints
 
 - Tickets must reference a valid Team and Category
@@ -451,13 +477,75 @@ Key frontend-safe settings include:
 - Admin-only actions are checked server-side
 - For split hosting, cross-site cookie policy and HTTPS are required
 
-## 14. Known Limitations and Considerations
+## 14. Webhook Notifications
+
+### Overview
+
+Admins can register one or more webhook endpoints per organization. When tickets are created or change state, the server dispatches a JSON POST to each matching, enabled endpoint that subscribes to the relevant event. Delivery is fire-and-forget with a 5-second timeout — failures are logged but do not affect the originating request.
+
+### Event Types
+
+| Event | Triggered when |
+|---|---|
+| `ticket.created` | A new ticket is submitted |
+| `ticket.updated` | Any ticket field is changed |
+| `ticket.assigned` | The assignee field is set or changed |
+| `ticket.resolved` | The ticket status becomes Resolved |
+| `ticket.closed` | The ticket status becomes Closed |
+| `feedback.submitted` | A post-resolution feedback response is submitted |
+
+### Payload Shape
+
+```json
+{
+  "event": "ticket.created",
+  "occurredAt": "2025-01-01T12:00:00.000Z",
+  "organizationId": "org-abc",
+  "data": {
+    "ticket": { ... }
+  }
+}
+```
+
+### HMAC Signing
+
+When a webhook has a non-empty Secret, each delivery includes an `X-Hub-Signature-256` header of the form `sha256=<hex>`. The signature is computed as HMAC-SHA256 over the raw JSON body using the secret as the key. Receivers should verify this header before processing.
+
+Additional delivery headers:
+
+- `X-Webhook-Event` — the event name (e.g. `ticket.created`)
+- `X-Webhook-Delivery` — a UUID unique to this delivery attempt
+
+### Admin Configuration
+
+Admins access webhook settings from **Settings → Webhooks**. Each endpoint record stores:
+
+- Target URL
+- Optional signing secret
+- Subscribed event list
+- Enabled/disabled toggle
+
+A **Test** button dispatches an immediate test ping (a `ticket.created` event with `data.test: true`) without requiring a real ticket event.
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | /api/settings/webhooks | List webhooks for the caller's org |
+| POST | /api/settings/webhooks | Create a webhook |
+| PATCH | /api/settings/webhooks/:id | Update a webhook |
+| DELETE | /api/settings/webhooks/:id | Delete a webhook |
+| POST | /api/settings/webhooks/:id/test | Send a test ping |
+
+All endpoints are Admin-only.
+
+## 15. Known Limitations and Considerations
 
 - Some report queries aggregate globally rather than team-scoped
 - Trend data can be blended from derived ticket counts and seeded overlays
 - Local auth account data is persisted in a JSON file for local account workflows
 
-## 15. Glossary
+## 16. Glossary
 
 - Organization: Top-level grouping for teams
 - Team: Operational support group owning tickets
