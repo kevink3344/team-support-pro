@@ -233,7 +233,7 @@ const readSessionUserFromRequest = (req: express.Request): SessionUser | null =>
   }
 }
 
-const isAdminUser = (user: SessionUser | null) => user?.role === 'Admin'
+const isAdminUser = (user: SessionUser | null): user is SessionUser => user?.role === 'Admin'
 
 const readRapidIdentityEnabled = () => {
   const db = getDb()
