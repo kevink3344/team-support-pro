@@ -90,7 +90,6 @@ import type {
   ThemeMode,
   TicketAttachment,
   Ticket as TicketRecord,
-  TicketCustomFieldValue,
   TicketFieldDefinition,
   TicketPriority,
   TicketStatus,
