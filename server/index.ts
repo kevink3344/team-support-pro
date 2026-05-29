@@ -333,7 +333,8 @@ app.get('/api/settings/email', (req, res) => {
     from: from || null,
     replyTo: replyTo || null,
     pollIntervalSeconds: Math.round(pollIntervalMs / 1000),
-    configured: !!(resendApiKey && from && gmailUser && gmailAppPassword),
+    configured: !!(resendApiKey && from),
+    imapConfigured: !!(gmailUser && gmailAppPassword),
   })
 })
 
@@ -407,15 +408,20 @@ app.post('/api/settings/email/test-imap', async (req, res) => {
       auth: { user: gmailUser, pass: gmailAppPassword },
       logger: false,
     })
-    await client.connect()
-    const status = await client.status('INBOX', { messages: true, unseen: true })
-    await client.logout()
-    res.json({ ok: true, messages: status.messages, unseen: status.unseen, account: gmailUser })
+    try {
+      await client.connect()
+      const status = await client.status('INBOX', { messages: true, unseen: true })
+      await client.logout()
+      res.json({ ok: true, messages: status.messages, unseen: status.unseen, account: gmailUser })
+    } catch (err) {
+      client.destroy()
+      const imapErr = err as { message?: string; responseText?: string; responseStatus?: string }
+      const detail = imapErr.responseText ?? imapErr.message ?? 'Unknown error connecting to Gmail IMAP.'
+      const status = imapErr.responseStatus ? `[${imapErr.responseStatus}] ` : ''
+      res.json({ ok: false, error: `${status}${detail}` })
+    }
   } catch (err) {
-    const imapErr = err as { message?: string; responseText?: string; responseStatus?: string }
-    const detail = imapErr.responseText ?? imapErr.message ?? 'Unknown error connecting to Gmail IMAP.'
-    const status = imapErr.responseStatus ? `[${imapErr.responseStatus}] ` : ''
-    res.json({ ok: false, error: `${status}${detail}` })
+    res.json({ ok: false, error: err instanceof Error ? err.message : 'Failed to load IMAP module.' })
   }
 })
 

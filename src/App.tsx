@@ -810,7 +810,7 @@ function App() {
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false)
   const [emailSettingsPending, setEmailSettingsPending] = useState(false)
   const [emailSettingsError, setEmailSettingsError] = useState('')
-  const [emailConfig, setEmailConfig] = useState<{ from: string | null; replyTo: string | null; pollIntervalSeconds: number; configured: boolean } | null>(null)
+  const [emailConfig, setEmailConfig] = useState<{ from: string | null; replyTo: string | null; pollIntervalSeconds: number; configured: boolean; imapConfigured: boolean } | null>(null)
   const [emailTestResendPending, setEmailTestResendPending] = useState(false)
   const [emailTestResendResult, setEmailTestResendResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [emailTestImapPending, setEmailTestImapPending] = useState(false)
@@ -1347,6 +1347,7 @@ function App() {
             replyTo: payload.replyTo ?? null,
             pollIntervalSeconds: payload.pollIntervalSeconds ?? 120,
             configured: payload.configured ?? false,
+            imapConfigured: (payload as { imapConfigured?: boolean }).imapConfigured ?? false,
           })
         }
       } catch {
@@ -6358,7 +6359,7 @@ function App() {
               ) : (
                 <>
                   <div className="text-sm text-[color:var(--text-muted)]">
-                    Configure outbound email via Resend and inbound reply parsing via Gmail IMAP. Credentials are read from environment variables.
+                    Configure outbound email via Resend. Gmail IMAP is optional for inbound reply parsing. Credentials are read from environment variables.
                   </div>
                   <label className="flex items-center gap-3 rounded-[2px] border border-[color:var(--border)] p-3">
                     <input
@@ -6370,7 +6371,7 @@ function App() {
                     <div>
                       <div className="text-sm font-semibold text-[color:var(--text)]">Enable email notifications</div>
                       <div className="text-xs text-[color:var(--text-muted)]">
-                        When enabled, ticket updates will trigger outbound emails and inbound replies will be polled.
+                        When enabled, ticket updates will trigger outbound emails via Resend.
                       </div>
                     </div>
                   </label>
@@ -6388,9 +6389,13 @@ function App() {
                       <span className="font-mono text-[color:var(--text)]">{emailConfig.from ?? <em>not set</em>}</span>
                       <span className="text-[color:var(--text-muted)]">Reply-to</span>
                       <span className="font-mono text-[color:var(--text)]">{emailConfig.replyTo ?? <em>not set</em>}</span>
-                      <span className="text-[color:var(--text-muted)]">IMAP poll interval</span>
-                      <span className="text-[color:var(--text)]">{emailConfig.pollIntervalSeconds}s</span>
-                      <span className="text-[color:var(--text-muted)]">Integration status</span>
+                      {emailConfig.imapConfigured && (
+                        <>
+                          <span className="text-[color:var(--text-muted)]">IMAP poll interval</span>
+                          <span className="text-[color:var(--text)]">{emailConfig.pollIntervalSeconds}s</span>
+                        </>
+                      )}
+                      <span className="text-[color:var(--text-muted)]">Resend status</span>
                       <span>
                         {emailConfig.configured ? (
                           <span className="rounded-[2px] bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
@@ -6426,27 +6431,29 @@ function App() {
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-col gap-2">
-                      <button
-                        type="button"
-                        className="secondary-button"
-                        disabled={emailTestImapPending}
-                        onClick={() => void runEmailTestImap()}
-                      >
-                        {emailTestImapPending ? 'Connecting…' : 'Test Gmail IMAP'}
-                      </button>
-                      {emailTestImapResult && (
-                        <div
-                          className={`rounded-[2px] px-3 py-2 text-xs ${
-                            emailTestImapResult.ok
-                              ? 'border border-emerald-200 bg-emerald-50 text-emerald-800'
-                              : 'border border-rose-200 bg-rose-50 text-rose-700'
-                          }`}
+                    {emailConfig?.imapConfigured && (
+                      <div className="flex flex-col gap-2">
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={emailTestImapPending}
+                          onClick={() => void runEmailTestImap()}
                         >
-                          {emailTestImapResult.message}
-                        </div>
-                      )}
-                    </div>
+                          {emailTestImapPending ? 'Connecting…' : 'Test Gmail IMAP'}
+                        </button>
+                        {emailTestImapResult && (
+                          <div
+                            className={`rounded-[2px] px-3 py-2 text-xs ${
+                              emailTestImapResult.ok
+                                ? 'border border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : 'border border-rose-200 bg-rose-50 text-rose-700'
+                            }`}
+                          >
+                            {emailTestImapResult.message}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
