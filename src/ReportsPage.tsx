@@ -30,7 +30,10 @@ import type {
 
 interface ReportsPageProps {
   sessionToken: string | null
+  powerBiReportUrl: string | null
 }
+
+type ReportsTab = 'general' | 'power-bi'
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8']
 
@@ -57,7 +60,7 @@ const EmptyState = () => (
   </div>
 )
 
-export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
+export const ReportsPage = ({ sessionToken, powerBiReportUrl }: ReportsPageProps) => {
   const [statusData, setStatusData] = useState<TicketReport[]>([])
   const [priorityData, setPriorityData] = useState<PriorityReport[]>([])
   const [assigneeData, setAssigneeData] = useState<AssigneeReport[]>([])
@@ -68,6 +71,7 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
   const [avgByTeam, setAvgByTeam] = useState<AvgResolutionByTeam[]>([])
   const [openAgeBuckets, setOpenAgeBuckets] = useState<OpenAgeBucket[]>([])
   const [firstResponseBuckets, setFirstResponseBuckets] = useState<FirstResponseBucket[]>([])
+  const [activeTab, setActiveTab] = useState<ReportsTab>('general')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -153,32 +157,8 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
     return <div className="p-6 text-sm text-[color:var(--text-muted)]">Loading reports…</div>
   }
 
-  return (
-    <div className="space-y-8 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="text-xl font-semibold text-[color:var(--text)]">Reports</div>
-          <div className="text-sm text-[color:var(--text-muted)]">Ticket analytics for your organisation.</div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleExport('csv')}
-            className="secondary-button flex items-center gap-2"
-          >
-            <FileText size={14} />
-            Export CSV
-          </button>
-          <button
-            onClick={() => handleExport('excel')}
-            className="secondary-button flex items-center gap-2"
-          >
-            <FileSpreadsheet size={14} />
-            Export Excel
-          </button>
-        </div>
-      </div>
-
+  const renderGeneralTab = () => (
+    <>
       {/* ── Volume ──────────────────────────────────────────────── */}
       <section className="space-y-3">
         <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Volume</div>
@@ -365,6 +345,82 @@ export const ReportsPage = ({ sessionToken }: ReportsPageProps) => {
           </ChartCard>
         </div>
       </section>
+    </>
+  )
+
+  const renderPowerBiTab = () => {
+    if (!powerBiReportUrl) {
+      return (
+        <div className="surface flex min-h-[320px] items-center justify-center rounded-[2px] border border-[color:var(--border)] p-6 text-sm text-[color:var(--text-muted)]">
+          There is no Power Bi report currently linked
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-[color:var(--text-muted)]">
+          If the report does not appear, confirm the linked URL is a Publish to web link.
+        </div>
+        <div className="surface overflow-hidden rounded-[2px] border border-[color:var(--border)]">
+          <iframe
+            title="Power BI report"
+            src={powerBiReportUrl}
+            className="h-[720px] w-full"
+            loading="lazy"
+          />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-8 p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <div className="text-xl font-semibold text-[color:var(--text)]">Reports</div>
+          <div className="text-sm text-[color:var(--text-muted)]">Ticket analytics for your organisation.</div>
+        </div>
+        <div className="flex gap-2">
+          <div className="flex items-center overflow-hidden rounded-[2px] border border-[color:var(--border)]">
+            <button
+              type="button"
+              className="view-toggle"
+              data-active={activeTab === 'general'}
+              onClick={() => setActiveTab('general')}
+            >
+              General
+            </button>
+            <button
+              type="button"
+              className="view-toggle"
+              data-active={activeTab === 'power-bi'}
+              onClick={() => setActiveTab('power-bi')}
+            >
+              Power BI
+            </button>
+          </div>
+          <button
+            onClick={() => handleExport('csv')}
+            className="secondary-button flex items-center gap-2"
+            disabled={activeTab !== 'general'}
+          >
+            <FileText size={14} />
+            Export CSV
+          </button>
+          <button
+            onClick={() => handleExport('excel')}
+            className="secondary-button flex items-center gap-2"
+            disabled={activeTab !== 'general'}
+          >
+            <FileSpreadsheet size={14} />
+            Export Excel
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'general' ? renderGeneralTab() : renderPowerBiTab()}
     </div>
   )
 }

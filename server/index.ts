@@ -235,6 +235,8 @@ const readSessionUserFromRequest = (req: express.Request): SessionUser | null =>
 
 const isAdminUser = (user: SessionUser | null): user is SessionUser => user?.role === 'Admin'
 
+const POWER_BI_REPORT_URL_KEY = 'powerBiReportUrl'
+
 const readRapidIdentityEnabled = () => {
   const db = getDb()
   const row = db
@@ -268,6 +270,23 @@ const writeEmailNotificationsEnabled = (isEnabled: boolean) => {
   db.prepare(
     "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('emailNotificationsEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
   ).run(isEnabled ? 'true' : 'false')
+}
+
+const readPowerBiReportUrl = () => {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1')
+    .get(POWER_BI_REPORT_URL_KEY) as { value?: string } | undefined
+
+  const value = row?.value?.trim()
+  return value ? value : null
+}
+
+const writePowerBiReportUrl = (reportUrl: string | null) => {
+  const db = getDb()
+  db.prepare(
+    'INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES (?, ?, datetime(\'now\')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime(\'now\')',
+  ).run(POWER_BI_REPORT_URL_KEY, reportUrl?.trim() ?? '')
 }
 
 app.get('/api/health', (_req, res) => {
@@ -350,6 +369,36 @@ app.patch('/api/settings/email', (req, res) => {
   }
   writeEmailNotificationsEnabled(req.body.enabled)
   res.json({ enabled: readEmailNotificationsEnabled() })
+})
+
+app.get('/api/settings/power-bi', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  res.json({ reportUrl: readPowerBiReportUrl() })
+})
+
+app.patch('/api/settings/power-bi', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  const reportUrl = req.body?.reportUrl
+
+  if (reportUrl !== null && reportUrl !== undefined && typeof reportUrl !== 'string') {
+    res.status(400).json({ error: 'invalid_power_bi_settings_payload' })
+    return
+  }
+
+  writePowerBiReportUrl(typeof reportUrl === 'string' ? reportUrl : null)
+  res.json({ reportUrl: readPowerBiReportUrl() })
 })
 
 app.post('/api/settings/email/test-resend', async (req, res) => {

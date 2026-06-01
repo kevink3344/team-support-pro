@@ -162,6 +162,7 @@ type SettingsAccordionSection =
   | 'trendSeeding'
   | 'categories'
   | 'email'
+  | 'powerBi'
   | 'feedbackForm'
   | 'webhooks'
 
@@ -198,6 +199,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'trendSeeding',
   'categories',
   'email',
+  'powerBi',
   'feedbackForm',
   'webhooks',
 ]
@@ -212,6 +214,15 @@ const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefine
     ...sanitized,
     ...defaultSettingsAccordionOrder.filter((section) => !sanitized.includes(section)),
   ]
+}
+
+const isValidHttpUrl = (value: string) => {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 
@@ -815,6 +826,11 @@ function App() {
   const [emailTestResendResult, setEmailTestResendResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [emailTestImapPending, setEmailTestImapPending] = useState(false)
   const [emailTestImapResult, setEmailTestImapResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [powerBiReportUrl, setPowerBiReportUrl] = useState<string | null>(null)
+  const [powerBiReportDraft, setPowerBiReportDraft] = useState('')
+  const [powerBiSettingsPending, setPowerBiSettingsPending] = useState(false)
+  const [powerBiSettingsError, setPowerBiSettingsError] = useState('')
+  const [powerBiSettingsNotice, setPowerBiSettingsNotice] = useState('')
   const [anonymousPageConfigs, setAnonymousPageConfigs] = useState<AnonymousPageConfig[]>([])
   const [anonymousPageSettingsPending, setAnonymousPageSettingsPending] = useState(false)
   const [anonymousPageSettingsError, setAnonymousPageSettingsError] = useState('')
@@ -876,6 +892,7 @@ function App() {
     trendSeeding: false,
     categories: false,
     email: false,
+    powerBi: false,
     feedbackForm: false,
     webhooks: false,
   })
@@ -1324,6 +1341,10 @@ function App() {
       setAnonymousPageSettingsNotice('')
       setEmailConfig(null)
       setEmailNotificationsEnabled(false)
+      setPowerBiReportUrl(null)
+      setPowerBiReportDraft('')
+      setPowerBiSettingsError('')
+      setPowerBiSettingsNotice('')
       return
     }
 
@@ -1387,9 +1408,42 @@ function App() {
       }
     }
 
+    const loadPowerBiSettings = async () => {
+      setPowerBiSettingsError('')
+
+      try {
+        const response = await fetch(apiUrl('/api/settings/power-bi'), {
+          credentials: 'include',
+        })
+
+        if (!response.ok || cancelled) {
+          if (!cancelled) {
+            setPowerBiSettingsError('Power BI settings could not be loaded.')
+          }
+          return
+        }
+
+        const payload = (await response.json()) as { reportUrl?: string | null }
+        const nextUrl = typeof payload.reportUrl === 'string' && payload.reportUrl.trim()
+          ? payload.reportUrl.trim()
+          : null
+
+        if (!cancelled) {
+          setPowerBiReportUrl(nextUrl)
+          setPowerBiReportDraft(nextUrl ?? '')
+        }
+      } catch {
+        if (!cancelled) {
+          setPowerBiSettingsError('Power BI settings could not be loaded. Confirm the backend server is running.')
+        }
+      }
+    }
+
     void loadAnonymousPageSettings()
 
     void loadEmailSettings()
+
+    void loadPowerBiSettings()
 
     if (authSession?.organizationId) {
       void loadFeedbackSettings(authSession.organizationId)
@@ -2971,6 +3025,65 @@ function App() {
       setEmailSettingsError('Email setting could not be updated. Confirm the backend server is running.')
     } finally {
       setEmailSettingsPending(false)
+    }
+  }
+
+  const savePowerBiSettings = async (nextUrl: string | null) => {
+    if (currentUser.role !== 'Admin') {
+      setPowerBiSettingsError('Only admins can update Power BI settings.')
+      return
+    }
+
+    const trimmedUrl = nextUrl?.trim() ?? ''
+
+    if (trimmedUrl && !isValidHttpUrl(trimmedUrl)) {
+      setPowerBiSettingsError('Enter a valid http or https URL for the Power BI report.')
+      setPowerBiSettingsNotice('')
+      return
+    }
+
+    setPowerBiSettingsPending(true)
+    setPowerBiSettingsError('')
+    setPowerBiSettingsNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/settings/power-bi'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ reportUrl: trimmedUrl || null }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setPowerBiSettingsError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setPowerBiSettingsError('Only admins can update Power BI settings.')
+        return
+      }
+
+      if (!response.ok) {
+        setPowerBiSettingsError('Power BI settings could not be saved.')
+        return
+      }
+
+      const payload = (await response.json()) as { reportUrl?: string | null }
+      const savedUrl = typeof payload.reportUrl === 'string' && payload.reportUrl.trim()
+        ? payload.reportUrl.trim()
+        : null
+
+      setPowerBiReportUrl(savedUrl)
+      setPowerBiReportDraft(savedUrl ?? '')
+      setPowerBiSettingsNotice(savedUrl ? 'Power BI report link saved.' : 'Power BI report link cleared.')
+    } catch {
+      setPowerBiSettingsError('Power BI settings could not be saved. Confirm the backend server is running.')
+    } finally {
+      setPowerBiSettingsPending(false)
     }
   }
 
@@ -6460,6 +6573,76 @@ function App() {
             </div>
           )
 
+        case 'powerBi':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {authSession?.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to manage Power BI settings.
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-[color:var(--text-muted)]">
+                    Add the public report URL used by the Reports page embed. The link must be reachable in an iframe and must be a Publish to web link.
+                  </div>
+                  <div className="surface-muted space-y-3 rounded-[2px] p-4">
+                    <label className="field">
+                      <span className="field-label">Power BI report URL</span>
+                      <input
+                        type="url"
+                        className="input-control"
+                        value={powerBiReportDraft}
+                        onChange={(event) => {
+                          setPowerBiReportDraft(event.target.value)
+                          setPowerBiSettingsError('')
+                          setPowerBiSettingsNotice('')
+                        }}
+                        placeholder="https://app.powerbi.com/..."
+                        disabled={powerBiSettingsPending}
+                      />
+                    </label>
+                    <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      Administrator note: the Power BI URL must be a Publish to web link.
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => void savePowerBiSettings(powerBiReportDraft)}
+                        disabled={powerBiSettingsPending}
+                      >
+                        {powerBiSettingsPending ? 'Saving...' : 'Save Power BI Link'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => void savePowerBiSettings(null)}
+                        disabled={powerBiSettingsPending || !powerBiReportUrl}
+                      >
+                        Clear Link
+                      </button>
+                    </div>
+                    {powerBiReportUrl && (
+                      <div className="text-xs text-[color:var(--text-muted)] break-all">
+                        Current linked report: {powerBiReportUrl}
+                      </div>
+                    )}
+                  </div>
+                  {powerBiSettingsError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {powerBiSettingsError}
+                    </div>
+                  )}
+                  {powerBiSettingsNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {powerBiSettingsNotice}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )
+
         case 'feedbackForm': {
           if (currentUser.role !== 'Admin') {
             return (
@@ -7059,6 +7242,10 @@ function App() {
       email: {
         title: 'Email Notifications',
         description: 'Configure outbound Resend email and inbound Gmail IMAP integration.',
+      },
+      powerBi: {
+        title: 'Power BI',
+        description: 'Set the embedded report URL shown on the Reports page Power BI tab.',
       },
       feedbackForm: {
         title: 'Feedback Form',
@@ -7968,7 +8155,9 @@ function App() {
 
             {activeView === 'notifications' && renderNotificationsPage()}
 
-            {activeView === 'reports' && currentUser.role === 'Admin' && <ReportsPage sessionToken={null} />}
+            {activeView === 'reports' && currentUser.role === 'Admin' && (
+              <ReportsPage sessionToken={null} powerBiReportUrl={powerBiReportUrl} />
+            )}
 
             {activeView === 'settings' && currentUser.role === 'Admin' && renderAdminSettingsPage()}
 
