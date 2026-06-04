@@ -147,6 +147,20 @@ button {
   opacity: 0.72;
 }
 
+.form-input {
+  width: 100%;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 2px;
+  background: #ffffff;
+  color: var(--text, #10243b);
+  padding: 10px 12px;
+  outline: none;
+}
+
+.form-input:focus {
+  border-color: var(--accent, #0078d4);
+}
+
 .primary-button,
 .secondary-button,
 .icon-button,

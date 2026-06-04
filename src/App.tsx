@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
+﻿import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
 import {
   AnimatePresence,
   motion,
@@ -42,14 +42,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react'
-
-import {
-  Responsive,
-  WidthProvider,
-  type Layout,
-  type LayoutItem,
-  type ResponsiveLayouts,
-} from 'react-grid-layout/legacy'
+import { type Layout } from 'react-grid-layout/legacy'
 import 'react-grid-layout/css/styles.css'
 import 'react-resizable/css/styles.css'
 import {
@@ -101,56 +94,19 @@ import type {
 } from './types'
 import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
-
-const STORAGE_KEYS = {
-  auth: 'team-support-pro-auth',
-  dashboardLayout: 'team-support-pro-dashboard-layout',
-  notificationsArchivedIds: 'team-support-pro-notifications-archived-ids',
-  mode: 'team-support-pro-mode',
-  notificationsReadIds: 'team-support-pro-notifications-read-ids',
-  notificationsSampleSeeded: 'team-support-pro-notifications-sample-seeded',
-  notificationsSeenAt: 'team-support-pro-notifications-seen-at',
-  settingsAccordionOrder: 'team-support-pro-settings-accordion-order',
-  theme: 'team-support-pro-theme',
-  sidebar: 'team-support-pro-sidebar',
-} as const
-
-const REMEMBER_LOGIN_EMAIL_COOKIE = 'team-support-pro-remember-login-email'
-
-const readCookieValue = (name: string) => {
-  if (typeof document === 'undefined') {
-    return ''
-  }
-
-  const encodedName = `${name}=`
-  const pair = document.cookie
-    .split(';')
-    .map((entry) => entry.trim())
-    .find((entry) => entry.startsWith(encodedName))
-
-  if (!pair) {
-    return ''
-  }
-
-  return decodeURIComponent(pair.slice(encodedName.length))
-}
-
-const setCookieValue = (name: string, value: string, days: number) => {
-  if (typeof document === 'undefined') {
-    return
-  }
-
-  const maxAge = Math.max(0, Math.floor(days * 24 * 60 * 60))
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${maxAge}; samesite=lax`
-}
-
-const clearCookieValue = (name: string) => {
-  if (typeof document === 'undefined') {
-    return
-  }
-
-  document.cookie = `${name}=; path=/; max-age=0; samesite=lax`
-}
+import { REMEMBER_LOGIN_EMAIL_COOKIE, readCookieValue, setCookieValue, clearCookieValue } from './lib/cookies'
+import { formatDateTime, formatFileSize, getStatusBadgeClass, getPriorityBadgeClass } from './lib/format'
+import { type NotificationItem, toMentionHandle, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems } from './lib/notifications'
+import {
+  ResponsiveDashboardGrid,
+  type DashboardLayouts,
+  type DashboardWidgetId,
+  dashboardWidgetOrder,
+  defaultDashboardLayouts,
+  mergeDashboardLayouts,
+  filterDashboardLayouts,
+} from './dashboard/layouts'
+import { STORAGE_KEYS, statusOptions, priorityOptions, navItems, adminNavItems, teamIcons } from './constants'
 
 type SettingsAccordionSection =
   | 'appearance'
@@ -225,250 +181,45 @@ const isValidHttpUrl = (value: string) => {
   }
 }
 
+const normalizeAnonymousPagePath = (value: string) => {
+  const trimmed = value.trim().replace(/\\/g, '/')
+  const fileName = trimmed.split('/').filter(Boolean).at(-1) ?? ''
+  const sanitized = fileName.toLowerCase().replace(/[^a-z0-9._-]/g, '')
 
-  const normalizeAnonymousPagePath = (value: string) => {
-    const trimmed = value.trim().replace(/\\/g, '/')
-    const fileName = trimmed.split('/').filter(Boolean).at(-1) ?? ''
-    const sanitized = fileName.toLowerCase().replace(/[^a-z0-9._-]/g, '')
-
-    if (!sanitized) {
-      return 'index.html'
-    }
-
-    return sanitized.endsWith('.html') ? sanitized : `${sanitized}.html`
+  if (!sanitized) {
+    return 'index.html'
   }
 
-  const createAnonymousPageDraft = (organizationId: string, existingPages: AnonymousPageConfig[]): AnonymousPageConfig => {
-    const existingPaths = new Set(existingPages.map((page) => normalizeAnonymousPagePath(page.pagePath)))
-    let index = 1
-    let nextPagePath = 'index.html'
+  return sanitized.endsWith('.html') ? sanitized : `${sanitized}.html`
+}
 
-    while (existingPaths.has(nextPagePath)) {
-      index += 1
-      nextPagePath = `index${index}.html`
-    }
+const createAnonymousPageDraft = (organizationId: string, existingPages: AnonymousPageConfig[]): AnonymousPageConfig => {
+  const existingPaths = new Set(existingPages.map((page) => normalizeAnonymousPagePath(page.pagePath)))
+  let index = 1
+  let nextPagePath = 'index.html'
 
-    return {
-      id: `anon-page-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: '',
-      organizationId,
-      pagePath: nextPagePath,
-      enabled: true,
-    }
+  while (existingPaths.has(nextPagePath)) {
+    index += 1
+    nextPagePath = `index${index}.html`
   }
 
-  const getAnonymousPageUrl = (pagePath: string) => {
-    const normalizedPath = normalizeAnonymousPagePath(pagePath)
-    return normalizedPath === 'index.html' ? '/anon/' : `/anon/${normalizedPath}`
+  return {
+    id: `anon-page-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    organizationId,
+    pagePath: nextPagePath,
+    enabled: true,
   }
-const ResponsiveDashboardGrid = WidthProvider(Responsive)
-type DashboardLayouts = ResponsiveLayouts<string>
-
-type DashboardWidgetId =
-  | 'metric-total'
-  | 'metric-open'
-  | 'metric-progress'
-  | 'metric-pending'
-  | 'metric-critical'
-  | 'trends'
-  | 'status'
-  | 'queue'
-  | 'notes'
-
-const dashboardWidgetOrder: DashboardWidgetId[] = [
-  'metric-total',
-  'metric-open',
-  'metric-progress',
-  'metric-pending',
-  'metric-critical',
-  'trends',
-  'status',
-  'queue',
-  'notes',
-]
-
-const defaultDashboardLayouts: DashboardLayouts = {
-  lg: [
-    { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-open', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-pending', x: 6, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-critical', x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 2, w: 6, h: 7, minW: 4, minH: 5, static: false },
-    { i: 'status', x: 6, y: 2, w: 4, h: 7, minW: 3, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 9, w: 6, h: 9, minW: 4, minH: 6, static: false },
-    { i: 'notes', x: 6, y: 9, w: 4, h: 9, minW: 3, minH: 5, static: false },
-  ],
-  md: [
-    { i: 'metric-total', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-open', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-pending', x: 6, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'metric-critical', x: 8, y: 0, w: 2, h: 2, minW: 2, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 2, w: 6, h: 7, minW: 4, minH: 5, static: false },
-    { i: 'status', x: 6, y: 2, w: 4, h: 7, minW: 3, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 9, w: 6, h: 9, minW: 4, minH: 6, static: false },
-    { i: 'notes', x: 6, y: 9, w: 4, h: 9, minW: 3, minH: 5, static: false },
-  ],
-  sm: [
-    { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-open', x: 1, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-progress', x: 2, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-pending', x: 3, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-critical', x: 4, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 2, w: 5, h: 7, minW: 3, minH: 5, static: false },
-    { i: 'status', x: 0, y: 9, w: 5, h: 5, minW: 3, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 14, w: 5, h: 8, minW: 3, minH: 6, static: false },
-    { i: 'notes', x: 0, y: 22, w: 5, h: 6, minW: 3, minH: 5, static: false },
-  ],
-  xs: [
-    { i: 'metric-total', x: 0, y: 0, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-open', x: 0, y: 2, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-progress', x: 0, y: 4, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-pending', x: 0, y: 6, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'metric-critical', x: 0, y: 8, w: 1, h: 2, minW: 1, minH: 2, static: false },
-    { i: 'trends', x: 0, y: 10, w: 1, h: 7, minW: 1, minH: 5, static: false },
-    { i: 'status', x: 0, y: 17, w: 1, h: 5, minW: 1, minH: 5, static: false },
-    { i: 'queue', x: 0, y: 22, w: 1, h: 8, minW: 1, minH: 6, static: false },
-    { i: 'notes', x: 0, y: 30, w: 1, h: 6, minW: 1, minH: 5, static: false },
-  ],
 }
 
-const legacyMediumDashboardLayout = [
-  { i: 'metric-total', x: 0, y: 0, w: 2, h: 2 },
-  { i: 'metric-open', x: 2, y: 0, w: 2, h: 2 },
-  { i: 'metric-progress', x: 4, y: 0, w: 2, h: 2 },
-  { i: 'metric-pending', x: 0, y: 2, w: 3, h: 2 },
-  { i: 'metric-critical', x: 3, y: 2, w: 3, h: 2 },
-  { i: 'trends', x: 0, y: 4, w: 6, h: 7 },
-  { i: 'status', x: 0, y: 11, w: 6, h: 5 },
-  { i: 'queue', x: 0, y: 16, w: 6, h: 9 },
-  { i: 'notes', x: 0, y: 25, w: 6, h: 7 },
-] as const
-
-const legacySmallDashboardLayout = [
-  { i: 'metric-total', x: 0, y: 0, w: 1, h: 2 },
-  { i: 'metric-open', x: 1, y: 0, w: 1, h: 2 },
-  { i: 'metric-progress', x: 0, y: 2, w: 1, h: 2 },
-  { i: 'metric-pending', x: 1, y: 2, w: 1, h: 2 },
-  { i: 'metric-critical', x: 0, y: 4, w: 2, h: 2 },
-  { i: 'trends', x: 0, y: 6, w: 2, h: 7 },
-  { i: 'status', x: 0, y: 13, w: 2, h: 5 },
-  { i: 'queue', x: 0, y: 18, w: 2, h: 8 },
-  { i: 'notes', x: 0, y: 26, w: 2, h: 6 },
-] as const
-
-const matchesLegacyMediumDashboardLayout = (layout: readonly LayoutItem[]) =>
-  legacyMediumDashboardLayout.every((legacyItem) => {
-    const candidate = layout.find((layoutItem) => layoutItem.i === legacyItem.i)
-
-    return (
-      candidate?.x === legacyItem.x &&
-      candidate?.y === legacyItem.y &&
-      candidate?.w === legacyItem.w &&
-      candidate?.h === legacyItem.h
-    )
-  }) && layout.length === dashboardWidgetOrder.length
-
-const matchesLegacySmallDashboardLayout = (layout: readonly LayoutItem[]) =>
-  legacySmallDashboardLayout.every((legacyItem) => {
-    const candidate = layout.find((layoutItem) => layoutItem.i === legacyItem.i)
-
-    return (
-      candidate?.x === legacyItem.x &&
-      candidate?.y === legacyItem.y &&
-      candidate?.w === legacyItem.w &&
-      candidate?.h === legacyItem.h
-    )
-  }) && layout.length === dashboardWidgetOrder.length
-
-const mergeDashboardLayouts = (storedLayouts: DashboardLayouts | null) => {
-  const breakpoints = Object.keys(defaultDashboardLayouts) as Array<keyof DashboardLayouts>
-
-  return breakpoints.reduce<DashboardLayouts>((merged, breakpoint) => {
-    const defaultLayout = defaultDashboardLayouts[breakpoint] ?? []
-    const storedLayout = storedLayouts?.[breakpoint] ?? []
-    const normalizedStoredLayout =
-      (breakpoint === 'md' && matchesLegacyMediumDashboardLayout(storedLayout)) ||
-      (breakpoint === 'sm' && matchesLegacySmallDashboardLayout(storedLayout))
-        ? []
-        : storedLayout
-    const storedById = new Map<string, LayoutItem>(
-      normalizedStoredLayout.map((layoutItem): [string, LayoutItem] => [layoutItem.i, layoutItem]),
-    )
-
-    merged[breakpoint] = defaultLayout.map((defaultItem): LayoutItem => ({
-      ...defaultItem,
-      ...(storedById.get(defaultItem.i) ?? {}),
-      i: defaultItem.i,
-      w: Math.max(storedById.get(defaultItem.i)?.w ?? defaultItem.w, defaultItem.minW ?? 1),
-      h: Math.max(storedById.get(defaultItem.i)?.h ?? defaultItem.h, defaultItem.minH ?? 1),
-      minW: defaultItem.minW,
-      minH: defaultItem.minH,
-      static: false,
-    }))
-
-    return merged
-  }, {})
+const getAnonymousPageUrl = (pagePath: string) => {
+  const normalizedPath = normalizeAnonymousPagePath(pagePath)
+  return normalizedPath === 'index.html' ? '/anon/' : `/anon/${normalizedPath}`
 }
 
-const filterDashboardLayouts = (
-  layouts: DashboardLayouts,
-  widgetIds: readonly DashboardWidgetId[],
-) => {
-  const allowedWidgetIds = new Set(widgetIds)
-  const breakpoints = Object.keys(layouts) as Array<keyof DashboardLayouts>
+// DashboardWidgetId, dashboardWidgetOrder, DashboardLayouts, ResponsiveDashboardGrid imported from ./dashboard/layouts
 
-  return breakpoints.reduce<DashboardLayouts>((filtered, breakpoint) => {
-    filtered[breakpoint] = (layouts[breakpoint] ?? []).filter((layoutItem) =>
-      allowedWidgetIds.has(layoutItem.i as DashboardWidgetId),
-    )
-
-    return filtered
-  }, {})
-}
-
-const statusOptions: TicketStatus[] = [
-  'Open',
-  'In Progress',
-  'Pending',
-  'Resolved',
-  'Closed',
-]
-
-const priorityOptions: TicketPriority[] = ['Low', 'Medium', 'High', 'Critical']
-
-const navItems: Array<{
-  id: AppView
-  label: string
-  icon: LucideIcon
-}> = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'unassigned', label: 'Unassigned', icon: Inbox },
-  { id: 'my-tickets', label: 'My Tickets', icon: Folder },
-  { id: 'team-tickets', label: 'Team Tickets', icon: Users },
-  { id: 'new-ticket', label: 'New Ticket', icon: Plus },
-]
-
-const adminNavItems = [
-  { id: 'ticket-designer' as AppView, label: 'Ticket Designer', icon: Pencil },
-  { id: 'reports' as AppView, label: 'Reports', icon: FileUp },
-  { id: 'settings' as AppView, label: 'Settings', icon: Settings2 },
-]
-
-const teamIcons: Record<string, LucideIcon> = {
-  it: Wrench,
-  facilities: Building2,
-  learning: GraduationCap,
-  security: Shield,
-}
-
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  month: 'short',
-  day: 'numeric',
-  hour: 'numeric',
-  minute: '2-digit',
-})
+// statusOptions, priorityOptions, navItems, adminNavItems, teamIcons imported from ./constants
 
 const readStoredValue = <T,>(key: string, fallback: T): T => {
   if (typeof window === 'undefined') {
@@ -496,19 +247,7 @@ const isThemeConfig = (value: unknown): value is ThemeConfig => {
   return Boolean(candidate.light?.accent && candidate.dark?.accent)
 }
 
-const formatDateTime = (value: string) => dateFormatter.format(new Date(value))
-
-const formatFileSize = (bytes: number) => {
-  if (bytes < 1024) {
-    return `${bytes} B`
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
+// formatDateTime, formatFileSize imported from ./lib/format
 
 const getTeamsForOrganization = (teams: Team[], organizationId: string) =>
   teams.filter((team) => team.organizationId === organizationId)
@@ -619,129 +358,8 @@ const mergePersistedActivity = (
   })
 }
 
-const getStatusBadgeClass = (status: TicketStatus) => {
-  switch (status) {
-    case 'Open':
-      return 'badge badge-blue'
-    case 'In Progress':
-      return 'badge badge-amber'
-    case 'Pending':
-      return 'badge badge-orange'
-    case 'Resolved':
-      return 'badge badge-green'
-    case 'Closed':
-      return 'badge badge-slate'
-    default:
-      return 'badge'
-  }
-}
-
-interface NotificationItem {
-  id: string
-  ticketId: string
-  ticketTitle: string
-  actor: string
-  message: string
-  at: string
-  type: 'activity' | 'mention' | 'seeded'
-  seeded?: boolean
-}
-
-const toMentionHandle = (name: string) =>
-  name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '.')
-    .replace(/^\.+|\.+$/g, '')
-
-const buildMentionLookup = (users: User[]) => {
-  const lookup = new Map<string, string>()
-
-  users.forEach((user) => {
-    const normalizedId = user.id.trim().toLowerCase()
-    const handle = toMentionHandle(user.name)
-
-    if (normalizedId && !lookup.has(normalizedId)) {
-      lookup.set(normalizedId, user.id)
-    }
-
-    if (handle && !lookup.has(handle)) {
-      lookup.set(handle, user.id)
-    }
-  })
-
-  return lookup
-}
-
-const extractMentionedUserIds = (message: string, mentionLookup: Map<string, string>) => {
-  const matchedIds = new Set<string>()
-  const mentionTokenRegex = /(^|\s)@([a-z0-9._-]+)/g
-  const normalizedMessage = message.toLowerCase()
-  let match = mentionTokenRegex.exec(normalizedMessage)
-
-  while (match) {
-    const token = match[2]
-    const matchedUserId = mentionLookup.get(token)
-    if (matchedUserId) {
-      matchedIds.add(matchedUserId)
-    }
-
-    match = mentionTokenRegex.exec(normalizedMessage)
-  }
-
-  return matchedIds
-}
-
-const buildSeedNotificationItems = (
-  sourceTickets: TicketRecord[],
-  currentUserName: string,
-): NotificationItem[] => {
-  if (sourceTickets.length === 0) {
-    return []
-  }
-
-  const baseTime = new Date('2026-04-05T09:00:00.000Z').getTime()
-  const sampleDefinitions = [
-    { actor: 'Avery Chen', message: 'escalated this ticket for same-day follow-up.', hoursAgo: 1 },
-    { actor: 'Morgan Patel', message: 'requested an update before the leadership review.', hoursAgo: 2 },
-    { actor: 'Jordan Brooks', message: 'added a dependency note for vendor coordination.', hoursAgo: 4 },
-    { actor: 'Taylor Nguyen', message: 'confirmed the workaround with the requestor.', hoursAgo: 6 },
-    { actor: 'Reese Kim', message: 'marked the ticket ready for your verification.', hoursAgo: 9 },
-    { actor: 'Parker Diaz', message: 'attached the deployment checklist.', hoursAgo: 13 },
-    { actor: 'Cameron Lee', message: 'captured the root-cause summary.', hoursAgo: 19 },
-    { actor: 'Quinn Rivera', message: 'closed the investigation sub-task.', hoursAgo: 27 },
-  ]
-
-  return sampleDefinitions.map((definition, index) => {
-    const ticket = sourceTickets[index % sourceTickets.length]
-
-    return {
-      id: `sample-notification-${ticket.id}-${index + 1}`,
-      ticketId: ticket.id,
-      ticketTitle: ticket.title,
-      actor: definition.actor === currentUserName ? 'System Queue' : definition.actor,
-      message: definition.message,
-      at: new Date(baseTime - definition.hoursAgo * 60 * 60 * 1000).toISOString(),
-      type: 'seeded',
-      seeded: true,
-    }
-  })
-}
-
-const getPriorityBadgeClass = (priority: TicketPriority) => {
-  switch (priority) {
-    case 'Critical':
-      return 'badge badge-red'
-    case 'High':
-      return 'badge badge-orange'
-    case 'Medium':
-      return 'badge badge-amber'
-    case 'Low':
-      return 'badge badge-slate'
-    default:
-      return 'badge'
-  }
-}
+// getStatusBadgeClass, getPriorityBadgeClass imported from ./lib/format
+// NotificationItem, toMentionHandle, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems imported from ./lib/notifications
 
 function App() {
   const [organizations, setOrganizations] = useState(initialOrganizations)
@@ -3097,7 +2715,7 @@ function App() {
       })
       const payload = (await response.json()) as { ok?: boolean; messageId?: string; sentTo?: string; error?: string }
       if (payload.ok) {
-        setEmailTestResendResult({ ok: true, message: `Sent! Message ID: ${payload.messageId ?? '?'} → ${payload.sentTo ?? ''}` })
+        setEmailTestResendResult({ ok: true, message: `Sent! Message ID: ${payload.messageId ?? '?'} â†’ ${payload.sentTo ?? ''}` })
       } else {
         setEmailTestResendResult({ ok: false, message: payload.error ?? 'Test email failed.' })
       }
@@ -6718,7 +6336,7 @@ function App() {
                                 : openEditFeedbackField(field)
                             }
                           >
-                            ✎
+                            âœŽ
                           </button>
                           {idx > 0 && (
                             <button
@@ -6726,7 +6344,7 @@ function App() {
                               title="Move up"
                               onClick={() => void moveFeedbackField(idx, idx - 1)}
                             >
-                              ↑
+                              â†‘
                             </button>
                           )}
                           {idx < feedbackForm.fields.length - 1 && (
@@ -6735,7 +6353,7 @@ function App() {
                               title="Move down"
                               onClick={() => void moveFeedbackField(idx, idx + 1)}
                             >
-                              ↓
+                              â†“
                             </button>
                           )}
                           <button
@@ -6743,7 +6361,7 @@ function App() {
                             title="Remove"
                             onClick={() => void removeFeedbackField(field.id)}
                           >
-                            ×
+                            Ã—
                           </button>
                         </div>
                         {/* Inline edit form */}
@@ -6822,7 +6440,7 @@ function App() {
                   className="mb-3 text-sm font-medium text-[var(--color-primary)] hover:underline"
                   onClick={() => setFeedbackAddFieldOpen((o) => !o)}
                 >
-                  {feedbackAddFieldOpen ? '− Cancel' : '+ Add Field'}
+                  {feedbackAddFieldOpen ? 'âˆ’ Cancel' : '+ Add Field'}
                 </button>
                 {feedbackAddFieldOpen && (
                   <div className="space-y-3">
@@ -6929,7 +6547,7 @@ function App() {
                       rel="noopener noreferrer"
                       className="shrink-0 text-sm text-[var(--color-primary)] hover:underline"
                     >
-                      Open ↗
+                      Open â†—
                     </a>
                   </div>
                 )}
@@ -6980,7 +6598,7 @@ function App() {
                               {new Date(resp.submittedAt).toLocaleDateString()}
                             </span>
                             <span className="shrink-0 text-gray-400">
-                              {feedbackExpandedResponseId === resp.id ? '▲' : '▼'}
+                              {feedbackExpandedResponseId === resp.id ? 'â–²' : 'â–¼'}
                             </span>
                           </button>
                           {feedbackExpandedResponseId === resp.id && resp.answers.length > 0 && (

@@ -1,0 +1,593 @@
+import multer from 'multer'
+import { Router } from 'express'
+import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import {
+  createTicket,
+  createTicketComment,
+  deleteTicket,
+  getTicketById,
+  listTicketActivity,
+  listTickets,
+  ticketBelongsToTeam,
+  updateTicket,
+  listTicketWatchers,
+  addTicketWatcher,
+  removeTicketWatcher,
+  listWatchedTicketIds,
+  upsertCustomFieldValues,
+} from '../tickets.js'
+import {
+  createTicketAttachment,
+  deleteTicketAttachment,
+  getTicketAttachmentById,
+  listTicketAttachments,
+} from '../attachments.js'
+import {
+  listOrganizations,
+  listTeams,
+  listCategories,
+} from '../directory.js'
+import {
+  resolveAnonymousPageConfig,
+} from '../anonymous-pages.js'
+import {
+  dispatchWebhookEvent,
+  type WebhookEvent,
+} from '../webhooks.js'
+import { maybeSendFeedbackEmail } from '../feedback.js'
+import { getDb } from '../db.js'
+
+export const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+})
+
+export const ticketsRouter = Router()
+
+// ---------------------------------------------------------------------------
+// Ticket list + activity
+// ---------------------------------------------------------------------------
+
+ticketsRouter.get('/', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  try {
+    const tickets = await listTickets(user.teamId)
+    res.json({ tickets })
+  } catch (error) {
+    console.error('Loading tickets failed.', error)
+    res.status(500).json({ error: 'ticket_load_failed' })
+  }
+})
+
+ticketsRouter.get('/activity', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  try {
+    const tickets = await listTickets(user.teamId)
+    const ticketIds = new Set(tickets.map((t) => t.id))
+    const activity = (await listTicketActivity()).filter((e) => ticketIds.has(e.ticketId))
+    res.json({ activity })
+  } catch (error) {
+    console.error('Loading ticket activity failed.', error)
+    res.status(500).json({ error: 'ticket_activity_load_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Create ticket (authenticated)
+// ---------------------------------------------------------------------------
+
+ticketsRouter.post('/', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId : ''
+  if (!teamId || teamId !== user.teamId) {
+    res.status(403).json({ error: 'cross_team_ticket_create_forbidden' })
+    return
+  }
+
+  try {
+    const ticket = await createTicket(
+      {
+        id: typeof req.body?.id === 'string' ? req.body.id : undefined,
+        title: typeof req.body?.title === 'string' ? req.body.title : '',
+        description: typeof req.body?.description === 'string' ? req.body.description : '',
+        priority: typeof req.body?.priority === 'string' ? req.body.priority : '',
+        teamId,
+        categoryId: typeof req.body?.categoryId === 'string' ? req.body.categoryId : '',
+        assignedToId:
+          typeof req.body?.assignedToId === 'string' && req.body.assignedToId.trim()
+            ? req.body.assignedToId
+            : null,
+        requestorName: typeof req.body?.requestorName === 'string' ? req.body.requestorName : '',
+        requestorEmail: typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : '',
+        location: typeof req.body?.location === 'string' ? req.body.location : '',
+        customFields: Array.isArray(req.body?.customFields)
+          ? (req.body.customFields as unknown[]).flatMap((cf) => {
+              if (!cf || typeof cf !== 'object') return []
+              const entry = cf as Record<string, unknown>
+              const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+              if (!fieldId) return []
+              return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
+            })
+          : [],
+      },
+      user.name,
+    )
+
+    if (!ticket) {
+      res.status(400).json({ error: 'ticket_create_failed' })
+      return
+    }
+
+    dispatchWebhookEvent(user.organizationId, 'ticket.created', { ticket })
+    if (ticket.assignedToId) {
+      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket })
+    }
+
+    res.status(201).json({ ticket })
+  } catch (error) {
+    console.error('Creating ticket failed.', error)
+    res.status(500).json({ error: 'ticket_create_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Public ticket submission (anonymous)
+// ---------------------------------------------------------------------------
+
+ticketsRouter.post('/public', async (req, res) => {
+  const pagePath = typeof req.body?.pagePath === 'string' ? req.body.pagePath : 'index.html'
+  const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId.trim() : ''
+  const categoryId = typeof req.body?.categoryId === 'string' ? req.body.categoryId.trim() : ''
+  const title = typeof req.body?.title === 'string' ? req.body.title : ''
+  const description = typeof req.body?.description === 'string' ? req.body.description : ''
+  const requestorName = typeof req.body?.requestorName === 'string' ? req.body.requestorName : ''
+  const requestorEmail = typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : ''
+  const location = typeof req.body?.location === 'string' ? req.body.location : ''
+
+  if (!teamId || !categoryId) {
+    res.status(400).json({ error: 'invalid_public_ticket_scope' })
+    return
+  }
+
+  try {
+    const [organizations, teams, categories] = await Promise.all([
+      listOrganizations(),
+      listTeams(),
+      listCategories(),
+    ])
+    const page = resolveAnonymousPageConfig(pagePath, organizations.map((o) => o.id))
+    const team = teams.find((t) => t.id === teamId)
+    const category = categories.find((c) => c.id === categoryId)
+
+    if (!page || !team || !category || category.teamId !== team.id || team.organizationId !== page.organizationId) {
+      res.status(400).json({ error: 'invalid_public_ticket_scope' })
+      return
+    }
+
+    const ticket = await createTicket(
+      { title, description, priority: 'Medium', teamId, categoryId, assignedToId: null, requestorName, requestorEmail, location },
+      'Anonymous Request',
+    )
+
+    if (!ticket) {
+      res.status(400).json({ error: 'public_ticket_create_failed' })
+      return
+    }
+
+    res.status(201).json({ ticket })
+  } catch (error) {
+    console.error('Creating anonymous ticket failed.', error)
+    res.status(500).json({ error: 'public_ticket_create_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Single ticket CRUD
+// ---------------------------------------------------------------------------
+
+ticketsRouter.get('/:ticketId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
+  const ticket = await getTicketById(ticketId)
+  if (!ticket) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
+  res.json({ ticket })
+})
+
+ticketsRouter.patch('/:ticketId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId) {
+    res.status(400).json({ error: 'invalid_ticket_id' })
+    return
+  }
+
+  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(403).json({ error: 'cross_team_ticket_update_forbidden' })
+    return
+  }
+
+  const db = getDb()
+  const newTeamId = typeof req.body?.teamId === 'string' && req.body.teamId.trim() ? req.body.teamId.trim() : user.teamId
+  if (newTeamId !== user.teamId) {
+    const targetTeam = db
+      .prepare('SELECT OrganizationId FROM Teams WHERE Id = ?')
+      .get(newTeamId) as { OrganizationId: string } | undefined
+    if (!targetTeam || targetTeam.OrganizationId !== user.organizationId) {
+      res.status(403).json({ error: 'cross_org_team_reassign_forbidden' })
+      return
+    }
+  }
+
+  try {
+    const existingTicket = await getTicketById(ticketId)
+    const wasAlreadyResolved = existingTicket?.resolvedAt != null
+
+    const ticket = await updateTicket(
+      ticketId,
+      {
+        teamId: newTeamId,
+        title: typeof req.body?.title === 'string' ? req.body.title : '',
+        description: typeof req.body?.description === 'string' ? req.body.description : '',
+        status: typeof req.body?.status === 'string' ? req.body.status : '',
+        priority: typeof req.body?.priority === 'string' ? req.body.priority : '',
+        categoryId: typeof req.body?.categoryId === 'string' ? req.body.categoryId : '',
+        assignedToId:
+          typeof req.body?.assignedToId === 'string' && req.body.assignedToId.trim()
+            ? req.body.assignedToId
+            : null,
+        requestorName: typeof req.body?.requestorName === 'string' ? req.body.requestorName : '',
+        requestorEmail: typeof req.body?.requestorEmail === 'string' ? req.body.requestorEmail : '',
+        location: typeof req.body?.location === 'string' ? req.body.location : '',
+      },
+      user.name,
+    )
+
+    if (!ticket) {
+      res.status(400).json({ error: 'ticket_update_failed' })
+      return
+    }
+
+    if (Array.isArray(req.body?.customFields)) {
+      const cfInputs = (req.body.customFields as unknown[]).flatMap((cf) => {
+        if (!cf || typeof cf !== 'object') return []
+        const entry = cf as Record<string, unknown>
+        const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+        if (!fieldId) return []
+        return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
+      })
+      if (cfInputs.length) {
+        upsertCustomFieldValues(ticketId, ticket.teamId, cfInputs)
+      }
+    }
+
+    if (!wasAlreadyResolved && ticket.resolvedAt != null) {
+      void maybeSendFeedbackEmail(ticket, user.organizationId)
+    }
+
+    const refreshed = await getTicketById(ticketId)
+    const finalTicket = refreshed ?? ticket
+
+    dispatchWebhookEvent(user.organizationId, 'ticket.updated', { ticket: finalTicket })
+    if (existingTicket && existingTicket.assignedToId !== finalTicket.assignedToId && finalTicket.assignedToId) {
+      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket: finalTicket })
+    }
+    if (!wasAlreadyResolved && finalTicket.resolvedAt != null) {
+      const resolvedEvent: WebhookEvent = finalTicket.status === 'Closed' ? 'ticket.closed' : 'ticket.resolved'
+      dispatchWebhookEvent(user.organizationId, resolvedEvent, { ticket: finalTicket })
+    }
+
+    res.json({ ticket: finalTicket })
+  } catch (error) {
+    console.error('Updating ticket failed.', error)
+    res.status(500).json({ error: 'ticket_update_failed' })
+  }
+})
+
+ticketsRouter.delete('/:ticketId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId) {
+    res.status(400).json({ error: 'invalid_ticket_id' })
+    return
+  }
+
+  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(403).json({ error: 'cross_team_ticket_delete_forbidden' })
+    return
+  }
+
+  try {
+    const deleted = await deleteTicket(ticketId)
+    if (!deleted) {
+      res.status(404).json({ error: 'ticket_not_found' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    console.error('Deleting ticket failed.', error)
+    res.status(500).json({ error: 'ticket_delete_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+
+ticketsRouter.post('/:ticketId/comments', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !message) {
+    res.status(400).json({ error: 'invalid_comment_payload' })
+    return
+  }
+
+  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(403).json({ error: 'cross_team_ticket_comment_forbidden' })
+    return
+  }
+
+  try {
+    const comment = await createTicketComment({ ticketId, actor: user.name, message })
+    res.status(201).json({ comment })
+  } catch (error) {
+    console.error('Creating ticket comment failed.', error)
+    res.status(500).json({ error: 'ticket_comment_create_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+ticketsRouter.get('/:ticketId/attachments', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
+  try {
+    const attachments = await listTicketAttachments(ticketId)
+    res.json({ attachments })
+  } catch (error) {
+    console.error('Loading attachments failed.', error)
+    res.status(500).json({ error: 'attachment_load_failed' })
+  }
+})
+
+ticketsRouter.post('/:ticketId/attachments', attachmentUpload.single('file'), async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
+  if (!req.file) {
+    res.status(400).json({ error: 'missing_attachment_file' })
+    return
+  }
+
+  try {
+    const attachment = await createTicketAttachment({
+      ticketId,
+      fileName: req.file.originalname,
+      contentType: req.file.mimetype,
+      fileSizeBytes: req.file.size,
+      fileContent: req.file.buffer,
+      uploadedByUserId: user.id,
+      uploadedByName: user.name,
+    })
+
+    if (!attachment) {
+      res.status(400).json({ error: 'attachment_create_failed' })
+      return
+    }
+
+    res.status(201).json({ attachment })
+  } catch (error) {
+    console.error('Uploading attachment failed.', error)
+    res.status(500).json({ error: 'attachment_create_failed' })
+  }
+})
+
+ticketsRouter.get('/:ticketId/attachments/:attachmentId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
+  const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment'
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'attachment_not_found' })
+    return
+  }
+
+  try {
+    const attachment = await getTicketAttachmentById(ticketId, attachmentId)
+    if (!attachment) {
+      res.status(404).json({ error: 'attachment_not_found' })
+      return
+    }
+
+    res.setHeader('Content-Type', attachment.contentType)
+    res.setHeader('Content-Length', String(attachment.fileSizeBytes))
+    res.setHeader('Content-Disposition', `${disposition}; filename="${attachment.fileName.replace(/"/g, '')}"`)
+    res.send(attachment.fileContent)
+  } catch (error) {
+    console.error('Downloading attachment failed.', error)
+    res.status(500).json({ error: 'attachment_download_failed' })
+  }
+})
+
+ticketsRouter.delete('/:ticketId/attachments/:attachmentId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+
+  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'attachment_not_found' })
+    return
+  }
+
+  try {
+    const deleted = await deleteTicketAttachment(ticketId, attachmentId, user.id, user.name)
+    if (!deleted) {
+      res.status(404).json({ error: 'attachment_not_found' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    console.error('Deleting attachment failed.', error)
+    res.status(500).json({ error: 'attachment_delete_failed' })
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Watchers
+// ---------------------------------------------------------------------------
+
+ticketsRouter.get('/watchers/my-tickets', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  res.json({ ticketIds: listWatchedTicketIds(user.id) })
+})
+
+ticketsRouter.get('/:ticketId/watchers', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId) {
+    res.status(400).json({ error: 'invalid_ticket_id' })
+    return
+  }
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})
+
+ticketsRouter.post('/:ticketId/watchers', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const targetUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId || !targetUserId) {
+    res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  const db = getDb()
+  const targetUser = db
+    .prepare('SELECT OrganizationId FROM Users WHERE Id = ?')
+    .get(targetUserId) as { OrganizationId: string } | undefined
+
+  if (!targetUser || targetUser.OrganizationId !== user.organizationId) {
+    res.status(403).json({ error: 'cross_org_watcher_forbidden' })
+    return
+  }
+
+  addTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})
+
+ticketsRouter.delete('/:ticketId/watchers/:userId', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const targetUserId = typeof req.params.userId === 'string' ? req.params.userId : ''
+
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!ticketId || !targetUserId) {
+    res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  if (targetUserId !== user.id && !isAdminUser(user)) {
+    res.status(403).json({ error: 'remove_watcher_forbidden' })
+    return
+  }
+
+  removeTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: listTicketWatchers(ticketId) })
+})

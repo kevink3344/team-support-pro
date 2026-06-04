@@ -1,0 +1,140 @@
+import { Router } from 'express'
+import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import {
+  createTestFeedbackToken,
+  getFeedbackForm,
+  listFeedbackResponses,
+  resolveToken,
+  saveFeedbackFormFields,
+  setFeedbackFormEnabled,
+  submitFeedbackResponse,
+  type FeedbackAnswerInput,
+  type FeedbackFormField,
+} from '../feedback.js'
+import { serverConfig } from '../config.js'
+import { getDb } from '../db.js'
+
+export const feedbackRouter = Router()
+
+// ---------------------------------------------------------------------------
+// Feedback Form per-org design (admin)
+// ---------------------------------------------------------------------------
+
+feedbackRouter.get('/form/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const form = getFeedbackForm(req.params.orgId)
+  res.json({ form })
+})
+
+feedbackRouter.put('/form/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (!Array.isArray(req.body?.fields)) {
+    res.status(400).json({ error: 'invalid_feedback_form_payload' })
+    return
+  }
+  const form = saveFeedbackFormFields(req.params.orgId, req.body.fields as Array<Partial<FeedbackFormField>>)
+  res.json({ form })
+})
+
+feedbackRouter.patch('/form/:orgId/enabled', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  if (typeof req.body?.isEnabled !== 'boolean') {
+    res.status(400).json({ error: 'invalid_feedback_form_enabled_payload' })
+    return
+  }
+  const form = setFeedbackFormEnabled(req.params.orgId, req.body.isEnabled)
+  res.json({ form })
+})
+
+feedbackRouter.post('/form/:orgId/test-token', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const form = getFeedbackForm(req.params.orgId)
+  if (form.fields.length === 0) {
+    res.status(400).json({ error: 'feedback_form_has_no_fields' })
+    return
+  }
+  const token = createTestFeedbackToken(req.params.orgId)
+  const baseUrl = (serverConfig.allowedOrigins[0] ?? serverConfig.clientUrl).replace(/\/$/, '')
+  res.json({ token, url: `${baseUrl}/feedback/${token}` })
+})
+
+feedbackRouter.get('/responses/:orgId', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+  const includeTest = req.query.includeTest === 'true'
+  const responses = listFeedbackResponses(req.params.orgId, includeTest)
+  res.json({ responses })
+})
+
+// ---------------------------------------------------------------------------
+// Public feedback endpoints (no auth)
+// ---------------------------------------------------------------------------
+
+feedbackRouter.get('/public/:token', (req, res) => {
+  const token = req.params.token
+  const resolution = resolveToken(token)
+
+  if (resolution.status !== 'valid' || !resolution.data) {
+    res.status(resolution.status === 'invalid' ? 404 : 410).json({ error: resolution.status })
+    return
+  }
+
+  const { organizationId, ticketId, isTest } = resolution.data
+  const form = getFeedbackForm(organizationId)
+
+  let ticketContext: { id: string; title: string } | null = null
+  if (ticketId) {
+    const db = getDb()
+    const row = db
+      .prepare('SELECT Id AS id, Title AS title FROM Tickets WHERE Id = ? LIMIT 1')
+      .get(ticketId) as { id: string; title: string } | undefined
+    ticketContext = row ?? null
+  }
+
+  res.json({ form, ticketContext, isTest })
+})
+
+feedbackRouter.post('/public/:token', (req, res) => {
+  const token = req.params.token
+
+  if (!Array.isArray(req.body?.answers)) {
+    res.status(400).json({ error: 'invalid_feedback_submission' })
+    return
+  }
+
+  const answers: FeedbackAnswerInput[] = (req.body.answers as unknown[]).flatMap((a) => {
+    if (!a || typeof a !== 'object') return []
+    const entry = a as Record<string, unknown>
+    const fieldId = typeof entry.fieldId === 'string' ? entry.fieldId.trim() : ''
+    const value = typeof entry.value === 'string' ? entry.value.trim() : ''
+    if (!fieldId) return []
+    return [{ fieldId, value }]
+  })
+
+  const result = submitFeedbackResponse(token, answers)
+  if (!result.ok) {
+    res.status(result.error === 'invalid' || result.error === 'expired' || result.error === 'used' ? 410 : 400).json({ error: result.error })
+    return
+  }
+
+  res.json({ ok: true })
+})

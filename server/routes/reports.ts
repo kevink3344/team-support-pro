@@ -1,0 +1,122 @@
+import { Router } from 'express'
+import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import {
+  getTicketStatusReport,
+  getTicketPriorityReport,
+  getAssigneeReport,
+  getTrendReport,
+  getAllTicketsForExport,
+  getResolutionTimeBuckets,
+  getAvgResolutionByPriority,
+  getAvgResolutionByTeam,
+  getOpenTicketAgeBuckets,
+  getFirstResponseTimeBuckets,
+} from '../reports.js'
+
+export const reportsRouter = Router()
+
+reportsRouter.get('/status', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getTicketStatusReport())
+})
+
+reportsRouter.get('/priority', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getTicketPriorityReport())
+})
+
+reportsRouter.get('/assignee', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getAssigneeReport())
+})
+
+reportsRouter.get('/trends', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  const days = parseInt(req.query.days as string) || 30
+  res.json(getTrendReport(days))
+})
+
+reportsRouter.get('/resolution-time', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getResolutionTimeBuckets())
+})
+
+reportsRouter.get('/avg-resolution-by-priority', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getAvgResolutionByPriority())
+})
+
+reportsRouter.get('/avg-resolution-by-team', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getAvgResolutionByTeam())
+})
+
+reportsRouter.get('/open-ticket-age', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getOpenTicketAgeBuckets())
+})
+
+reportsRouter.get('/first-response-time', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+  res.json(getFirstResponseTimeBuckets())
+})
+
+reportsRouter.get('/export/csv', (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  const data = getAllTicketsForExport()
+  const csv = [
+    ['ID', 'Title', 'Description', 'Status', 'Priority', 'Requestor Name', 'Requestor Email', 'Location', 'Created At', 'Updated At', 'Assignee', 'Category', 'Team'],
+    ...data.map((row) => [
+      row.Id,
+      row.Title,
+      row.Description,
+      row.Status,
+      row.Priority,
+      row.RequestorName,
+      row.RequestorEmail,
+      row.Location,
+      row.CreatedAt,
+      row.UpdatedAt,
+      row.AssigneeName || '',
+      row.CategoryName,
+      row.TeamName,
+    ]),
+  ].map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n')
+
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', 'attachment; filename="tickets.csv"')
+  res.send(csv)
+})
+
+reportsRouter.get('/export/excel', async (req, res) => {
+  const user = readSessionUserFromRequest(req)
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'forbidden' })
+    return
+  }
+
+  const XLSX = await import('xlsx')
+  const data = getAllTicketsForExport()
+  const ws = XLSX.utils.json_to_sheet(data)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Tickets')
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', 'attachment; filename="tickets.xlsx"')
+  res.send(buffer)
+})
