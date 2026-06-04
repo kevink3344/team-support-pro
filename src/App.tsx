@@ -2707,7 +2707,7 @@ function App() {
       })
       const payload = (await response.json()) as { ok?: boolean; messageId?: string; sentTo?: string; error?: string }
       if (payload.ok) {
-        setEmailTestResendResult({ ok: true, message: `Sent! Message ID: ${payload.messageId ?? '?'} â†’ ${payload.sentTo ?? ''}` })
+        setEmailTestResendResult({ ok: true, message: `Sent! Message ID: ${payload.messageId ?? '?'} → ${payload.sentTo ?? ''}` })
       } else {
         setEmailTestResendResult({ ok: false, message: payload.error ?? 'Test email failed.' })
       }
@@ -6328,7 +6328,7 @@ function App() {
                                 : openEditFeedbackField(field)
                             }
                           >
-                            âœŽ
+                            <Pencil size={14} />
                           </button>
                           {idx > 0 && (
                             <button
@@ -6336,7 +6336,7 @@ function App() {
                               title="Move up"
                               onClick={() => void moveFeedbackField(idx, idx - 1)}
                             >
-                              â†‘
+                              <ChevronUp size={14} />
                             </button>
                           )}
                           {idx < feedbackForm.fields.length - 1 && (
@@ -6345,7 +6345,7 @@ function App() {
                               title="Move down"
                               onClick={() => void moveFeedbackField(idx, idx + 1)}
                             >
-                              â†“
+                              <ChevronDown size={14} />
                             </button>
                           )}
                           <button
@@ -6353,7 +6353,7 @@ function App() {
                             title="Remove"
                             onClick={() => void removeFeedbackField(field.id)}
                           >
-                            Ã—
+                            <X size={14} />
                           </button>
                         </div>
                         {/* Inline edit form */}
@@ -6432,7 +6432,7 @@ function App() {
                   className="mb-3 text-sm font-medium text-[var(--color-primary)] hover:underline"
                   onClick={() => setFeedbackAddFieldOpen((o) => !o)}
                 >
-                  {feedbackAddFieldOpen ? 'âˆ’ Cancel' : '+ Add Field'}
+                  {feedbackAddFieldOpen ? '- Cancel' : '+ Add Field'}
                 </button>
                 {feedbackAddFieldOpen && (
                   <div className="space-y-3">
@@ -6539,7 +6539,7 @@ function App() {
                       rel="noopener noreferrer"
                       className="shrink-0 text-sm text-[var(--color-primary)] hover:underline"
                     >
-                      Open â†—
+                      Open ↗
                     </a>
                   </div>
                 )}
@@ -6590,7 +6590,7 @@ function App() {
                               {new Date(resp.submittedAt).toLocaleDateString()}
                             </span>
                             <span className="shrink-0 text-gray-400">
-                              {feedbackExpandedResponseId === resp.id ? 'â–²' : 'â–¼'}
+                              {feedbackExpandedResponseId === resp.id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                             </span>
                           </button>
                           {feedbackExpandedResponseId === resp.id && resp.answers.length > 0 && (
