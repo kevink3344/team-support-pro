@@ -5509,7 +5509,7 @@ function App() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      className="btn-primary text-sm"
+                      className="primary-button"
                       disabled={!ticketDesignerNewField.label?.trim() || ticketFieldDefsPending}
                       onClick={handleAddField}
                     >
@@ -5517,7 +5517,7 @@ function App() {
                     </button>
                     <button
                       type="button"
-                      className="btn-secondary text-sm"
+                      className="secondary-button"
                       onClick={() => {
                         setTicketDesignerAddField(false)
                         setTicketDesignerNewField({})
@@ -5531,7 +5531,7 @@ function App() {
               ) : (
                 <button
                   type="button"
-                  className="btn-secondary flex items-center gap-1 text-sm"
+                  className="primary-button"
                   onClick={() => setTicketDesignerAddField(true)}
                 >
                   <Plus className="h-4 w-4" />
@@ -6428,12 +6428,21 @@ function App() {
 
               {/* Add field */}
               <div className="rounded border border-dashed border-gray-300 p-3">
-                <button
-                  className="mb-3 text-sm font-medium text-[var(--color-primary)] hover:underline"
-                  onClick={() => setFeedbackAddFieldOpen((o) => !o)}
-                >
-                  {feedbackAddFieldOpen ? '- Cancel' : '+ Add Field'}
-                </button>
+                {!feedbackAddFieldOpen ? (
+                  <button
+                    className="primary-button"
+                    onClick={() => setFeedbackAddFieldOpen(true)}
+                  >
+                    <Plus size={14} /> Add Field
+                  </button>
+                ) : (
+                  <button
+                    className="secondary-button mb-3"
+                    onClick={() => setFeedbackAddFieldOpen(false)}
+                  >
+                    <X size={14} /> Cancel
+                  </button>
+                )}
                 {feedbackAddFieldOpen && (
                   <div className="space-y-3">
                     <div>
