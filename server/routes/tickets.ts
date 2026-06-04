@@ -472,7 +472,6 @@ ticketsRouter.get('/watchers/my-tickets', requireAuth, (req, res) => {
 })
 
 ticketsRouter.get('/:ticketId/watchers', requireAuth, async (req, res) => {
-  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
   if (!ticketId) {
