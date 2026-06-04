@@ -7,7 +7,7 @@ import {
   SESSION_COOKIE_NAME,
 } from '../auth.js'
 import { serverConfig } from '../config.js'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAuth, requireAdmin } from '../middleware.js'
 import { resolveAuthenticatedUser } from '../user-directory.js'
 import {
   authenticateLocalAccountPersisted,
@@ -127,13 +127,8 @@ authRouter.get('/oidc/callback', async (req, res) => {
 // Session
 // ---------------------------------------------------------------------------
 
-authRouter.get('/me', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ authenticated: false })
-    return
-  }
-  res.json({ authenticated: true, user })
+authRouter.get('/me', requireAuth, (req, res) => {
+  res.json({ authenticated: true, user: req.user! })
 })
 
 authRouter.post('/logout', (_req, res) => {
@@ -276,12 +271,7 @@ authRouter.post('/test-login', async (req, res) => {
 // User password change (admin)
 // ---------------------------------------------------------------------------
 
-authRouter.post('/users/:userId/change-password', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+authRouter.post('/users/:userId/change-password', requireAdmin, async (req, res) => {
 
   const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : ''
   if (newPassword.length < 8) {

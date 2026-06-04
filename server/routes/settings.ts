@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { serverConfig } from '../config.js'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAdmin } from '../middleware.js'
 import {
   readRapidIdentityEnabled,
   writeRapidIdentityEnabled,
@@ -11,26 +11,17 @@ import {
 } from '../app-settings.js'
 
 export const settingsRouter = Router()
+settingsRouter.use(requireAdmin)
 
 // ---------------------------------------------------------------------------
 // Auth settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/auth', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+settingsRouter.get('/auth', (_req, res) => {
   res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
 })
 
 settingsRouter.patch('/auth', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   if (typeof req.body?.rapidIdentityEnabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_auth_settings_payload' })
     return
@@ -43,12 +34,7 @@ settingsRouter.patch('/auth', (req, res) => {
 // Email settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/email', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+settingsRouter.get('/email', (_req, res) => {
   const { resendApiKey, from, replyTo, gmailUser, gmailAppPassword, pollIntervalMs } = serverConfig.email
   res.json({
     enabled: readEmailNotificationsEnabled(),
@@ -61,11 +47,6 @@ settingsRouter.get('/email', (req, res) => {
 })
 
 settingsRouter.patch('/email', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   if (typeof req.body?.enabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_email_settings_payload' })
     return
@@ -74,12 +55,7 @@ settingsRouter.patch('/email', (req, res) => {
   res.json({ enabled: readEmailNotificationsEnabled() })
 })
 
-settingsRouter.post('/email/test-resend', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+settingsRouter.post('/email/test-resend', async (_req, res) => {
   const { resendApiKey, from, replyTo, testTo } = serverConfig.email
   if (!resendApiKey || !from) {
     res.status(400).json({ ok: false, error: 'RESEND_API_KEY and EMAIL_FROM must be set in environment variables.' })
@@ -110,12 +86,7 @@ settingsRouter.post('/email/test-resend', async (req, res) => {
   }
 })
 
-settingsRouter.post('/email/test-imap', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+settingsRouter.post('/email/test-imap', async (_req, res) => {
   const { gmailUser, gmailAppPassword } = serverConfig.email
   if (!gmailUser || !gmailAppPassword) {
     res.status(400).json({ ok: false, error: 'GMAIL_USER and GMAIL_APP_PASSWORD must be set in environment variables.' })
@@ -151,21 +122,11 @@ settingsRouter.post('/email/test-imap', async (req, res) => {
 // Power BI settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/power-bi', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+settingsRouter.get('/power-bi', (_req, res) => {
   res.json({ reportUrl: readPowerBiReportUrl() })
 })
 
 settingsRouter.patch('/power-bi', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   const reportUrl = req.body?.reportUrl
   if (reportUrl !== null && reportUrl !== undefined && typeof reportUrl !== 'string') {
     res.status(400).json({ error: 'invalid_power_bi_settings_payload' })

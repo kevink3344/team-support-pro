@@ -54,3 +54,36 @@ export const readSessionUserFromRequest = (req: express.Request): SessionUser | 
 }
 
 export const isAdminUser = (user: SessionUser | null): user is SessionUser => user?.role === 'Admin'
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      user?: SessionUser
+    }
+  }
+}
+
+export const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  req.user = user
+  next()
+}
+
+export const requireAdmin = (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!isAdminUser(user)) {
+    res.status(403).json({ error: 'admin_required' })
+    return
+  }
+  req.user = user
+  next()
+}

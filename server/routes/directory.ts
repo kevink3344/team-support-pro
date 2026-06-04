@@ -5,7 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   type SessionUser,
 } from '../auth.js'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAuth, requireAdmin } from '../middleware.js'
 import {
   createOrganization,
   createCategory,
@@ -41,12 +41,8 @@ export const directoryRouter = Router()
 // Directory (full dataset for the app shell)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/', requireAuth, async (req, res) => {
+  const user = req.user!
 
   try {
     const directory = await loadDirectoryData()
@@ -71,11 +67,7 @@ directoryRouter.get('/public', async (_req, res) => {
 // Organizations
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/organizations', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/organizations', requireAuth, async (_req, res) => {
 
   try {
     res.json({ organizations: await listOrganizations() })
@@ -85,11 +77,7 @@ directoryRouter.get('/organizations', async (req, res) => {
   }
 })
 
-directoryRouter.get('/organizations/:organizationId', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/organizations/:organizationId', requireAuth, async (req, res) => {
 
   const organization = await getOrganizationById(req.params.organizationId)
   if (!organization) {
@@ -100,12 +88,7 @@ directoryRouter.get('/organizations/:organizationId', async (req, res) => {
   res.json({ organization })
 })
 
-directoryRouter.post('/organizations', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.post('/organizations', requireAdmin, async (req, res) => {
 
   try {
     const organization = await createOrganization({
@@ -127,12 +110,7 @@ directoryRouter.post('/organizations', async (req, res) => {
   }
 })
 
-directoryRouter.patch('/organizations/:organizationId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.patch('/organizations/:organizationId', requireAdmin, async (req, res) => {
 
   try {
     const organization = await updateOrganization(req.params.organizationId, {
@@ -153,12 +131,7 @@ directoryRouter.patch('/organizations/:organizationId', async (req, res) => {
   }
 })
 
-directoryRouter.delete('/organizations/:organizationId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.delete('/organizations/:organizationId', requireAdmin, async (req, res) => {
 
   try {
     const deleted = await deleteOrganization(req.params.organizationId)
@@ -177,11 +150,7 @@ directoryRouter.delete('/organizations/:organizationId', async (req, res) => {
 // Teams
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/teams', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/teams', requireAuth, async (_req, res) => {
 
   try {
     res.json({ teams: await listTeams() })
@@ -191,11 +160,7 @@ directoryRouter.get('/teams', async (req, res) => {
   }
 })
 
-directoryRouter.get('/teams/:teamId', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/teams/:teamId', requireAuth, async (req, res) => {
 
   const team = await getTeamById(req.params.teamId)
   if (!team) {
@@ -205,12 +170,7 @@ directoryRouter.get('/teams/:teamId', async (req, res) => {
   res.json({ team })
 })
 
-directoryRouter.post('/teams', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.post('/teams', requireAdmin, async (req, res) => {
 
   try {
     const team = await createTeam({
@@ -233,12 +193,7 @@ directoryRouter.post('/teams', async (req, res) => {
   }
 })
 
-directoryRouter.patch('/teams/:teamId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.patch('/teams/:teamId', requireAdmin, async (req, res) => {
 
   try {
     const team = await updateTeam(req.params.teamId, {
@@ -260,12 +215,7 @@ directoryRouter.patch('/teams/:teamId', async (req, res) => {
   }
 })
 
-directoryRouter.delete('/teams/:teamId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.delete('/teams/:teamId', requireAdmin, async (req, res) => {
 
   try {
     const deleted = await deleteTeam(req.params.teamId)
@@ -284,22 +234,12 @@ directoryRouter.delete('/teams/:teamId', async (req, res) => {
 // Ticket field definitions (per-team)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/teams/:teamId/ticket-fields', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/teams/:teamId/ticket-fields', requireAuth, (req, res) => {
   const fields = getTicketFieldDefinitions(req.params.teamId)
   res.json({ fields })
 })
 
-directoryRouter.put('/teams/:teamId/ticket-fields', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, (req, res) => {
   if (!Array.isArray(req.body?.fields)) {
     res.status(400).json({ error: 'invalid_ticket_fields_payload' })
     return
@@ -312,11 +252,7 @@ directoryRouter.put('/teams/:teamId/ticket-fields', (req, res) => {
 // Categories
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/categories', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/categories', requireAuth, async (_req, res) => {
 
   try {
     res.json({ categories: await listCategories() })
@@ -326,11 +262,7 @@ directoryRouter.get('/categories', async (req, res) => {
   }
 })
 
-directoryRouter.get('/categories/:categoryId', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/categories/:categoryId', requireAuth, async (req, res) => {
 
   const category = await getCategoryById(req.params.categoryId)
   if (!category) {
@@ -340,12 +272,7 @@ directoryRouter.get('/categories/:categoryId', async (req, res) => {
   res.json({ category })
 })
 
-directoryRouter.post('/categories', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.post('/categories', requireAdmin, async (req, res) => {
 
   try {
     const category = await createCategory({
@@ -367,12 +294,7 @@ directoryRouter.post('/categories', async (req, res) => {
   }
 })
 
-directoryRouter.patch('/categories/:categoryId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.patch('/categories/:categoryId', requireAdmin, async (req, res) => {
 
   try {
     const category = await updateCategory(req.params.categoryId, {
@@ -393,12 +315,7 @@ directoryRouter.patch('/categories/:categoryId', async (req, res) => {
   }
 })
 
-directoryRouter.delete('/categories/:categoryId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.delete('/categories/:categoryId', requireAdmin, async (req, res) => {
 
   try {
     const deleted = await deleteCategory(req.params.categoryId)
@@ -417,11 +334,7 @@ directoryRouter.delete('/categories/:categoryId', async (req, res) => {
 // Users
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/users', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/users', requireAuth, async (_req, res) => {
 
   try {
     res.json({ users: await listUsers() })
@@ -431,11 +344,7 @@ directoryRouter.get('/users', async (req, res) => {
   }
 })
 
-directoryRouter.get('/users/:userId', async (req, res) => {
-  if (!readSessionUserFromRequest(req)) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+directoryRouter.get('/users/:userId', requireAuth, async (req, res) => {
 
   const foundUser = await getUserById(req.params.userId)
   if (!foundUser) {
@@ -445,12 +354,7 @@ directoryRouter.get('/users/:userId', async (req, res) => {
   res.json({ user: foundUser })
 })
 
-directoryRouter.post('/users', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.post('/users', requireAdmin, async (req, res) => {
 
   try {
     const createdUser = await createUser({
@@ -474,12 +378,8 @@ directoryRouter.post('/users', async (req, res) => {
   }
 })
 
-directoryRouter.patch('/users/:userId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
+  const user = req.user!
 
   try {
     const updatedUser = await updateUser(req.params.userId, {
@@ -496,7 +396,7 @@ directoryRouter.patch('/users/:userId', async (req, res) => {
     }
 
     // If the user updated their own account, refresh the session cookie
-    if (user && user.id === updatedUser.id) {
+    if (user.id === updatedUser.id) {
       const [updatedTeam, updatedOrganization] = await Promise.all([
         getTeamById(updatedUser.teamId),
         getOrganizationById(updatedUser.organizationId),
@@ -530,12 +430,7 @@ directoryRouter.patch('/users/:userId', async (req, res) => {
   }
 })
 
-directoryRouter.delete('/users/:userId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+directoryRouter.delete('/users/:userId', requireAdmin, async (req, res) => {
 
   try {
     const deleted = await deleteUser(req.params.userId)

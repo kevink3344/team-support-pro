@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAdmin } from '../middleware.js'
 import {
   getTicketStatusReport,
   getTicketPriorityReport,
@@ -14,69 +14,46 @@ import {
 } from '../reports.js'
 
 export const reportsRouter = Router()
+reportsRouter.use(requireAdmin)
 
-reportsRouter.get('/status', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/status', (_req, res) => {
   res.json(getTicketStatusReport())
 })
 
-reportsRouter.get('/priority', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/priority', (_req, res) => {
   res.json(getTicketPriorityReport())
 })
 
-reportsRouter.get('/assignee', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/assignee', (_req, res) => {
   res.json(getAssigneeReport())
 })
 
 reportsRouter.get('/trends', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
   const days = parseInt(req.query.days as string) || 30
   res.json(getTrendReport(days))
 })
 
-reportsRouter.get('/resolution-time', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/resolution-time', (_req, res) => {
   res.json(getResolutionTimeBuckets())
 })
 
-reportsRouter.get('/avg-resolution-by-priority', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/avg-resolution-by-priority', (_req, res) => {
   res.json(getAvgResolutionByPriority())
 })
 
-reportsRouter.get('/avg-resolution-by-team', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/avg-resolution-by-team', (_req, res) => {
   res.json(getAvgResolutionByTeam())
 })
 
-reportsRouter.get('/open-ticket-age', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/open-ticket-age', (_req, res) => {
   res.json(getOpenTicketAgeBuckets())
 })
 
-reportsRouter.get('/first-response-time', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) { res.status(403).json({ error: 'forbidden' }); return }
+reportsRouter.get('/first-response-time', (_req, res) => {
   res.json(getFirstResponseTimeBuckets())
 })
 
-reportsRouter.get('/export/csv', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
-
+reportsRouter.get('/export/csv', (_req, res) => {
   const data = getAllTicketsForExport()
   const csv = [
     ['ID', 'Title', 'Description', 'Status', 'Priority', 'Requestor Name', 'Requestor Email', 'Location', 'Created At', 'Updated At', 'Assignee', 'Category', 'Team'],
@@ -102,13 +79,7 @@ reportsRouter.get('/export/csv', (req, res) => {
   res.send(csv)
 })
 
-reportsRouter.get('/export/excel', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
-
+reportsRouter.get('/export/excel', async (_req, res) => {
   const XLSX = await import('xlsx')
   const data = getAllTicketsForExport()
   const ws = XLSX.utils.json_to_sheet(data)

@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAdmin } from '../middleware.js'
 import {
   createTestFeedbackToken,
   getFeedbackForm,
@@ -20,22 +20,12 @@ export const feedbackRouter = Router()
 // Feedback Form per-org design (admin)
 // ---------------------------------------------------------------------------
 
-feedbackRouter.get('/form/:orgId', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+feedbackRouter.get('/form/:orgId', requireAdmin, (req, res) => {
   const form = getFeedbackForm(req.params.orgId)
   res.json({ form })
 })
 
-feedbackRouter.put('/form/:orgId', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+feedbackRouter.put('/form/:orgId', requireAdmin, (req, res) => {
   if (!Array.isArray(req.body?.fields)) {
     res.status(400).json({ error: 'invalid_feedback_form_payload' })
     return
@@ -44,12 +34,7 @@ feedbackRouter.put('/form/:orgId', (req, res) => {
   res.json({ form })
 })
 
-feedbackRouter.patch('/form/:orgId/enabled', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+feedbackRouter.patch('/form/:orgId/enabled', requireAdmin, (req, res) => {
   if (typeof req.body?.isEnabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_feedback_form_enabled_payload' })
     return
@@ -58,12 +43,7 @@ feedbackRouter.patch('/form/:orgId/enabled', (req, res) => {
   res.json({ form })
 })
 
-feedbackRouter.post('/form/:orgId/test-token', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+feedbackRouter.post('/form/:orgId/test-token', requireAdmin, (req, res) => {
   const form = getFeedbackForm(req.params.orgId)
   if (form.fields.length === 0) {
     res.status(400).json({ error: 'feedback_form_has_no_fields' })
@@ -74,12 +54,7 @@ feedbackRouter.post('/form/:orgId/test-token', (req, res) => {
   res.json({ token, url: `${baseUrl}/feedback/${token}` })
 })
 
-feedbackRouter.get('/responses/:orgId', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+feedbackRouter.get('/responses/:orgId', requireAdmin, (req, res) => {
   const includeTest = req.query.includeTest === 'true'
   const responses = listFeedbackResponses(req.params.orgId, includeTest)
   res.json({ responses })

@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAuth, requireAdmin } from '../middleware.js'
 import { getDashboardSummary } from '../dashboard.js'
 import {
   clearSeededTeamTicketTrends,
@@ -9,12 +9,8 @@ import {
 
 export const dashboardRouter = Router()
 
-dashboardRouter.get('/trends', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+dashboardRouter.get('/trends', requireAuth, async (req, res) => {
+  const user = req.user!
 
   try {
     const trends = await listTeamTicketTrends(21, user.organizationId)
@@ -25,12 +21,8 @@ dashboardRouter.get('/trends', async (req, res) => {
   }
 })
 
-dashboardRouter.get('/summary', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+dashboardRouter.get('/summary', requireAuth, async (req, res) => {
+  const user = req.user!
 
   try {
     const summary = await getDashboardSummary(user.teamId)
@@ -41,12 +33,7 @@ dashboardRouter.get('/summary', async (req, res) => {
   }
 })
 
-dashboardRouter.post('/admin/trends/seed', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+dashboardRouter.post('/admin/trends/seed', requireAdmin, async (req, res) => {
 
   try {
     const result = await seedTeamTicketTrends(
@@ -66,12 +53,7 @@ dashboardRouter.post('/admin/trends/seed', async (req, res) => {
   }
 })
 
-dashboardRouter.post('/admin/trends/clear', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(user ? 403 : 401).json({ error: user ? 'admin_required' : 'unauthenticated' })
-    return
-  }
+dashboardRouter.post('/admin/trends/clear', requireAdmin, async (req, res) => {
 
   try {
     const result = await clearSeededTeamTicketTrends(

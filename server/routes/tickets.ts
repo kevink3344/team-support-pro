@@ -1,6 +1,6 @@
 import multer from 'multer'
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAuth, isAdminUser } from '../middleware.js'
 import {
   createTicket,
   createTicketComment,
@@ -48,12 +48,8 @@ export const ticketsRouter = Router()
 // Ticket list + activity
 // ---------------------------------------------------------------------------
 
-ticketsRouter.get('/', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+ticketsRouter.get('/', requireAuth, async (req, res) => {
+  const user = req.user!
 
   try {
     const tickets = await listTickets(user.teamId)
@@ -64,12 +60,8 @@ ticketsRouter.get('/', async (req, res) => {
   }
 })
 
-ticketsRouter.get('/activity', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+ticketsRouter.get('/activity', requireAuth, async (req, res) => {
+  const user = req.user!
 
   try {
     const tickets = await listTickets(user.teamId)
@@ -86,12 +78,8 @@ ticketsRouter.get('/activity', async (req, res) => {
 // Create ticket (authenticated)
 // ---------------------------------------------------------------------------
 
-ticketsRouter.post('/', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+ticketsRouter.post('/', requireAuth, async (req, res) => {
+  const user = req.user!
 
   const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId : ''
   if (!teamId || teamId !== user.teamId) {
@@ -200,16 +188,10 @@ ticketsRouter.post('/public', async (req, res) => {
 // Single ticket CRUD
 // ---------------------------------------------------------------------------
 
-ticketsRouter.get('/:ticketId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.get('/:ticketId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+ || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -223,16 +205,10 @@ ticketsRouter.get('/:ticketId', async (req, res) => {
   res.json({ ticket })
 })
 
-ticketsRouter.patch('/:ticketId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId) {
+ {
     res.status(400).json({ error: 'invalid_ticket_id' })
     return
   }
@@ -319,16 +295,10 @@ ticketsRouter.patch('/:ticketId', async (req, res) => {
   }
 })
 
-ticketsRouter.delete('/:ticketId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.delete('/:ticketId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId) {
+ {
     res.status(400).json({ error: 'invalid_ticket_id' })
     return
   }
@@ -355,17 +325,11 @@ ticketsRouter.delete('/:ticketId', async (req, res) => {
 // Comments
 // ---------------------------------------------------------------------------
 
-ticketsRouter.post('/:ticketId/comments', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.post('/:ticketId/comments', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const message = typeof req.body?.message === 'string' ? req.body.message.trim() : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !message) {
+ {
     res.status(400).json({ error: 'invalid_comment_payload' })
     return
   }
@@ -388,16 +352,10 @@ ticketsRouter.post('/:ticketId/comments', async (req, res) => {
 // Attachments
 // ---------------------------------------------------------------------------
 
-ticketsRouter.get('/:ticketId/attachments', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.get('/:ticketId/attachments', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+ || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -411,16 +369,10 @@ ticketsRouter.get('/:ticketId/attachments', async (req, res) => {
   }
 })
 
-ticketsRouter.post('/:ticketId/attachments', attachmentUpload.single('file'), async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.post('/:ticketId/attachments', attachmentUpload.single('file'), requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+ || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -453,18 +405,12 @@ ticketsRouter.post('/:ticketId/attachments', attachmentUpload.single('file'), as
   }
 })
 
-ticketsRouter.get('/:ticketId/attachments/:attachmentId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.get('/:ticketId/attachments/:attachmentId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
   const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment'
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+ || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
     res.status(404).json({ error: 'attachment_not_found' })
     return
   }
@@ -486,17 +432,11 @@ ticketsRouter.get('/:ticketId/attachments/:attachmentId', async (req, res) => {
   }
 })
 
-ticketsRouter.delete('/:ticketId/attachments/:attachmentId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.delete('/:ticketId/attachments/:attachmentId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-
-  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+ || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
     res.status(404).json({ error: 'attachment_not_found' })
     return
   }
@@ -518,39 +458,26 @@ ticketsRouter.delete('/:ticketId/attachments/:attachmentId', async (req, res) =>
 // Watchers
 // ---------------------------------------------------------------------------
 
-ticketsRouter.get('/watchers/my-tickets', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
+ticketsRouter.get('/watchers/my-tickets', requireAuth, (req, res) => {
+  const user = req.user!
   res.json({ ticketIds: listWatchedTicketIds(user.id) })
 })
 
-ticketsRouter.get('/:ticketId/watchers', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.get('/:ticketId/watchers', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-  if (!ticketId) {
+ {
     res.status(400).json({ error: 'invalid_ticket_id' })
     return
   }
   res.json({ watchers: listTicketWatchers(ticketId) })
 })
 
-ticketsRouter.post('/:ticketId/watchers', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.post('/:ticketId/watchers', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const targetUserId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-  if (!ticketId || !targetUserId) {
+ {
     res.status(400).json({ error: 'invalid_params' })
     return
   }
@@ -569,16 +496,11 @@ ticketsRouter.post('/:ticketId/watchers', async (req, res) => {
   res.json({ watchers: listTicketWatchers(ticketId) })
 })
 
-ticketsRouter.delete('/:ticketId/watchers/:userId', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
+ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const targetUserId = typeof req.params.userId === 'string' ? req.params.userId : ''
-
-  if (!user) {
-    res.status(401).json({ error: 'unauthenticated' })
-    return
-  }
-  if (!ticketId || !targetUserId) {
+ {
     res.status(400).json({ error: 'invalid_params' })
     return
   }

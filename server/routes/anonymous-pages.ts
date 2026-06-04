@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAdmin } from '../middleware.js'
 import {
   listAnonymousPageConfigs,
   normalizeAnonymousPagePath,
@@ -18,12 +18,7 @@ export const anonymousPagesRouter = Router()
 // Admin: manage anonymous page configs
 // ---------------------------------------------------------------------------
 
-anonymousPagesRouter.get('/', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+anonymousPagesRouter.get('/', requireAdmin, async (_req, res) => {
 
   try {
     const organizations = await listOrganizations()
@@ -34,12 +29,7 @@ anonymousPagesRouter.get('/', async (req, res) => {
   }
 })
 
-anonymousPagesRouter.put('/', async (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+anonymousPagesRouter.put('/', requireAdmin, async (req, res) => {
 
   if (!Array.isArray(req.body?.pages)) {
     res.status(400).json({ error: 'invalid_anonymous_page_settings_payload' })

@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { readSessionUserFromRequest, isAdminUser } from '../middleware.js'
+import { requireAdmin } from '../middleware.js'
 import {
   readFeedbackFormGlobalEnabled,
   writeFeedbackFormGlobalEnabled,
@@ -17,26 +17,17 @@ import {
 } from '../webhooks.js'
 
 export const webhooksRouter = Router()
+webhooksRouter.use(requireAdmin)
 
 // ---------------------------------------------------------------------------
 // Feedback global toggle
 // ---------------------------------------------------------------------------
 
-webhooksRouter.get('/feedback', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+webhooksRouter.get('/feedback', (_req, res) => {
   res.json({ enabled: readFeedbackFormGlobalEnabled() })
 })
 
 webhooksRouter.patch('/feedback', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   if (typeof req.body?.enabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_feedback_settings_payload' })
     return
@@ -50,21 +41,13 @@ webhooksRouter.patch('/feedback', (req, res) => {
 // ---------------------------------------------------------------------------
 
 webhooksRouter.get('/webhooks', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+  const user = req.user!
   const configs = listWebhookConfigs(user.organizationId)
   res.json({ webhooks: configs })
 })
 
 webhooksRouter.post('/webhooks', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+  const user = req.user!
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
   const events: WebhookEvent[] = Array.isArray(req.body?.events)
     ? (req.body.events as unknown[]).filter((e): e is WebhookEvent =>
@@ -90,11 +73,6 @@ webhooksRouter.post('/webhooks', (req, res) => {
 })
 
 webhooksRouter.patch('/webhooks/:id', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   const input: UpdateWebhookInput = {}
   if (typeof req.body?.url === 'string') input.url = req.body.url.trim()
   if (typeof req.body?.secret === 'string') input.secret = req.body.secret
@@ -113,11 +91,6 @@ webhooksRouter.patch('/webhooks/:id', (req, res) => {
 })
 
 webhooksRouter.delete('/webhooks/:id', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
   const deleted = deleteWebhookConfig(req.params.id)
   if (!deleted) {
     res.status(404).json({ error: 'webhook_not_found' })
@@ -127,11 +100,7 @@ webhooksRouter.delete('/webhooks/:id', (req, res) => {
 })
 
 webhooksRouter.post('/webhooks/:id/test', (req, res) => {
-  const user = readSessionUserFromRequest(req)
-  if (!isAdminUser(user)) {
-    res.status(403).json({ error: 'forbidden' })
-    return
-  }
+  const user = req.user!
   dispatchWebhookEvent(user.organizationId, 'ticket.created', {
     test: true,
     message: 'This is a test ping from Team Support Pro.',
