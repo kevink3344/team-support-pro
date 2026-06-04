@@ -21,7 +21,7 @@ export const feedbackRouter = Router()
 // ---------------------------------------------------------------------------
 
 feedbackRouter.get('/form/:orgId', requireAdmin, (req, res) => {
-  const form = getFeedbackForm(req.params.orgId)
+  const form = getFeedbackForm(String(req.params.orgId))
   res.json({ form })
 })
 
@@ -30,7 +30,7 @@ feedbackRouter.put('/form/:orgId', requireAdmin, (req, res) => {
     res.status(400).json({ error: 'invalid_feedback_form_payload' })
     return
   }
-  const form = saveFeedbackFormFields(req.params.orgId, req.body.fields as Array<Partial<FeedbackFormField>>)
+  const form = saveFeedbackFormFields(String(req.params.orgId), req.body.fields as Array<Partial<FeedbackFormField>>)
   res.json({ form })
 })
 
@@ -39,24 +39,24 @@ feedbackRouter.patch('/form/:orgId/enabled', requireAdmin, (req, res) => {
     res.status(400).json({ error: 'invalid_feedback_form_enabled_payload' })
     return
   }
-  const form = setFeedbackFormEnabled(req.params.orgId, req.body.isEnabled)
+  const form = setFeedbackFormEnabled(String(req.params.orgId), req.body.isEnabled)
   res.json({ form })
 })
 
 feedbackRouter.post('/form/:orgId/test-token', requireAdmin, (req, res) => {
-  const form = getFeedbackForm(req.params.orgId)
+  const form = getFeedbackForm(String(req.params.orgId))
   if (form.fields.length === 0) {
     res.status(400).json({ error: 'feedback_form_has_no_fields' })
     return
   }
-  const token = createTestFeedbackToken(req.params.orgId)
+  const token = createTestFeedbackToken(String(req.params.orgId))
   const baseUrl = (serverConfig.allowedOrigins[0] ?? serverConfig.clientUrl).replace(/\/$/, '')
   res.json({ token, url: `${baseUrl}/feedback/${token}` })
 })
 
 feedbackRouter.get('/responses/:orgId', requireAdmin, (req, res) => {
   const includeTest = req.query.includeTest === 'true'
-  const responses = listFeedbackResponses(req.params.orgId, includeTest)
+  const responses = listFeedbackResponses(String(req.params.orgId), includeTest)
   res.json({ responses })
 })
 
@@ -65,7 +65,7 @@ feedbackRouter.get('/responses/:orgId', requireAdmin, (req, res) => {
 // ---------------------------------------------------------------------------
 
 feedbackRouter.get('/public/:token', (req, res) => {
-  const token = req.params.token
+  const token = String(req.params.token)
   const resolution = resolveToken(token)
 
   if (resolution.status !== 'valid' || !resolution.data) {
@@ -89,7 +89,7 @@ feedbackRouter.get('/public/:token', (req, res) => {
 })
 
 feedbackRouter.post('/public/:token', (req, res) => {
-  const token = req.params.token
+  const token = String(req.params.token)
 
   if (!Array.isArray(req.body?.answers)) {
     res.status(400).json({ error: 'invalid_feedback_submission' })

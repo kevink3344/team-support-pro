@@ -82,7 +82,7 @@ webhooksRouter.patch('/webhooks/:id', (req, res) => {
     )
   }
   if (typeof req.body?.isEnabled === 'boolean') input.isEnabled = req.body.isEnabled
-  const webhook = updateWebhookConfig(req.params.id, input)
+  const webhook = updateWebhookConfig(String(req.params.id), input)
   if (!webhook) {
     res.status(404).json({ error: 'webhook_not_found' })
     return
@@ -91,7 +91,7 @@ webhooksRouter.patch('/webhooks/:id', (req, res) => {
 })
 
 webhooksRouter.delete('/webhooks/:id', (req, res) => {
-  const deleted = deleteWebhookConfig(req.params.id)
+  const deleted = deleteWebhookConfig(String(req.params.id))
   if (!deleted) {
     res.status(404).json({ error: 'webhook_not_found' })
     return

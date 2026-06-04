@@ -280,7 +280,7 @@ authRouter.post('/users/:userId/change-password', requireAdmin, async (req, res)
   }
 
   try {
-    const targetUser = await getUserById(req.params.userId)
+    const targetUser = await getUserById(String(req.params.userId))
     if (!targetUser) {
       res.status(404).json({ error: 'user_not_found' })
       return

@@ -41,8 +41,7 @@ export const directoryRouter = Router()
 // Directory (full dataset for the app shell)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/', requireAuth, async (req, res) => {
-  const user = req.user!
+directoryRouter.get('/', requireAuth, async (_req, res) => {
 
   try {
     const directory = await loadDirectoryData()
@@ -79,7 +78,7 @@ directoryRouter.get('/organizations', requireAuth, async (_req, res) => {
 
 directoryRouter.get('/organizations/:organizationId', requireAuth, async (req, res) => {
 
-  const organization = await getOrganizationById(req.params.organizationId)
+  const organization = await getOrganizationById(String(req.params.organizationId))
   if (!organization) {
     res.status(404).json({ error: 'organization_not_found' })
     return
@@ -113,7 +112,7 @@ directoryRouter.post('/organizations', requireAdmin, async (req, res) => {
 directoryRouter.patch('/organizations/:organizationId', requireAdmin, async (req, res) => {
 
   try {
-    const organization = await updateOrganization(req.params.organizationId, {
+    const organization = await updateOrganization(String(req.params.organizationId), {
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       code: typeof req.body?.code === 'string' ? req.body.code : '',
       accent: typeof req.body?.accent === 'string' ? req.body.accent : '',
@@ -134,7 +133,7 @@ directoryRouter.patch('/organizations/:organizationId', requireAdmin, async (req
 directoryRouter.delete('/organizations/:organizationId', requireAdmin, async (req, res) => {
 
   try {
-    const deleted = await deleteOrganization(req.params.organizationId)
+    const deleted = await deleteOrganization(String(req.params.organizationId))
     if (!deleted) {
       res.status(400).json({ error: 'organization_delete_failed' })
       return
@@ -162,7 +161,7 @@ directoryRouter.get('/teams', requireAuth, async (_req, res) => {
 
 directoryRouter.get('/teams/:teamId', requireAuth, async (req, res) => {
 
-  const team = await getTeamById(req.params.teamId)
+  const team = await getTeamById(String(req.params.teamId))
   if (!team) {
     res.status(404).json({ error: 'team_not_found' })
     return
@@ -196,7 +195,7 @@ directoryRouter.post('/teams', requireAdmin, async (req, res) => {
 directoryRouter.patch('/teams/:teamId', requireAdmin, async (req, res) => {
 
   try {
-    const team = await updateTeam(req.params.teamId, {
+    const team = await updateTeam(String(req.params.teamId), {
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       code: typeof req.body?.code === 'string' ? req.body.code : '',
@@ -218,7 +217,7 @@ directoryRouter.patch('/teams/:teamId', requireAdmin, async (req, res) => {
 directoryRouter.delete('/teams/:teamId', requireAdmin, async (req, res) => {
 
   try {
-    const deleted = await deleteTeam(req.params.teamId)
+    const deleted = await deleteTeam(String(req.params.teamId))
     if (!deleted) {
       res.status(404).json({ error: 'team_not_found' })
       return
@@ -235,7 +234,7 @@ directoryRouter.delete('/teams/:teamId', requireAdmin, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 directoryRouter.get('/teams/:teamId/ticket-fields', requireAuth, (req, res) => {
-  const fields = getTicketFieldDefinitions(req.params.teamId)
+  const fields = getTicketFieldDefinitions(String(req.params.teamId))
   res.json({ fields })
 })
 
@@ -244,7 +243,7 @@ directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, (req, res) => 
     res.status(400).json({ error: 'invalid_ticket_fields_payload' })
     return
   }
-  const fields = saveTicketFieldDefinitions(req.params.teamId, req.body.fields as Array<Partial<TicketFieldDefinition>>)
+  const fields = saveTicketFieldDefinitions(String(req.params.teamId), req.body.fields as Array<Partial<TicketFieldDefinition>>)
   res.json({ fields })
 })
 
@@ -264,7 +263,7 @@ directoryRouter.get('/categories', requireAuth, async (_req, res) => {
 
 directoryRouter.get('/categories/:categoryId', requireAuth, async (req, res) => {
 
-  const category = await getCategoryById(req.params.categoryId)
+  const category = await getCategoryById(String(req.params.categoryId))
   if (!category) {
     res.status(404).json({ error: 'category_not_found' })
     return
@@ -297,7 +296,7 @@ directoryRouter.post('/categories', requireAdmin, async (req, res) => {
 directoryRouter.patch('/categories/:categoryId', requireAdmin, async (req, res) => {
 
   try {
-    const category = await updateCategory(req.params.categoryId, {
+    const category = await updateCategory(String(req.params.categoryId), {
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       description: typeof req.body?.description === 'string' ? req.body.description : '',
@@ -318,7 +317,7 @@ directoryRouter.patch('/categories/:categoryId', requireAdmin, async (req, res) 
 directoryRouter.delete('/categories/:categoryId', requireAdmin, async (req, res) => {
 
   try {
-    const deleted = await deleteCategory(req.params.categoryId)
+    const deleted = await deleteCategory(String(req.params.categoryId))
     if (!deleted) {
       res.status(404).json({ error: 'category_not_found' })
       return
@@ -346,7 +345,7 @@ directoryRouter.get('/users', requireAuth, async (_req, res) => {
 
 directoryRouter.get('/users/:userId', requireAuth, async (req, res) => {
 
-  const foundUser = await getUserById(req.params.userId)
+  const foundUser = await getUserById(String(req.params.userId))
   if (!foundUser) {
     res.status(404).json({ error: 'user_not_found' })
     return
@@ -382,7 +381,7 @@ directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
   const user = req.user!
 
   try {
-    const updatedUser = await updateUser(req.params.userId, {
+    const updatedUser = await updateUser(String(req.params.userId), {
       name: typeof req.body?.name === 'string' ? req.body.name : '',
       email: typeof req.body?.email === 'string' ? req.body.email : '',
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
@@ -433,7 +432,7 @@ directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
 directoryRouter.delete('/users/:userId', requireAdmin, async (req, res) => {
 
   try {
-    const deleted = await deleteUser(req.params.userId)
+    const deleted = await deleteUser(String(req.params.userId))
     if (!deleted) {
       res.status(404).json({ error: 'user_not_found' })
       return

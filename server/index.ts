@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 
 import { serverConfig } from './config.js'
-import { resolveAnonymousPageConfig, normalizeAnonymousPagePath, listAnonymousPageConfigs } from './anonymous-pages.js'
+import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonymous-pages.js'
 import { listOrganizations } from './directory.js'
 import { upsertLocalAccountPersisted } from './local-auth.js'
 import { getDb } from './db.js'
@@ -23,7 +23,7 @@ import { reportsRouter } from './routes/reports.js'
 import { authRouter } from './routes/auth.js'
 import { directoryRouter } from './routes/directory.js'
 import { dashboardRouter } from './routes/dashboard.js'
-import { ticketsRouter, attachmentUpload } from './routes/tickets.js'
+import { ticketsRouter } from './routes/tickets.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -119,11 +119,11 @@ app.use('/api/settings', webhooksRouter)
 app.use('/api/feedback', feedbackRouter)
 // Public feedback (re-map /api/public/feedback/:token → feedbackRouter /public/:token)
 app.get('/api/public/feedback/:token', (req, res, next) => {
-  req.url = `/public/${req.params.token}`
+  req.url = `/public/${String(req.params.token)}`
   feedbackRouter(req, res, next)
 })
 app.post('/api/public/feedback/:token', (req, res, next) => {
-  req.url = `/public/${req.params.token}`
+  req.url = `/public/${String(req.params.token)}`
   feedbackRouter(req, res, next)
 })
 app.use('/api/settings/anonymous-pages', anonymousPagesRouter)
