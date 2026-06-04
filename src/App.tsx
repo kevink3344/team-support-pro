@@ -14,11 +14,7 @@ import {
   Eye,
   FileUp,
   Grip,
-  Folder,
   Paperclip,
-  GraduationCap,
-  Inbox,
-  LayoutDashboard,
   LogOut,
   Moon,
   PanelLeftClose,
@@ -29,7 +25,6 @@ import {
   RefreshCw,
   Search,
   Settings2,
-  Shield,
   SunMedium,
   Pencil,
   Ticket,
@@ -37,8 +32,6 @@ import {
   TriangleAlert,
   User as UserIcon,
   UserPlus,
-  Users,
-  Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -96,13 +89,12 @@ import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
 import { REMEMBER_LOGIN_EMAIL_COOKIE, readCookieValue, setCookieValue, clearCookieValue } from './lib/cookies'
 import { formatDateTime, formatFileSize, getStatusBadgeClass, getPriorityBadgeClass } from './lib/format'
-import { type NotificationItem, toMentionHandle, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems } from './lib/notifications'
+import { type NotificationItem, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems } from './lib/notifications'
 import {
   ResponsiveDashboardGrid,
   type DashboardLayouts,
   type DashboardWidgetId,
   dashboardWidgetOrder,
-  defaultDashboardLayouts,
   mergeDashboardLayouts,
   filterDashboardLayouts,
 } from './dashboard/layouts'
