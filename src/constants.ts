@@ -7,7 +7,7 @@ import {
   LayoutDashboard,
   Pencil,
   Plus,
-  Settings2,
+  Settings,
   Shield,
   Users,
   Wrench,
@@ -53,7 +53,7 @@ export const navItems: Array<{
 export const adminNavItems = [
   { id: 'ticket-designer' as AppView, label: 'Ticket Designer', icon: Pencil },
   { id: 'reports' as AppView, label: 'Reports', icon: FileUp },
-  { id: 'settings' as AppView, label: 'Settings', icon: Settings2 },
+  { id: 'settings' as AppView, label: 'Settings', icon: Settings },
 ]
 
 export const teamIcons: Record<string, LucideIcon> = {

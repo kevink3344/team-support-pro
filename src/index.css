@@ -607,6 +607,126 @@ button {
   touch-action: none;
 }
 
+/* -------------------------------------------------------------------------
+   Rich text editor (TipTap)
+   ------------------------------------------------------------------------- */
+
+.rich-text-editor-content .ProseMirror {
+  min-height: 200px;
+  outline: none;
+}
+
+.rich-text-editor-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+.rich-text-editor-content .ProseMirror h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.rich-text-editor-content .ProseMirror h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.rich-text-editor-content .ProseMirror ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.rich-text-editor-content .ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.rich-text-editor-content .ProseMirror a {
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+.rich-text-editor-content .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.75rem 0;
+}
+
+.rich-text-editor-content .ProseMirror strong {
+  font-weight: 700;
+}
+
+.rich-text-editor-content .ProseMirror em {
+  font-style: italic;
+}
+
+.rich-text-editor-content .ProseMirror s {
+  text-decoration: line-through;
+}
+
+/* About page rendered output */
+.about-page-content h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+.about-page-content h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.about-page-content ul {
+  list-style-type: disc;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.about-page-content ol {
+  list-style-type: decimal;
+  padding-left: 1.5rem;
+  margin: 0.5rem 0;
+}
+
+.about-page-content a {
+  text-decoration: underline;
+  color: var(--accent);
+}
+
+.about-page-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.75rem 0;
+}
+
+.about-page-content p {
+  margin-bottom: 0.5rem;
+}
+
+.about-page-content strong {
+  font-weight: 700;
+}
+
+.about-page-content em {
+  font-style: italic;
+}
+
+.about-page-content s {
+  text-decoration: line-through;
+}
+
 .dashboard-grid .react-grid-item.react-draggable-dragging .dashboard-widget-handle {
   cursor: grabbing;
 }

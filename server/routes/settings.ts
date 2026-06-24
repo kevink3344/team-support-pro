@@ -8,6 +8,8 @@ import {
   writeEmailNotificationsEnabled,
   readPowerBiReportUrl,
   writePowerBiReportUrl,
+  readAboutPageHtml,
+  writeAboutPageHtml,
 } from '../app-settings.js'
 
 export const settingsRouter = Router()
@@ -134,4 +136,22 @@ settingsRouter.patch('/power-bi', (req, res) => {
   }
   writePowerBiReportUrl(typeof reportUrl === 'string' ? reportUrl : null)
   res.json({ reportUrl: readPowerBiReportUrl() })
+})
+
+// ---------------------------------------------------------------------------
+// About page settings
+// ---------------------------------------------------------------------------
+
+settingsRouter.get('/about', (_req, res) => {
+  res.json({ html: readAboutPageHtml() })
+})
+
+settingsRouter.patch('/about', (req, res) => {
+  const html = req.body?.html
+  if (typeof html !== 'string') {
+    res.status(400).json({ error: 'invalid_about_page_payload' })
+    return
+  }
+  writeAboutPageHtml(html)
+  res.json({ html: readAboutPageHtml() })
 })

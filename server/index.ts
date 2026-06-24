@@ -11,7 +11,8 @@ import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonym
 import { listOrganizations } from './directory.js'
 import { upsertLocalAccountPersisted } from './local-auth.js'
 import { getDb } from './db.js'
-import { readRapidIdentityEnabled } from './app-settings.js'
+import { readRapidIdentityEnabled, readAboutPageHtml } from './app-settings.js'
+import { requireAuth } from './middleware.js'
 import { listUsers } from './directory.js'
 
 // Route modules
@@ -116,6 +117,9 @@ app.get('/api/public/test-login-users', async (_req, res) => {
 
 app.use('/api/settings', settingsRouter)
 app.use('/api/settings', webhooksRouter)
+app.get('/api/about', requireAuth, (_req, res) => {
+  res.json({ html: readAboutPageHtml() })
+})
 app.use('/api/feedback', feedbackRouter)
 // Public feedback (re-map /api/public/feedback/:token → feedbackRouter /public/:token)
 app.get('/api/public/feedback/:token', (req, res, next) => {

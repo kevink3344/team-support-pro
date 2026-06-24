@@ -16,6 +16,7 @@ import {
   Grip,
   Paperclip,
   LogOut,
+  Info,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
@@ -24,7 +25,7 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
+  Settings,
   SunMedium,
   Pencil,
   Ticket,
@@ -87,6 +88,7 @@ import type {
 } from './types'
 import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
+import { RichTextEditor } from './RichTextEditor'
 import { REMEMBER_LOGIN_EMAIL_COOKIE, readCookieValue, setCookieValue, clearCookieValue } from './lib/cookies'
 import { formatDateTime, formatFileSize, getStatusBadgeClass, getPriorityBadgeClass } from './lib/format'
 import { type NotificationItem, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems } from './lib/notifications'
@@ -113,6 +115,7 @@ type SettingsAccordionSection =
   | 'powerBi'
   | 'feedbackForm'
   | 'webhooks'
+  | 'aboutPage'
 
 type ManagementDrawerSection =
   | 'manageOrganizations'
@@ -150,6 +153,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'powerBi',
   'feedbackForm',
   'webhooks',
+  'aboutPage',
 ]
 
 const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefined) => {
@@ -441,6 +445,11 @@ function App() {
   const [powerBiSettingsPending, setPowerBiSettingsPending] = useState(false)
   const [powerBiSettingsError, setPowerBiSettingsError] = useState('')
   const [powerBiSettingsNotice, setPowerBiSettingsNotice] = useState('')
+  const [aboutPageHtml, setAboutPageHtml] = useState('')
+  const [aboutPageDraft, setAboutPageDraft] = useState('')
+  const [aboutPagePending, setAboutPagePending] = useState(false)
+  const [aboutPageError, setAboutPageError] = useState('')
+  const [aboutPageNotice, setAboutPageNotice] = useState('')
   const [anonymousPageConfigs, setAnonymousPageConfigs] = useState<AnonymousPageConfig[]>([])
   const [anonymousPageSettingsPending, setAnonymousPageSettingsPending] = useState(false)
   const [anonymousPageSettingsError, setAnonymousPageSettingsError] = useState('')
@@ -505,6 +514,7 @@ function App() {
     powerBi: false,
     feedbackForm: false,
     webhooks: false,
+    aboutPage: false,
   })
   const [settingsAccordionOrder, setSettingsAccordionOrder] = useState<SettingsAccordionSection[]>(() =>
     normalizeSettingsAccordionOrder(
@@ -599,6 +609,8 @@ function App() {
   const [quickActionToast, setQuickActionToast] = useState<QuickActionToastState | null>(null)
   const [notificationsPreviewOpen, setNotificationsPreviewOpen] = useState(false)
   const notificationsPreviewRef = useRef<HTMLDivElement | null>(null)
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false)
+  const profileMenuRef = useRef<HTMLDivElement | null>(null)
   const detailResizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const quickActionToastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -955,6 +967,8 @@ function App() {
       setPowerBiReportDraft('')
       setPowerBiSettingsError('')
       setPowerBiSettingsNotice('')
+      setAboutPageError('')
+      setAboutPageNotice('')
       return
     }
 
@@ -1054,6 +1068,23 @@ function App() {
     void loadEmailSettings()
 
     void loadPowerBiSettings()
+
+    const loadAboutPageSettings = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/settings/about'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { html?: string }
+        if (!cancelled) {
+          const html = payload.html ?? ''
+          setAboutPageHtml(html)
+          setAboutPageDraft(html)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    void loadAboutPageSettings()
 
     if (authSession?.organizationId) {
       void loadFeedbackSettings(authSession.organizationId)
@@ -1341,6 +1372,37 @@ function App() {
 
   useEffect(() => {
     if (!authSession) {
+      setAboutPageHtml('')
+      setAboutPageDraft('')
+      return
+    }
+
+    let cancelled = false
+
+    const loadAbout = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/about'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { html?: string }
+        if (!cancelled) {
+          const html = payload.html ?? ''
+          setAboutPageHtml(html)
+          if (authSession.role === 'Admin') {
+            setAboutPageDraft(html)
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    void loadAbout()
+
+    return () => { cancelled = true }
+  }, [authSession?.email])
+
+  useEffect(() => {
+    if (!authSession) {
       return
     }
 
@@ -1411,6 +1473,21 @@ function App() {
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [notificationsPreviewOpen])
+
+  useEffect(() => {
+    if (!profileMenuOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!profileMenuRef.current?.contains(event.target as Node)) {
+        setProfileMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [profileMenuOpen])
 
   useEffect(() => {
     if (!detailResizeActive) {
@@ -2697,6 +2774,52 @@ function App() {
     }
   }
 
+  const saveAboutSettings = async (html: string) => {
+    if (currentUser.role !== 'Admin') {
+      setAboutPageError('Administrator access is required to update the About page.')
+      return
+    }
+
+    setAboutPagePending(true)
+    setAboutPageError('')
+    setAboutPageNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/settings/about'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        setAboutPageError('Your session expired. Please sign in again.')
+        return
+      }
+
+      if (response.status === 403) {
+        setAboutPageError('Administrator access is required to update the About page.')
+        return
+      }
+
+      if (!response.ok) {
+        setAboutPageError('About page could not be saved.')
+        return
+      }
+
+      const payload = (await response.json()) as { html?: string }
+      const saved = payload.html ?? ''
+      setAboutPageHtml(saved)
+      setAboutPageDraft(saved)
+      setAboutPageNotice('About page saved.')
+    } catch {
+      setAboutPageError('About page could not be saved. Confirm the backend server is running.')
+    } finally {
+      setAboutPagePending(false)
+    }
+  }
+
   const runEmailTestResend = async () => {
     setEmailTestResendPending(true)
     setEmailTestResendResult(null)
@@ -3853,6 +3976,8 @@ function App() {
         ? 'Manage Teams'
       : activeView === 'manage-categories'
         ? 'Categories'
+      : activeView === 'about'
+        ? 'About'
       : visibleNavItems.find((item) => item.id === activeView)?.label ?? 'Settings'
 
   const resetDashboardLayout = () => {
@@ -6253,6 +6378,66 @@ function App() {
             </div>
           )
 
+        case 'aboutPage':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {authSession?.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to manage the About page.
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-[color:var(--text-muted)]">
+                    Enter the HTML content shown on the About page. Users can access it from the profile menu in the header.
+                  </div>
+                  <div className="surface-muted space-y-3 rounded-[2px] p-4">
+                    <div className="field">
+                      <span className="field-label">About page content</span>
+                      <RichTextEditor
+                        value={aboutPageDraft}
+                        onChange={(html) => {
+                          setAboutPageDraft(html)
+                          setAboutPageError('')
+                          setAboutPageNotice('')
+                        }}
+                        disabled={aboutPagePending}
+                        placeholder="Enter your about page content here..."
+                      />
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => void saveAboutSettings(aboutPageDraft)}
+                        disabled={aboutPagePending}
+                      >
+                        {aboutPagePending ? 'Saving...' : 'Save About Page'}
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        onClick={() => void saveAboutSettings('')}
+                        disabled={aboutPagePending || !aboutPageHtml}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+                  {aboutPageError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {aboutPageError}
+                    </div>
+                  )}
+                  {aboutPageNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {aboutPageNotice}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )
+
         case 'feedbackForm': {
           if (currentUser.role !== 'Admin') {
             return (
@@ -6874,6 +7059,10 @@ function App() {
         title: 'Webhooks',
         description: 'Send real-time event notifications to external URLs when tickets are created, updated, or resolved.',
       },
+      aboutPage: {
+        title: 'About Page',
+        description: 'Configure the HTML content displayed on the About page accessible from the user profile menu.',
+      },
     }
 
     const { title, description } = accordionMetadata[section]
@@ -7482,20 +7671,43 @@ function App() {
                   <div className="truncate text-sm font-semibold text-white">{currentUser.name}</div>
                   <div className="truncate text-[11px] leading-4 text-white/70">{currentTeam.name}</div>
                 </div>
-                <div className="group relative hidden sm:block">
-                  <div
+                <div className="relative hidden sm:block" ref={profileMenuRef}>
+                  <button
+                    type="button"
                     className="icon-button"
                     style={{ color: currentUser.name === 'Administrator' ? '#facc15' : '#ffffff' }}
                     aria-label="User profile"
-                    title={`${currentUser.name}\n${currentUser.email}\n${currentTeam.name}`}
+                    aria-expanded={profileMenuOpen}
+                    aria-haspopup="menu"
+                    onClick={() => setProfileMenuOpen((current) => !current)}
                   >
                     <UserIcon className="h-5 w-5" />
-                  </div>
-                  <div className="pointer-events-none absolute right-0 top-full z-40 mt-2 hidden min-w-56 rounded-[2px] border border-white/10 bg-[color:var(--header-bg)] p-3 text-right shadow-[0_20px_60px_rgba(13,47,79,0.28)] group-hover:block">
-                    <div className="text-sm font-semibold text-white">{currentUser.name}</div>
-                    <div className="text-xs text-white/70">{currentUser.email}</div>
-                    <div className="mt-2 text-xs uppercase tracking-[0.12em] text-white/60">{currentTeam.name}</div>
-                  </div>
+                  </button>
+                  {profileMenuOpen && (
+                    <div className="absolute right-0 top-full z-40 mt-2 min-w-56 rounded-[2px] border border-white/10 bg-[color:var(--header-bg)] p-3 shadow-[0_20px_60px_rgba(13,47,79,0.28)]">
+                      <div className="text-sm font-semibold text-white">{currentUser.name}</div>
+                      <div className="text-xs text-white/70">{currentUser.email}</div>
+                      <div className="mt-2 text-xs uppercase tracking-[0.12em] text-white/60">{currentTeam.name}</div>
+                      <div className="mt-3 border-t border-white/10 pt-3 flex flex-col gap-1">
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-[2px] px-2 py-1.5 text-sm text-white/90 hover:bg-white/10 text-left"
+                          onClick={() => { setActiveView('about'); setProfileMenuOpen(false) }}
+                        >
+                          <Info className="h-4 w-4 shrink-0" />
+                          About
+                        </button>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-[2px] px-2 py-1.5 text-sm text-white/90 hover:bg-white/10 text-left"
+                          onClick={signOut}
+                        >
+                          <LogOut className="h-4 w-4 shrink-0" />
+                          Logout
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -7619,19 +7831,10 @@ function App() {
                     className="icon-button text-white"
                     onClick={() => setActiveView('settings')}
                   >
-                    <Settings2 className="h-5 w-5" />
+                    <Settings className="h-5 w-5" />
                   </button>
                 )}
 
-                <button
-                  type="button"
-                  className="p-2 text-white hover:bg-white/12 rounded"
-                  style={{ color: '#ffffff' }}
-                  onClick={signOut}
-                  title="Sign Out"
-                >
-                  <LogOut className="h-5 w-5" />
-                </button>
               </div>
             </div>
 
@@ -7789,6 +7992,20 @@ function App() {
             {activeView === 'manage-categories' && currentUser.role === 'Admin' && renderManageCategoriesPage()}
 
             {activeView === 'ticket-designer' && currentUser.role === 'Admin' && renderTicketDesignerPage()}
+
+            {activeView === 'about' && (
+              <div className="surface p-6">
+                {aboutPageHtml ? (
+                  <div
+                    className="about-page-content"
+                    // eslint-disable-next-line react/no-danger
+                    dangerouslySetInnerHTML={{ __html: aboutPageHtml }}
+                  />
+                ) : (
+                  <div className="text-sm text-[color:var(--text-muted)]">No about page content has been configured yet.</div>
+                )}
+              </div>
+            )}
 
             {activeView === 'new-ticket' && (
               <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">

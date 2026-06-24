@@ -53,3 +53,20 @@ export const writePowerBiReportUrl = (reportUrl: string | null) => {
     "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES (?, ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
   ).run(POWER_BI_REPORT_URL_KEY, reportUrl?.trim() ?? '')
 }
+
+const ABOUT_PAGE_HTML_KEY = 'aboutPageHtml'
+
+export const readAboutPageHtml = () => {
+  const db = getDb()
+  const row = db
+    .prepare('SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1')
+    .get(ABOUT_PAGE_HTML_KEY) as { value?: string } | undefined
+  return row?.value ?? ''
+}
+
+export const writeAboutPageHtml = (html: string) => {
+  const db = getDb()
+  db.prepare(
+    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES (?, ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
+  ).run(ABOUT_PAGE_HTML_KEY, html)
+}

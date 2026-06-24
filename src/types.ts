@@ -27,6 +27,7 @@ export type AppView =
   | 'ticket-designer'
   | 'reports'
   | 'settings'
+  | 'about'
 
 export type ListViewMode = 'table' | 'cards'
 export type ThemeMode = 'light' | 'dark'

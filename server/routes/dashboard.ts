@@ -33,7 +33,7 @@ dashboardRouter.get('/summary', requireAuth, async (req, res) => {
   }
 })
 
-dashboardRouter.post('/admin/trends/seed', requireAdmin, async (req, res) => {
+dashboardRouter.post('/trends/seed', requireAdmin, async (req, res) => {
 
   try {
     const result = await seedTeamTicketTrends(
@@ -53,7 +53,7 @@ dashboardRouter.post('/admin/trends/seed', requireAdmin, async (req, res) => {
   }
 })
 
-dashboardRouter.post('/admin/trends/clear', requireAdmin, async (req, res) => {
+dashboardRouter.post('/trends/clear', requireAdmin, async (req, res) => {
 
   try {
     const result = await clearSeededTeamTicketTrends(
