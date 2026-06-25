@@ -2929,7 +2929,7 @@ function App() {
       const [globalRes, formRes, responsesRes] = await Promise.all([
         fetch(apiUrl('/api/settings/feedback'), { credentials: 'include' }),
         fetch(apiUrl(`/api/feedback/form/${orgId}`), { credentials: 'include' }),
-        fetch(apiUrl(`/api/feedback/responses/${orgId}`), { credentials: 'include' }),
+        fetch(apiUrl(`/api/feedback/responses/${orgId}?includeTest=true`), { credentials: 'include' }),
       ])
       if (globalRes.ok) {
         const d = (await globalRes.json()) as { enabled?: boolean }
@@ -3096,7 +3096,7 @@ function App() {
   const refreshFeedbackResponses = async (orgId: string) => {
     setFeedbackResponsesLoading(true)
     try {
-      const res = await fetch(apiUrl(`/api/feedback/responses/${orgId}`), { credentials: 'include' })
+      const res = await fetch(apiUrl(`/api/feedback/responses/${orgId}?includeTest=true`), { credentials: 'include' })
       if (res.ok) {
         const d = (await res.json()) as { responses?: FeedbackResponseSummary[] }
         if (Array.isArray(d.responses)) setFeedbackResponses(d.responses)
@@ -6743,7 +6743,7 @@ function App() {
               <div>
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Responses ({feedbackResponses.filter((r) => !r.isTest).length})
+                    Responses ({feedbackResponses.length}{feedbackResponses.some((r) => r.isTest) ? `, ${feedbackResponses.filter((r) => r.isTest).length} test` : ''})
                   </p>
                   <button
                     disabled={feedbackResponsesLoading}
@@ -6753,12 +6753,11 @@ function App() {
                     {feedbackResponsesLoading ? 'Loading…' : 'Refresh'}
                   </button>
                 </div>
-                {feedbackResponses.filter((r) => !r.isTest).length === 0 ? (
+                {feedbackResponses.length === 0 ? (
                   <p className="text-sm italic text-gray-400">No responses yet.</p>
                 ) : (
                   <div className="space-y-1">
                     {feedbackResponses
-                      .filter((r) => !r.isTest)
                       .map((resp) => (
                         <div
                           key={resp.id}
@@ -6775,6 +6774,9 @@ function App() {
                             <span className="flex-1 truncate text-gray-700">
                               {resp.requestorEmail ?? '(unknown)'}
                             </span>
+                            {resp.isTest && (
+                              <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">Test</span>
+                            )}
                             {resp.ticketId && (
                               <span className="shrink-0 text-xs text-gray-400">
                                 Ticket {resp.ticketId.slice(0, 8)}
