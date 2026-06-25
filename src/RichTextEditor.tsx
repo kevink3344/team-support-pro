@@ -84,7 +84,7 @@ export const RichTextEditor = ({ value, onChange, disabled, placeholder }: RichT
     if (!editor) return
     const current = editor.getHTML()
     if (value !== current) {
-      editor.commands.setContent(value, { preserveWhitespace: 'full' })
+      editor.commands.setContent(value)
     }
   }, [value, editor])
 
