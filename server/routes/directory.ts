@@ -41,10 +41,9 @@ export const directoryRouter = Router()
 // Directory (full dataset for the app shell)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/', requireAuth, async (_req, res) => {
-
+directoryRouter.get('/', requireAuth, async (req, res) => {
   try {
-    const directory = await loadDirectoryData()
+    const directory = await loadDirectoryData(req.user!.organizationId)
     res.json(directory)
   } catch (error) {
     console.error('Loading directory data failed.', error)
@@ -66,10 +65,9 @@ directoryRouter.get('/public', async (_req, res) => {
 // Organizations
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/organizations', requireAuth, async (_req, res) => {
-
+directoryRouter.get('/organizations', requireAuth, async (req, res) => {
   try {
-    res.json({ organizations: await listOrganizations() })
+    res.json({ organizations: await listOrganizations(req.user!.organizationId) })
   } catch (error) {
     console.error('Loading organizations failed.', error)
     res.status(500).json({ error: 'organization_load_failed' })
@@ -149,10 +147,9 @@ directoryRouter.delete('/organizations/:organizationId', requireAdmin, async (re
 // Teams
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/teams', requireAuth, async (_req, res) => {
-
+directoryRouter.get('/teams', requireAuth, async (req, res) => {
   try {
-    res.json({ teams: await listTeams() })
+    res.json({ teams: await listTeams(req.user!.organizationId) })
   } catch (error) {
     console.error('Loading teams failed.', error)
     res.status(500).json({ error: 'team_load_failed' })
@@ -251,10 +248,9 @@ directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, async (req, re
 // Categories
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/categories', requireAuth, async (_req, res) => {
-
+directoryRouter.get('/categories', requireAuth, async (req, res) => {
   try {
-    res.json({ categories: await listCategories() })
+    res.json({ categories: await listCategories(req.user!.organizationId) })
   } catch (error) {
     console.error('Loading categories failed.', error)
     res.status(500).json({ error: 'category_load_failed' })
@@ -333,10 +329,9 @@ directoryRouter.delete('/categories/:categoryId', requireAdmin, async (req, res)
 // Users
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/users', requireAuth, async (_req, res) => {
-
+directoryRouter.get('/users', requireAuth, async (req, res) => {
   try {
-    res.json({ users: await listUsers() })
+    res.json({ users: await listUsers(req.user!.organizationId) })
   } catch (error) {
     console.error('Loading users failed.', error)
     res.status(500).json({ error: 'user_load_failed' })

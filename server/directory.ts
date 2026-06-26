@@ -118,9 +118,11 @@ const teamBelongsToOrganization = async (teamId: string, organizationId: string)
   return Boolean(row)
 }
 
-export const listOrganizations = async (): Promise<DirectoryOrganization[]> => {
+export const listOrganizations = async (organizationId?: string): Promise<DirectoryOrganization[]> => {
   const db = getDb()
-  const rows = await dbAll(db, 'SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations ORDER BY Name ASC')
+  const rows = organizationId
+    ? await dbAll(db, 'SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations WHERE Id = ? ORDER BY Name ASC', [organizationId])
+    : await dbAll(db, 'SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations ORDER BY Name ASC')
   return rows.map(normalizeOrganization)
 }
 
@@ -157,9 +159,11 @@ export const deleteOrganization = async (organizationId: string): Promise<boolea
   return result.rowsAffected > 0
 }
 
-export const listTeams = async (): Promise<DirectoryTeam[]> => {
+export const listTeams = async (organizationId?: string): Promise<DirectoryTeam[]> => {
   const db = getDb()
-  const rows = await dbAll(db, 'SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams ORDER BY OrganizationId ASC, Name ASC')
+  const rows = organizationId
+    ? await dbAll(db, 'SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams WHERE OrganizationId = ? ORDER BY Name ASC', [organizationId])
+    : await dbAll(db, 'SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams ORDER BY OrganizationId ASC, Name ASC')
   return rows.map(normalizeTeam)
 }
 
@@ -197,9 +201,11 @@ export const deleteTeam = async (teamId: string): Promise<boolean> => {
   return result.rowsAffected > 0
 }
 
-export const listCategories = async (): Promise<DirectoryCategory[]> => {
+export const listCategories = async (organizationId?: string): Promise<DirectoryCategory[]> => {
   const db = getDb()
-  const rows = await dbAll(db, 'SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories ORDER BY TeamId ASC, Name ASC')
+  const rows = organizationId
+    ? await dbAll(db, 'SELECT c.Id AS id, c.TeamId AS teamId, c.Name AS name, c.Description AS description FROM Categories c JOIN Teams t ON t.Id = c.TeamId WHERE t.OrganizationId = ? ORDER BY c.TeamId ASC, c.Name ASC', [organizationId])
+    : await dbAll(db, 'SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories ORDER BY TeamId ASC, Name ASC')
   return rows.map(normalizeCategory)
 }
 
@@ -231,9 +237,11 @@ export const deleteCategory = async (categoryId: string): Promise<boolean> => {
   return result.rowsAffected > 0
 }
 
-export const listUsers = async (): Promise<DirectoryUser[]> => {
+export const listUsers = async (organizationId?: string): Promise<DirectoryUser[]> => {
   const db = getDb()
-  const rows = await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users ORDER BY Name ASC')
+  const rows = organizationId
+    ? await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users WHERE OrganizationId = ? ORDER BY Name ASC', [organizationId])
+    : await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users ORDER BY Name ASC')
   return rows.map(normalizeUser)
 }
 
@@ -271,16 +279,16 @@ export const deleteUser = async (userId: string): Promise<boolean> => {
   return result.rowsAffected > 0
 }
 
-export const loadDirectoryData = async (): Promise<{
+export const loadDirectoryData = async (organizationId?: string): Promise<{
   organizations: DirectoryOrganization[]
   teams: DirectoryTeam[]
   categories: DirectoryCategory[]
   users: DirectoryUser[]
 }> => {
   return {
-    organizations: await listOrganizations(),
-    teams: await listTeams(),
-    categories: await listCategories(),
-    users: await listUsers(),
+    organizations: await listOrganizations(organizationId),
+    teams: await listTeams(organizationId),
+    categories: await listCategories(organizationId),
+    users: await listUsers(organizationId),
   }
 }

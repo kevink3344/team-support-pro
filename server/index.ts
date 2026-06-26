@@ -138,7 +138,7 @@ app.get('/api/public/anonymous-page-config', (req, res, next) => {
 app.use('/api/reports', reportsRouter)
 app.use('/auth', authRouter)
 app.use('/api/auth', authRouter)
-app.use('/api', directoryRouter)
+app.use('/api/directory', directoryRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin/dashboard', dashboardRouter)
 app.use('/api/tickets', ticketsRouter)
