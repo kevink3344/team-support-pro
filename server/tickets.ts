@@ -1,6 +1,6 @@
-﻿import crypto from 'node:crypto'
+import crypto from 'node:crypto'
 
-import { getDb } from './db.js'
+import { getDb, dbGet, dbAll, dbRun, type Client } from './db.js'
 
 const ticketStatusValues = new Set(['Open', 'In Progress', 'Pending', 'Resolved', 'Closed'])
 const ticketPriorityValues = new Set(['Low', 'Medium', 'High', 'Critical'])
@@ -137,63 +137,61 @@ const validateUpdateTicketInput = (input: UpdateTicketInput) => {
 
 export const ticketBelongsToTeam = async (ticketId: string, teamId: string) => {
   const db = getDb()
-  const row = db.prepare('SELECT 1 AS allowed FROM Tickets WHERE Id = ? AND TeamId = ?').get(ticketId, teamId)
+  const row = await dbGet(db, 'SELECT 1 AS allowed FROM Tickets WHERE Id = ? AND TeamId = ?', [ticketId, teamId])
   return !!row
 }
 
 export const listTicketActivity = async (): Promise<TicketActivityRecord[]> => {
   const db = getDb()
-  const rows = db.prepare('SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity').all() as Record<string, unknown>[]
+  const rows = await dbAll(db, 'SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity')
   return rows.map(mapActivityRecord)
 }
 
 export const listTickets = async (teamId?: string): Promise<TicketRecord[]> => {
   const db = getDb()
-  const ticketRows = teamId
-    ? db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE TeamId = ? ORDER BY UpdatedAt DESC, CreatedAt DESC`).all(teamId) as Record<string, unknown>[]
-    : db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets ORDER BY UpdatedAt DESC, CreatedAt DESC`).all() as Record<string, unknown>[]
-
+  const ticketSql = `SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets${teamId ? ' WHERE TeamId = ?' : ''} ORDER BY UpdatedAt DESC, CreatedAt DESC`
+  const ticketRows = await dbAll(db, ticketSql, teamId ? [teamId] : [])
   const tickets = ticketRows.map(mapTicketRecord)
   const allActivity = await listTicketActivity()
   const ticketIds = new Set(tickets.map((t) => t.id))
 
-  type CFRow = { id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }
-  const cfRows = db
-    .prepare('SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId IN (SELECT Id FROM Tickets' + (teamId ? ' WHERE TeamId = ?' : '') + ') ORDER BY rowid ASC')
-    .all(...(teamId ? [teamId] : [])) as CFRow[]
+  const cfSql = `SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId IN (SELECT Id FROM Tickets${teamId ? ' WHERE TeamId = ?' : ''}) ORDER BY rowid ASC`
+  const cfRows = await dbAll(db, cfSql, teamId ? [teamId] : []) as Array<{ id: unknown; ticketId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
+
   const customFieldsByTicket = new Map<string, TicketCustomFieldValue[]>()
   for (const row of cfRows) {
-    const current = customFieldsByTicket.get(row.ticketId) ?? []
-    current.push(row)
-    customFieldsByTicket.set(row.ticketId, current)
+    const ticketId = String(row.ticketId)
+    const current = customFieldsByTicket.get(ticketId) ?? []
+    current.push({ id: String(row.id), ticketId, fieldId: String(row.fieldId), fieldLabel: String(row.fieldLabel), fieldType: String(row.fieldType), value: String(row.value) })
+    customFieldsByTicket.set(ticketId, current)
   }
 
   return groupTicketsWithActivity(tickets, allActivity.filter((a) => ticketIds.has(a.ticketId)), customFieldsByTicket)
 }
 
-const getCustomFieldValues = (db: import('better-sqlite3').Database, ticketId: string): TicketCustomFieldValue[] => {
-  type CFRow = { id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }
-  const rows = db
-    .prepare('SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId = ? ORDER BY rowid ASC')
-    .all(ticketId) as CFRow[]
-  return rows
+const getCustomFieldValues = async (db: Client, ticketId: string): Promise<TicketCustomFieldValue[]> => {
+  const rows = await dbAll(db, 'SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId = ? ORDER BY rowid ASC', [ticketId]) as Array<{ id: unknown; ticketId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
+  return rows.map((row) => ({ id: String(row.id), ticketId: String(row.ticketId), fieldId: String(row.fieldId), fieldLabel: String(row.fieldLabel), fieldType: String(row.fieldType), value: String(row.value) }))
 }
 
 export const getTicketById = async (ticketId: string): Promise<TicketRecord | null> => {
   const db = getDb()
-  const row = db.prepare(`SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE Id = ?`).get(ticketId) as Record<string, unknown> | undefined
+  const row = await dbGet(db, `SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets WHERE Id = ?`, [ticketId])
   if (!row) return null
   const ticket = mapTicketRecord(row)
-  const activityRows = db.prepare('SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity WHERE TicketId = ? ORDER BY ActivityAt ASC').all(ticketId) as Record<string, unknown>[]
-  return { ...ticket, activity: activityRows.map(mapActivityRecord), customFields: getCustomFieldValues(db, ticketId) }
+  const activityRows = await dbAll(db, 'SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity WHERE TicketId = ? ORDER BY ActivityAt ASC', [ticketId])
+  const customFields = await getCustomFieldValues(db, ticketId)
+  return { ...ticket, activity: activityRows.map(mapActivityRecord), customFields }
 }
 
 export const createTicketComment = async (input: { ticketId: string; actor: string; message: string }): Promise<TicketActivityRecord> => {
   const db = getDb()
   const activityAt = new Date().toISOString()
   const id = `comment-${crypto.randomUUID()}`
-  db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(id, input.ticketId, input.actor, input.message, activityAt)
-  db.prepare('UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?').run(activityAt, input.ticketId)
+  await db.batch([
+    { sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)', args: [id, input.ticketId, input.actor, input.message, activityAt] },
+    { sql: 'UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?', args: [activityAt, input.ticketId] },
+  ], 'write')
   return { id, ticketId: input.ticketId, actor: input.actor, message: input.message, at: activityAt }
 }
 
@@ -208,26 +206,31 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
   if (existing.status !== input.status) changeMessages.push(`Changed status from ${existing.status} to ${input.status}.`)
   if (existing.priority !== input.priority) changeMessages.push(`Changed priority from ${existing.priority} to ${input.priority}.`)
   if (existing.teamId !== input.teamId) {
-    const getTeamName = (id: string) => {
-      const r = db.prepare('SELECT Name FROM Teams WHERE Id = ?').get(id) as Record<string, unknown> | undefined
-      return typeof r?.Name === 'string' && (r.Name as string).trim() ? (r.Name as string).trim() : 'Unknown'
-    }
-    changeMessages.push(`Transferred ticket from ${getTeamName(existing.teamId)} to ${getTeamName(input.teamId)}.`)
+    const [fromTeam, toTeam] = await Promise.all([
+      dbGet(db, 'SELECT Name FROM Teams WHERE Id = ?', [existing.teamId]),
+      dbGet(db, 'SELECT Name FROM Teams WHERE Id = ?', [input.teamId]),
+    ])
+    const fromName = typeof fromTeam?.Name === 'string' ? fromTeam.Name.trim() : 'Unknown'
+    const toName = typeof toTeam?.Name === 'string' ? toTeam.Name.trim() : 'Unknown'
+    changeMessages.push(`Transferred ticket from ${fromName} to ${toName}.`)
   }
   if (existing.assignedToId !== input.assignedToId) {
-    const getName = (id: string | null) => {
+    const getName = async (id: string | null) => {
       if (!id) return 'Unassigned'
-      const r = db.prepare('SELECT Name FROM Users WHERE Id = ?').get(id) as Record<string, unknown> | undefined
-      return typeof r?.Name === 'string' && (r.Name as string).trim() ? (r.Name as string).trim() : 'Unknown'
+      const r = await dbGet(db, 'SELECT Name FROM Users WHERE Id = ?', [id])
+      return typeof r?.Name === 'string' && r.Name.trim() ? r.Name.trim() : 'Unknown'
     }
-    changeMessages.push(`Reassigned ticket from ${getName(existing.assignedToId)} to ${getName(input.assignedToId)}.`)
+    const [fromName, toName] = await Promise.all([getName(existing.assignedToId), getName(input.assignedToId)])
+    changeMessages.push(`Reassigned ticket from ${fromName} to ${toName}.`)
   }
   if (existing.categoryId !== input.categoryId) {
-    const getCat = (id: string) => {
-      const r = db.prepare('SELECT Name FROM Categories WHERE Id = ?').get(id) as Record<string, unknown> | undefined
-      return typeof r?.Name === 'string' && (r.Name as string).trim() ? (r.Name as string).trim() : 'Unknown'
-    }
-    changeMessages.push(`Updated category from ${getCat(existing.categoryId)} to ${getCat(input.categoryId)}.`)
+    const [fromCat, toCat] = await Promise.all([
+      dbGet(db, 'SELECT Name FROM Categories WHERE Id = ?', [existing.categoryId]),
+      dbGet(db, 'SELECT Name FROM Categories WHERE Id = ?', [input.categoryId]),
+    ])
+    const fromName = typeof fromCat?.Name === 'string' ? fromCat.Name.trim() : 'Unknown'
+    const toName = typeof toCat?.Name === 'string' ? toCat.Name.trim() : 'Unknown'
+    changeMessages.push(`Updated category from ${fromName} to ${toName}.`)
   }
   if (existing.title !== input.title) changeMessages.push('Updated ticket title.')
   if (existing.description !== input.description) changeMessages.push('Updated ticket description.')
@@ -236,76 +239,82 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
   if (existing.requestorEmail !== input.requestorEmail.trim().toLowerCase()) changeMessages.push('Updated requester email.')
 
   const resolvedStatuses = new Set(['Resolved', 'Closed'])
-  const newResolvedAt = resolvedStatuses.has(input.status)
-    ? (existing.resolvedAt ?? activityAt)
-    : null
+  const newResolvedAt = resolvedStatuses.has(input.status) ? (existing.resolvedAt ?? activityAt) : null
 
-  const tx = db.transaction(() => {
-    db.prepare('UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, TeamId = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ?, ResolvedAt = ? WHERE Id = ?').run(input.title.trim(), input.description.trim(), input.status, input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', activityAt, newResolvedAt, ticketId)
-    const ins = db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)')
-    for (const msg of changeMessages) ins.run(`activity-${crypto.randomUUID()}`, ticketId, actor, msg, activityAt)
-  })
-  tx()
+  const statements = [
+    {
+      sql: 'UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, TeamId = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ?, ResolvedAt = ? WHERE Id = ?',
+      args: [input.title.trim(), input.description.trim(), input.status, input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', activityAt, newResolvedAt, ticketId],
+    },
+    ...changeMessages.map((msg) => ({
+      sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',
+      args: [`activity-${crypto.randomUUID()}`, ticketId, actor, msg, activityAt],
+    })),
+  ]
+  await db.batch(statements, 'write')
   return getTicketById(ticketId)
 }
 
 export const createTicket = async (input: CreateTicketInput, actor: string): Promise<TicketRecord | null> => {
   if (!validateCreateTicketInput(input)) return null
   const db = getDb()
-  const catRow = db.prepare('SELECT TeamId FROM Categories WHERE Id = ?').get(input.categoryId) as Record<string, unknown> | undefined
+  const catRow = await dbGet(db, 'SELECT TeamId FROM Categories WHERE Id = ?', [input.categoryId])
   if (!catRow?.TeamId || catRow.TeamId !== input.teamId) return null
   if (input.assignedToId) {
-    const userRow = db.prepare('SELECT TeamId FROM Users WHERE Id = ?').get(input.assignedToId) as Record<string, unknown> | undefined
+    const userRow = await dbGet(db, 'SELECT TeamId FROM Users WHERE Id = ?', [input.assignedToId])
     if (!userRow?.TeamId || userRow.TeamId !== input.teamId) return null
   }
   let ticketId = input.id?.trim() || generateTicketId()
   while (await getTicketById(ticketId)) ticketId = generateTicketId()
   const createdAt = new Date().toISOString()
 
-  // Validate and enrich custom fields using field definitions
-  type FieldDefRow = { id: string; fieldType: string; label: string; isRequired: number }
-  const fieldDefs = db
-    .prepare('SELECT Id AS id, FieldType AS fieldType, Label AS label, IsRequired AS isRequired FROM TicketFieldDefinitions WHERE TeamId = ?')
-    .all(input.teamId) as FieldDefRow[]
-  const fieldDefMap = new Map(fieldDefs.map((f) => [f.id, f]))
+  type FieldDefRow = { id: unknown; fieldType: unknown; label: unknown; isRequired: unknown }
+  const fieldDefs = await dbAll(db, 'SELECT Id AS id, FieldType AS fieldType, Label AS label, IsRequired AS isRequired FROM TicketFieldDefinitions WHERE TeamId = ?', [input.teamId]) as FieldDefRow[]
+  const fieldDefMap = new Map(fieldDefs.map((f) => [String(f.id), f]))
 
-  const customFieldInserts: Array<{ id: string; ticketId: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }> = []
+  const customFieldInserts: Array<{ id: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }> = []
   if (Array.isArray(input.customFields)) {
     for (const cf of input.customFields) {
       const def = fieldDefMap.get(cf.fieldId)
       if (!def) continue
       customFieldInserts.push({
         id: `tcfv-${crypto.randomUUID()}`,
-        ticketId,
-        fieldId: def.id,
-        fieldLabel: def.label,
-        fieldType: def.fieldType,
+        fieldId: String(def.id),
+        fieldLabel: String(def.label),
+        fieldType: String(def.fieldType),
         value: String(cf.value ?? ''),
       })
     }
   }
 
-  const tx = db.transaction(() => {
-    db.prepare(`INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt) VALUES (?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?, 'New in queue', ?, ?)`).run(ticketId, input.title.trim(), input.description.trim(), input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', createdAt, createdAt)
-    db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(`activity-${crypto.randomUUID()}`, ticketId, actor, 'Ticket created from TeamSupportPro.', createdAt)
-    const insCF = db.prepare('INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value) VALUES (?, ?, ?, ?, ?, ?)')
-    for (const cf of customFieldInserts) insCF.run(cf.id, cf.ticketId, cf.fieldId, cf.fieldLabel, cf.fieldType, cf.value)
-  })
-  tx()
+  const statements = [
+    {
+      sql: `INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt) VALUES (?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?, 'New in queue', ?, ?)`,
+      args: [ticketId, input.title.trim(), input.description.trim(), input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', createdAt, createdAt],
+    },
+    {
+      sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',
+      args: [`activity-${crypto.randomUUID()}`, ticketId, actor, 'Ticket created from TeamSupportPro.', createdAt],
+    },
+    ...customFieldInserts.map((cf) => ({
+      sql: 'INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [cf.id, ticketId, cf.fieldId, cf.fieldLabel, cf.fieldType, cf.value],
+    })),
+  ]
+  await db.batch(statements, 'write')
   return getTicketById(ticketId)
 }
 
 export const deleteTicket = async (ticketId: string): Promise<boolean> => {
   if (!isNonEmpty(ticketId)) return false
   const db = getDb()
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM TicketWatchers WHERE TicketId = ?').run(ticketId)
-    db.prepare('DELETE FROM TicketAttachments WHERE TicketId = ?').run(ticketId)
-    db.prepare('DELETE FROM TicketActivity WHERE TicketId = ?').run(ticketId)
-    db.prepare('DELETE FROM TicketCustomFieldValues WHERE TicketId = ?').run(ticketId)
-    db.prepare('DELETE FROM Tickets WHERE Id = ?').run(ticketId)
-  })
-  tx()
+  await db.batch([
+    { sql: 'DELETE FROM TicketWatchers WHERE TicketId = ?', args: [ticketId] },
+    { sql: 'DELETE FROM TicketAttachments WHERE TicketId = ?', args: [ticketId] },
+    { sql: 'DELETE FROM TicketActivity WHERE TicketId = ?', args: [ticketId] },
+    { sql: 'DELETE FROM TicketCustomFieldValues WHERE TicketId = ?', args: [ticketId] },
+    { sql: 'DELETE FROM Tickets WHERE Id = ?', args: [ticketId] },
+  ], 'write')
   return true
 }
 
@@ -316,68 +325,60 @@ export interface TicketWatcher {
   addedAt: string
 }
 
-export const listTicketWatchers = (ticketId: string): TicketWatcher[] => {
+export const listTicketWatchers = async (ticketId: string): Promise<TicketWatcher[]> => {
   const db = getDb()
-  return db
-    .prepare(
-      `SELECT u.Id AS userId, u.Name AS name, u.Email AS email, tw.AddedAt AS addedAt
-       FROM TicketWatchers tw
-       JOIN Users u ON tw.UserId = u.Id
-       WHERE tw.TicketId = ?
-       ORDER BY tw.AddedAt ASC`,
-    )
-    .all(ticketId) as TicketWatcher[]
+  const rows = await dbAll(db, `
+    SELECT u.Id AS userId, u.Name AS name, u.Email AS email, tw.AddedAt AS addedAt
+    FROM TicketWatchers tw
+    JOIN Users u ON tw.UserId = u.Id
+    WHERE tw.TicketId = ?
+    ORDER BY tw.AddedAt ASC
+  `, [ticketId]) as Array<{ userId: unknown; name: unknown; email: unknown; addedAt: unknown }>
+  return rows.map((r) => ({ userId: String(r.userId), name: String(r.name), email: String(r.email), addedAt: String(r.addedAt) }))
 }
 
-export const addTicketWatcher = (ticketId: string, userId: string): boolean => {
+export const addTicketWatcher = async (ticketId: string, userId: string): Promise<boolean> => {
   const db = getDb()
   try {
-    db.prepare(
-      "INSERT OR IGNORE INTO TicketWatchers (TicketId, UserId, AddedAt) VALUES (?, ?, datetime('now'))",
-    ).run(ticketId, userId)
+    await dbRun(db, "INSERT OR IGNORE INTO TicketWatchers (TicketId, UserId, AddedAt) VALUES (?, ?, datetime('now'))", [ticketId, userId])
     return true
   } catch {
     return false
   }
 }
 
-export const removeTicketWatcher = (ticketId: string, userId: string): boolean => {
+export const removeTicketWatcher = async (ticketId: string, userId: string): Promise<boolean> => {
   const db = getDb()
-  const result = db.prepare('DELETE FROM TicketWatchers WHERE TicketId = ? AND UserId = ?').run(ticketId, userId)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM TicketWatchers WHERE TicketId = ? AND UserId = ?', [ticketId, userId])
+  return result.rowsAffected > 0
 }
 
-export const listWatchedTicketIds = (userId: string): string[] => {
+export const listWatchedTicketIds = async (userId: string): Promise<string[]> => {
   const db = getDb()
-  return (
-    db.prepare('SELECT TicketId AS ticketId FROM TicketWatchers WHERE UserId = ?').all(userId) as {
-      ticketId: string
-    }[]
-  ).map((r) => r.ticketId)
+  const rows = await dbAll(db, 'SELECT TicketId AS ticketId FROM TicketWatchers WHERE UserId = ?', [userId]) as Array<{ ticketId: unknown }>
+  return rows.map((r) => String(r.ticketId))
 }
 
-export const upsertCustomFieldValues = (
+export const upsertCustomFieldValues = async (
   ticketId: string,
   teamId: string,
   fields: { fieldId: string; value: string }[],
-): void => {
+): Promise<void> => {
   if (!fields.length) return
   const db = getDb()
-  const defs = db
-    .prepare('SELECT Id, Label, FieldType FROM TicketFieldDefinitions WHERE TeamId = ?')
-    .all(teamId) as { Id: string; Label: string; FieldType: string }[]
-  const defMap = new Map(defs.map((d) => [d.Id, d]))
+  const defs = await dbAll(db, 'SELECT Id, Label, FieldType FROM TicketFieldDefinitions WHERE TeamId = ?', [teamId]) as Array<{ Id: unknown; Label: unknown; FieldType: unknown }>
+  const defMap = new Map(defs.map((d) => [String(d.Id), d]))
   const validFields = fields.filter((f) => defMap.has(f.fieldId))
   if (!validFields.length) return
-  const tx = db.transaction(() => {
-    for (const f of validFields) {
-      const def = defMap.get(f.fieldId)!
-      db.prepare('DELETE FROM TicketCustomFieldValues WHERE TicketId = ? AND FieldId = ?').run(ticketId, f.fieldId)
-      db.prepare(
-        `INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value, CreatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-      ).run(`tcfv-${crypto.randomUUID()}`, ticketId, f.fieldId, def.Label, def.FieldType, f.value)
-    }
-  })
-  tx()
+
+  const statements: Array<{ sql: string; args: unknown[] }> = []
+  for (const f of validFields) {
+    const def = defMap.get(f.fieldId)!
+    statements.push({ sql: 'DELETE FROM TicketCustomFieldValues WHERE TicketId = ? AND FieldId = ?', args: [ticketId, f.fieldId] })
+    statements.push({
+      sql: `INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value, CreatedAt) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+      args: [`tcfv-${crypto.randomUUID()}`, ticketId, f.fieldId, String(def.Label), String(def.FieldType), f.value],
+    })
+  }
+  await db.batch(statements as Array<{ sql: string; args: import('@libsql/client').InValue[] }>, 'write')
 }

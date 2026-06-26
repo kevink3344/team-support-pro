@@ -10,7 +10,7 @@ import { serverConfig } from './config.js'
 import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonymous-pages.js'
 import { listOrganizations } from './directory.js'
 import { upsertLocalAccountPersisted } from './local-auth.js'
-import { getDb } from './db.js'
+import { getDb, initDb } from './db.js'
 import { readRapidIdentityEnabled, readAboutPageHtml } from './app-settings.js'
 import { requireAuth } from './middleware.js'
 import { listUsers } from './directory.js'
@@ -93,8 +93,8 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true })
 })
 
-app.get('/api/public/auth-settings', (_req, res) => {
-  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+app.get('/api/public/auth-settings', async (_req, res) => {
+  res.json({ rapidIdentityEnabled: await readRapidIdentityEnabled() })
 })
 
 app.get('/api/public/test-login-users', async (_req, res) => {
@@ -117,8 +117,8 @@ app.get('/api/public/test-login-users', async (_req, res) => {
 
 app.use('/api/settings', settingsRouter)
 app.use('/api/settings', webhooksRouter)
-app.get('/api/about', requireAuth, (_req, res) => {
-  res.json({ html: readAboutPageHtml() })
+app.get('/api/about', requireAuth, async (_req, res) => {
+  res.json({ html: await readAboutPageHtml() })
 })
 app.use('/api/feedback', feedbackRouter)
 // Public feedback (re-map /api/public/feedback/:token → feedbackRouter /public/:token)
@@ -229,9 +229,10 @@ app.use((error: unknown, _req: express.Request, res: express.Response, next: exp
 
 const ensureBootstrapAdmin = async () => {
   const db = getDb()
-  db.prepare(
-    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', 'true', datetime('now')) ON CONFLICT(Key) DO NOTHING",
-  ).run()
+  await db.execute({
+    sql: "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', 'true', datetime('now')) ON CONFLICT(Key) DO NOTHING",
+    args: [],
+  })
 
   const adminEmail = serverConfig.localAdmin.email
   const adminPassword = serverConfig.localAdmin.password
@@ -248,23 +249,33 @@ const ensureBootstrapAdmin = async () => {
   }
 
   const teamId = serverConfig.fallbackTeam.id || 'it'
-  const existingUser = db
-    .prepare('SELECT Id AS id FROM Users WHERE LOWER(Email) = LOWER(?) LIMIT 1')
-    .get(adminEmail) as { id: string } | undefined
+  const existingUser = await db.execute({
+    sql: 'SELECT Id AS id FROM Users WHERE LOWER(Email) = LOWER(?) LIMIT 1',
+    args: [adminEmail],
+  }).then((r) => r.rows[0] as { id?: unknown } | undefined)
 
   if (existingUser?.id) {
-    db.prepare(
-      "UPDATE Users SET Name = ?, DisplayName = ?, TeamId = ?, Role = 'Admin', UpdatedAt = datetime('now') WHERE Id = ?",
-    ).run(adminName, adminName, teamId, existingUser.id)
+    await db.execute({
+      sql: "UPDATE Users SET Name = ?, DisplayName = ?, TeamId = ?, Role = 'Admin', UpdatedAt = datetime('now') WHERE Id = ?",
+      args: [adminName, adminName, teamId, String(existingUser.id)],
+    })
     return
   }
 
-  db.prepare(
-    "INSERT INTO Users (Id, Name, DisplayName, Email, TeamId, Role, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, 'Admin', datetime('now'), datetime('now'))",
-  ).run('u-local-admin', adminName, adminName, adminEmail, teamId)
+  await db.execute({
+    sql: "INSERT INTO Users (Id, Name, DisplayName, Email, TeamId, Role, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, 'Admin', datetime('now'), datetime('now'))",
+    args: ['u-local-admin', adminName, adminName, adminEmail, teamId],
+  })
 }
 
 const startServer = async () => {
+  try {
+    await initDb()
+  } catch (error) {
+    console.error('Database initialization failed.', error)
+    process.exit(1)
+  }
+
   try {
     await ensureBootstrapAdmin()
   } catch (error) {

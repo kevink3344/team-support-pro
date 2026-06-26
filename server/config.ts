@@ -25,6 +25,8 @@ const envSchema = z.object({
   DB_USER: z.string().optional(),
   DB_PASSWORD: z.string().optional(),
   DB_SQLITE_PATH: z.string().optional(),
+  TURSO_DB_URL: z.string().optional(),
+  TURSO_TOKEN: z.string().optional(),
   LOCAL_ADMIN_NAME: z.string().optional(),
   LOCAL_ADMIN_EMAIL: z.string().email().optional(),
   LOCAL_ADMIN_PASSWORD: z.string().min(8).optional(),
@@ -87,6 +89,8 @@ export const serverConfig = {
     user: parsed.DB_USER || '',
     password: parsed.DB_PASSWORD || '',
     sqlitePath: parsed.DB_SQLITE_PATH || '',
+    tursoUrl: parsed.TURSO_DB_URL || '',
+    tursoToken: parsed.TURSO_TOKEN || '',
   },
   localAdmin: {
     name: parsed.LOCAL_ADMIN_NAME?.trim() || 'Administrator',

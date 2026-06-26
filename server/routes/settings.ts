@@ -19,27 +19,27 @@ settingsRouter.use(requireAdmin)
 // Auth settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/auth', (_req, res) => {
-  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+settingsRouter.get('/auth', async (_req, res) => {
+  res.json({ rapidIdentityEnabled: await readRapidIdentityEnabled() })
 })
 
-settingsRouter.patch('/auth', (req, res) => {
+settingsRouter.patch('/auth', async (req, res) => {
   if (typeof req.body?.rapidIdentityEnabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_auth_settings_payload' })
     return
   }
-  writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
-  res.json({ rapidIdentityEnabled: readRapidIdentityEnabled() })
+  await writeRapidIdentityEnabled(req.body.rapidIdentityEnabled)
+  res.json({ rapidIdentityEnabled: await readRapidIdentityEnabled() })
 })
 
 // ---------------------------------------------------------------------------
 // Email settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/email', (_req, res) => {
+settingsRouter.get('/email', async (_req, res) => {
   const { resendApiKey, from, replyTo, gmailUser, gmailAppPassword, pollIntervalMs } = serverConfig.email
   res.json({
-    enabled: readEmailNotificationsEnabled(),
+    enabled: await readEmailNotificationsEnabled(),
     from: from || null,
     replyTo: replyTo || null,
     pollIntervalSeconds: Math.round(pollIntervalMs / 1000),
@@ -48,13 +48,13 @@ settingsRouter.get('/email', (_req, res) => {
   })
 })
 
-settingsRouter.patch('/email', (req, res) => {
+settingsRouter.patch('/email', async (req, res) => {
   if (typeof req.body?.enabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_email_settings_payload' })
     return
   }
-  writeEmailNotificationsEnabled(req.body.enabled)
-  res.json({ enabled: readEmailNotificationsEnabled() })
+  await writeEmailNotificationsEnabled(req.body.enabled)
+  res.json({ enabled: await readEmailNotificationsEnabled() })
 })
 
 settingsRouter.post('/email/test-resend', async (_req, res) => {
@@ -124,34 +124,34 @@ settingsRouter.post('/email/test-imap', async (_req, res) => {
 // Power BI settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/power-bi', (_req, res) => {
-  res.json({ reportUrl: readPowerBiReportUrl() })
+settingsRouter.get('/power-bi', async (_req, res) => {
+  res.json({ reportUrl: await readPowerBiReportUrl() })
 })
 
-settingsRouter.patch('/power-bi', (req, res) => {
+settingsRouter.patch('/power-bi', async (req, res) => {
   const reportUrl = req.body?.reportUrl
   if (reportUrl !== null && reportUrl !== undefined && typeof reportUrl !== 'string') {
     res.status(400).json({ error: 'invalid_power_bi_settings_payload' })
     return
   }
-  writePowerBiReportUrl(typeof reportUrl === 'string' ? reportUrl : null)
-  res.json({ reportUrl: readPowerBiReportUrl() })
+  await writePowerBiReportUrl(typeof reportUrl === 'string' ? reportUrl : null)
+  res.json({ reportUrl: await readPowerBiReportUrl() })
 })
 
 // ---------------------------------------------------------------------------
 // About page settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/about', (_req, res) => {
-  res.json({ html: readAboutPageHtml() })
+settingsRouter.get('/about', async (_req, res) => {
+  res.json({ html: await readAboutPageHtml() })
 })
 
-settingsRouter.patch('/about', (req, res) => {
+settingsRouter.patch('/about', async (req, res) => {
   const html = req.body?.html
   if (typeof html !== 'string') {
     res.status(400).json({ error: 'invalid_about_page_payload' })
     return
   }
-  writeAboutPageHtml(html)
-  res.json({ html: readAboutPageHtml() })
+  await writeAboutPageHtml(html)
+  res.json({ html: await readAboutPageHtml() })
 })

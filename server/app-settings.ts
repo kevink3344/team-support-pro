@@ -1,72 +1,55 @@
-import { getDb } from './db.js'
+import { getDb, dbGet, dbRun } from './db.js'
 
 const POWER_BI_REPORT_URL_KEY = 'powerBiReportUrl'
 
-export const readRapidIdentityEnabled = () => {
+const UPSERT_SQL = `INSERT INTO AppSettings (Key, Value, UpdatedAt)
+  VALUES (?, ?, datetime('now'))
+  ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')`
+
+export const readRapidIdentityEnabled = async (): Promise<boolean> => {
   const db = getDb()
-  const row = db
-    .prepare("SELECT Value AS value FROM AppSettings WHERE Key = 'rapidIdentityEnabled' LIMIT 1")
-    .get() as { value?: string } | undefined
-
-  if (!row?.value) {
-    return true
-  }
-
-  return row.value === 'true'
+  const row = await dbGet(db, "SELECT Value AS value FROM AppSettings WHERE Key = 'rapidIdentityEnabled' LIMIT 1")
+  if (!row?.value) return true
+  return String(row.value) === 'true'
 }
 
-export const writeRapidIdentityEnabled = (isEnabled: boolean) => {
+export const writeRapidIdentityEnabled = async (isEnabled: boolean): Promise<void> => {
   const db = getDb()
-  db.prepare(
-    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('rapidIdentityEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
-  ).run(isEnabled ? 'true' : 'false')
+  await dbRun(db, UPSERT_SQL, ['rapidIdentityEnabled', isEnabled ? 'true' : 'false'])
 }
 
-export const readEmailNotificationsEnabled = () => {
+export const readEmailNotificationsEnabled = async (): Promise<boolean> => {
   const db = getDb()
-  const row = db
-    .prepare("SELECT Value AS value FROM AppSettings WHERE Key = 'emailNotificationsEnabled' LIMIT 1")
-    .get() as { value?: string } | undefined
-  return row?.value === 'true'
+  const row = await dbGet(db, "SELECT Value AS value FROM AppSettings WHERE Key = 'emailNotificationsEnabled' LIMIT 1")
+  return String(row?.value ?? '') === 'true'
 }
 
-export const writeEmailNotificationsEnabled = (isEnabled: boolean) => {
+export const writeEmailNotificationsEnabled = async (isEnabled: boolean): Promise<void> => {
   const db = getDb()
-  db.prepare(
-    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES ('emailNotificationsEnabled', ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
-  ).run(isEnabled ? 'true' : 'false')
+  await dbRun(db, UPSERT_SQL, ['emailNotificationsEnabled', isEnabled ? 'true' : 'false'])
 }
 
-export const readPowerBiReportUrl = () => {
+export const readPowerBiReportUrl = async (): Promise<string | null> => {
   const db = getDb()
-  const row = db
-    .prepare('SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1')
-    .get(POWER_BI_REPORT_URL_KEY) as { value?: string } | undefined
-
-  const value = row?.value?.trim()
+  const row = await dbGet(db, 'SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1', [POWER_BI_REPORT_URL_KEY])
+  const value = String(row?.value ?? '').trim()
   return value ? value : null
 }
 
-export const writePowerBiReportUrl = (reportUrl: string | null) => {
+export const writePowerBiReportUrl = async (reportUrl: string | null): Promise<void> => {
   const db = getDb()
-  db.prepare(
-    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES (?, ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
-  ).run(POWER_BI_REPORT_URL_KEY, reportUrl?.trim() ?? '')
+  await dbRun(db, UPSERT_SQL, [POWER_BI_REPORT_URL_KEY, reportUrl?.trim() ?? ''])
 }
 
 const ABOUT_PAGE_HTML_KEY = 'aboutPageHtml'
 
-export const readAboutPageHtml = () => {
+export const readAboutPageHtml = async (): Promise<string> => {
   const db = getDb()
-  const row = db
-    .prepare('SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1')
-    .get(ABOUT_PAGE_HTML_KEY) as { value?: string } | undefined
-  return row?.value ?? ''
+  const row = await dbGet(db, 'SELECT Value AS value FROM AppSettings WHERE Key = ? LIMIT 1', [ABOUT_PAGE_HTML_KEY])
+  return String(row?.value ?? '')
 }
 
-export const writeAboutPageHtml = (html: string) => {
+export const writeAboutPageHtml = async (html: string): Promise<void> => {
   const db = getDb()
-  db.prepare(
-    "INSERT INTO AppSettings (Key, Value, UpdatedAt) VALUES (?, ?, datetime('now')) ON CONFLICT(Key) DO UPDATE SET Value = excluded.Value, UpdatedAt = datetime('now')",
-  ).run(ABOUT_PAGE_HTML_KEY, html)
+  await dbRun(db, UPSERT_SQL, [ABOUT_PAGE_HTML_KEY, html])
 }

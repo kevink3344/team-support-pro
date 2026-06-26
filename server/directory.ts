@@ -1,4 +1,4 @@
-import { getDb } from './db.js'
+import { getDb, dbGet, dbAll, dbRun } from './db.js'
 
 const slugify = (value: string) =>
   value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
@@ -106,27 +106,27 @@ const defaultTeamId = (input: DirectoryTeamInput) => input.id?.trim() || `team-$
 const defaultCategoryId = (input: DirectoryCategoryInput) => input.id?.trim() || `cat-${slugify(input.teamId)}-${slugify(input.name)}`
 const defaultUserId = (input: DirectoryUserInput) => input.id?.trim() || `u-${slugify(input.name)}`
 
-const organizationExists = (organizationId: string) => {
+const organizationExists = async (organizationId: string) => {
   const db = getDb()
-  const row = db.prepare('SELECT 1 AS existsFlag FROM Organizations WHERE Id = ?').get(organizationId)
+  const row = await dbGet(db, 'SELECT 1 AS existsFlag FROM Organizations WHERE Id = ?', [organizationId])
   return Boolean(row)
 }
 
-const teamBelongsToOrganization = (teamId: string, organizationId: string) => {
+const teamBelongsToOrganization = async (teamId: string, organizationId: string) => {
   const db = getDb()
-  const row = db.prepare('SELECT 1 AS existsFlag FROM Teams WHERE Id = ? AND OrganizationId = ?').get(teamId, organizationId)
+  const row = await dbGet(db, 'SELECT 1 AS existsFlag FROM Teams WHERE Id = ? AND OrganizationId = ?', [teamId, organizationId])
   return Boolean(row)
 }
 
 export const listOrganizations = async (): Promise<DirectoryOrganization[]> => {
   const db = getDb()
-  const rows = db.prepare('SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations ORDER BY Name ASC').all() as Record<string, unknown>[]
+  const rows = await dbAll(db, 'SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations ORDER BY Name ASC')
   return rows.map(normalizeOrganization)
 }
 
 export const getOrganizationById = async (organizationId: string): Promise<DirectoryOrganization | null> => {
   const db = getDb()
-  const row = db.prepare('SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations WHERE Id = ?').get(organizationId) as Record<string, unknown> | undefined
+  const row = await dbGet(db, 'SELECT Id AS id, Name AS name, Code AS code, AccentColor AS accent FROM Organizations WHERE Id = ?', [organizationId])
   return row ? normalizeOrganization(row) : null
 }
 
@@ -134,77 +134,78 @@ export const createOrganization = async (input: DirectoryOrganizationInput): Pro
   if (!validString(input.name) || !validString(input.code) || !validString(input.accent)) return null
   const organizationId = defaultOrganizationId(input)
   const db = getDb()
-  db.prepare('INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)').run(organizationId, input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim())
+  await dbRun(db, 'INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)', [organizationId, input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim()])
   return getOrganizationById(organizationId)
 }
 
 export const updateOrganization = async (organizationId: string, input: DirectoryOrganizationInput): Promise<DirectoryOrganization | null> => {
   if (!validString(organizationId) || !validString(input.name) || !validString(input.code) || !validString(input.accent)) return null
   const db = getDb()
-  db.prepare("UPDATE Organizations SET Name = ?, Code = ?, AccentColor = ?, UpdatedAt = datetime('now') WHERE Id = ?").run(input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim(), organizationId)
+  await dbRun(db, "UPDATE Organizations SET Name = ?, Code = ?, AccentColor = ?, UpdatedAt = datetime('now') WHERE Id = ?", [input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim(), organizationId])
   return getOrganizationById(organizationId)
 }
 
 export const deleteOrganization = async (organizationId: string): Promise<boolean> => {
   if (!validString(organizationId)) return false
   const db = getDb()
-  const linkedTeam = db.prepare('SELECT 1 AS linked FROM Teams WHERE OrganizationId = ? LIMIT 1').get(organizationId)
-  const linkedUser = db.prepare('SELECT 1 AS linked FROM Users WHERE OrganizationId = ? LIMIT 1').get(organizationId)
+  const [linkedTeam, linkedUser] = await Promise.all([
+    dbGet(db, 'SELECT 1 AS linked FROM Teams WHERE OrganizationId = ? LIMIT 1', [organizationId]),
+    dbGet(db, 'SELECT 1 AS linked FROM Users WHERE OrganizationId = ? LIMIT 1', [organizationId]),
+  ])
   if (linkedTeam || linkedUser) return false
-  const result = db.prepare('DELETE FROM Organizations WHERE Id = ?').run(organizationId)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM Organizations WHERE Id = ?', [organizationId])
+  return result.rowsAffected > 0
 }
 
 export const listTeams = async (): Promise<DirectoryTeam[]> => {
   const db = getDb()
-  const rows = db.prepare('SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams ORDER BY OrganizationId ASC, Name ASC').all() as Record<string, unknown>[]
+  const rows = await dbAll(db, 'SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams ORDER BY OrganizationId ASC, Name ASC')
   return rows.map(normalizeTeam)
 }
 
 export const getTeamById = async (teamId: string): Promise<DirectoryTeam | null> => {
   const db = getDb()
-  const row = db.prepare('SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams WHERE Id = ?').get(teamId) as Record<string, unknown> | undefined
+  const row = await dbGet(db, 'SELECT Id AS id, OrganizationId AS organizationId, Name AS name, Code AS code, AccentColor AS accent FROM Teams WHERE Id = ?', [teamId])
   return row ? normalizeTeam(row) : null
 }
 
 export const createTeam = async (input: DirectoryTeamInput): Promise<DirectoryTeam | null> => {
   if (!validString(input.organizationId) || !validString(input.name) || !validString(input.code) || !validString(input.accent)) return null
-  if (!organizationExists(input.organizationId.trim())) return null
+  if (!await organizationExists(input.organizationId.trim())) return null
   const teamId = defaultTeamId(input)
   const db = getDb()
-  db.prepare('INSERT INTO Teams (Id, OrganizationId, Name, Code, AccentColor) VALUES (?, ?, ?, ?, ?)').run(teamId, input.organizationId.trim(), input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim())
+  await dbRun(db, 'INSERT INTO Teams (Id, OrganizationId, Name, Code, AccentColor) VALUES (?, ?, ?, ?, ?)', [teamId, input.organizationId.trim(), input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim()])
   return getTeamById(teamId)
 }
 
 export const updateTeam = async (teamId: string, input: DirectoryTeamInput): Promise<DirectoryTeam | null> => {
   if (!validString(teamId) || !validString(input.organizationId) || !validString(input.name) || !validString(input.code) || !validString(input.accent)) return null
-  if (!organizationExists(input.organizationId.trim())) return null
-  const db = getDb()
+  if (!await organizationExists(input.organizationId.trim())) return null
   const organizationId = input.organizationId.trim()
-  const tx = db.transaction(() => {
-    db.prepare("UPDATE Teams SET OrganizationId = ?, Name = ?, Code = ?, AccentColor = ?, UpdatedAt = datetime('now') WHERE Id = ?").run(organizationId, input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim(), teamId)
-    db.prepare("UPDATE Users SET OrganizationId = ?, UpdatedAt = datetime('now') WHERE TeamId = ?").run(organizationId, teamId)
-  })
-  tx()
+  const db = getDb()
+  await db.batch([
+    { sql: "UPDATE Teams SET OrganizationId = ?, Name = ?, Code = ?, AccentColor = ?, UpdatedAt = datetime('now') WHERE Id = ?", args: [organizationId, input.name.trim(), input.code.trim().toUpperCase(), input.accent.trim(), teamId] },
+    { sql: "UPDATE Users SET OrganizationId = ?, UpdatedAt = datetime('now') WHERE TeamId = ?", args: [organizationId, teamId] },
+  ], 'write')
   return getTeamById(teamId)
 }
 
 export const deleteTeam = async (teamId: string): Promise<boolean> => {
   if (!validString(teamId)) return false
   const db = getDb()
-  const result = db.prepare('DELETE FROM Teams WHERE Id = ?').run(teamId)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM Teams WHERE Id = ?', [teamId])
+  return result.rowsAffected > 0
 }
 
 export const listCategories = async (): Promise<DirectoryCategory[]> => {
   const db = getDb()
-  const rows = db.prepare('SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories ORDER BY TeamId ASC, Name ASC').all() as Record<string, unknown>[]
+  const rows = await dbAll(db, 'SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories ORDER BY TeamId ASC, Name ASC')
   return rows.map(normalizeCategory)
 }
 
 export const getCategoryById = async (categoryId: string): Promise<DirectoryCategory | null> => {
   const db = getDb()
-  const row = db.prepare('SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories WHERE Id = ?').get(categoryId) as Record<string, unknown> | undefined
+  const row = await dbGet(db, 'SELECT Id AS id, TeamId AS teamId, Name AS name, Description AS description FROM Categories WHERE Id = ?', [categoryId])
   return row ? normalizeCategory(row) : null
 }
 
@@ -212,33 +213,33 @@ export const createCategory = async (input: DirectoryCategoryInput): Promise<Dir
   if (!validString(input.teamId) || !validString(input.name)) return null
   const categoryId = defaultCategoryId(input)
   const db = getDb()
-  db.prepare('INSERT INTO Categories (Id, TeamId, Name, Description) VALUES (?, ?, ?, ?)').run(categoryId, input.teamId.trim(), input.name.trim(), input.description.trim() || 'Custom category.')
+  await dbRun(db, 'INSERT INTO Categories (Id, TeamId, Name, Description) VALUES (?, ?, ?, ?)', [categoryId, input.teamId.trim(), input.name.trim(), input.description.trim() || 'Custom category.'])
   return getCategoryById(categoryId)
 }
 
 export const updateCategory = async (categoryId: string, input: DirectoryCategoryInput): Promise<DirectoryCategory | null> => {
   if (!validString(categoryId) || !validString(input.teamId) || !validString(input.name)) return null
   const db = getDb()
-  db.prepare("UPDATE Categories SET TeamId = ?, Name = ?, Description = ?, UpdatedAt = datetime('now') WHERE Id = ?").run(input.teamId.trim(), input.name.trim(), input.description.trim() || 'Custom category.', categoryId)
+  await dbRun(db, "UPDATE Categories SET TeamId = ?, Name = ?, Description = ?, UpdatedAt = datetime('now') WHERE Id = ?", [input.teamId.trim(), input.name.trim(), input.description.trim() || 'Custom category.', categoryId])
   return getCategoryById(categoryId)
 }
 
 export const deleteCategory = async (categoryId: string): Promise<boolean> => {
   if (!validString(categoryId)) return false
   const db = getDb()
-  const result = db.prepare('DELETE FROM Categories WHERE Id = ?').run(categoryId)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM Categories WHERE Id = ?', [categoryId])
+  return result.rowsAffected > 0
 }
 
 export const listUsers = async (): Promise<DirectoryUser[]> => {
   const db = getDb()
-  const rows = db.prepare('SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users ORDER BY Name ASC').all() as Record<string, unknown>[]
+  const rows = await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users ORDER BY Name ASC')
   return rows.map(normalizeUser)
 }
 
 export const getUserById = async (userId: string): Promise<DirectoryUser | null> => {
   const db = getDb()
-  const row = db.prepare('SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users WHERE Id = ?').get(userId) as Record<string, unknown> | undefined
+  const row = await dbGet(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users WHERE Id = ?', [userId])
   return row ? normalizeUser(row) : null
 }
 
@@ -246,10 +247,10 @@ export const createUser = async (input: DirectoryUserInput): Promise<DirectoryUs
   if (!validString(input.name) || !validString(input.email) || !validString(input.organizationId) || !validString(input.teamId) || !validRole(input.role)) return null
   const organizationId = input.organizationId.trim()
   const teamId = input.teamId.trim()
-  if (!organizationExists(organizationId) || !teamBelongsToOrganization(teamId, organizationId)) return null
+  if (!await organizationExists(organizationId) || !await teamBelongsToOrganization(teamId, organizationId)) return null
   const userId = defaultUserId(input)
   const db = getDb()
-  db.prepare('INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)').run(userId, input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role)
+  await dbRun(db, 'INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)', [userId, input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role])
   return getUserById(userId)
 }
 
@@ -257,17 +258,17 @@ export const updateUser = async (userId: string, input: DirectoryUserInput): Pro
   if (!validString(userId) || !validString(input.name) || !validString(input.email) || !validString(input.organizationId) || !validString(input.teamId) || !validRole(input.role)) return null
   const organizationId = input.organizationId.trim()
   const teamId = input.teamId.trim()
-  if (!organizationExists(organizationId) || !teamBelongsToOrganization(teamId, organizationId)) return null
+  if (!await organizationExists(organizationId) || !await teamBelongsToOrganization(teamId, organizationId)) return null
   const db = getDb()
-  db.prepare("UPDATE Users SET Name = ?, DisplayName = ?, Email = ?, OrganizationId = ?, TeamId = ?, Role = ?, UpdatedAt = datetime('now') WHERE Id = ?").run(input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role, userId)
+  await dbRun(db, "UPDATE Users SET Name = ?, DisplayName = ?, Email = ?, OrganizationId = ?, TeamId = ?, Role = ?, UpdatedAt = datetime('now') WHERE Id = ?", [input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role, userId])
   return getUserById(userId)
 }
 
 export const deleteUser = async (userId: string): Promise<boolean> => {
   if (!validString(userId)) return false
   const db = getDb()
-  const result = db.prepare('DELETE FROM Users WHERE Id = ?').run(userId)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM Users WHERE Id = ?', [userId])
+  return result.rowsAffected > 0
 }
 
 export const loadDirectoryData = async (): Promise<{

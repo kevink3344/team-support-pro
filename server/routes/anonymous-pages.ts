@@ -22,7 +22,7 @@ anonymousPagesRouter.get('/', requireAdmin, async (_req, res) => {
 
   try {
     const organizations = await listOrganizations()
-    res.json({ pages: listAnonymousPageConfigs(organizations.map((o) => o.id)) })
+    res.json({ pages: await listAnonymousPageConfigs(organizations.map((o) => o.id)) })
   } catch (error) {
     console.error('Loading anonymous page settings failed.', error)
     res.status(500).json({ error: 'anonymous_page_settings_load_failed' })
@@ -77,7 +77,7 @@ anonymousPagesRouter.put('/', requireAdmin, async (req, res) => {
       return
     }
 
-    writeAnonymousPageConfigs(nextPages)
+    await writeAnonymousPageConfigs(nextPages)
     res.json({ pages: nextPages })
   } catch (error) {
     console.error('Saving anonymous page settings failed.', error)
@@ -97,7 +97,7 @@ anonymousPagesRouter.get('/public-config', async (req, res) => {
       listTeams(),
       listCategories(),
     ])
-    const page = resolveAnonymousPageConfig(requestedPagePath, organizations.map((o) => o.id))
+    const page = await resolveAnonymousPageConfig(requestedPagePath, organizations.map((o) => o.id))
 
     if (!page) {
       res.status(404).json({ error: 'anonymous_page_not_configured' })

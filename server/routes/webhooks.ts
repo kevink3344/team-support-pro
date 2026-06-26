@@ -40,13 +40,13 @@ webhooksRouter.patch('/feedback', (req, res) => {
 // Webhook configs
 // ---------------------------------------------------------------------------
 
-webhooksRouter.get('/webhooks', (req, res) => {
+webhooksRouter.get('/webhooks', async (req, res) => {
   const user = req.user!
-  const configs = listWebhookConfigs(user.organizationId)
+  const configs = await listWebhookConfigs(user.organizationId)
   res.json({ webhooks: configs })
 })
 
-webhooksRouter.post('/webhooks', (req, res) => {
+webhooksRouter.post('/webhooks', async (req, res) => {
   const user = req.user!
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
   const events: WebhookEvent[] = Array.isArray(req.body?.events)
@@ -64,7 +64,7 @@ webhooksRouter.post('/webhooks', (req, res) => {
     events,
     isEnabled: req.body?.isEnabled !== false,
   }
-  const webhook = createWebhookConfig(user.organizationId, input)
+  const webhook = await createWebhookConfig(user.organizationId, input)
   if (!webhook) {
     res.status(400).json({ error: 'webhook_create_failed' })
     return
@@ -72,7 +72,7 @@ webhooksRouter.post('/webhooks', (req, res) => {
   res.status(201).json({ webhook })
 })
 
-webhooksRouter.patch('/webhooks/:id', (req, res) => {
+webhooksRouter.patch('/webhooks/:id', async (req, res) => {
   const input: UpdateWebhookInput = {}
   if (typeof req.body?.url === 'string') input.url = req.body.url.trim()
   if (typeof req.body?.secret === 'string') input.secret = req.body.secret
@@ -82,7 +82,7 @@ webhooksRouter.patch('/webhooks/:id', (req, res) => {
     )
   }
   if (typeof req.body?.isEnabled === 'boolean') input.isEnabled = req.body.isEnabled
-  const webhook = updateWebhookConfig(String(req.params.id), input)
+  const webhook = await updateWebhookConfig(String(req.params.id), input)
   if (!webhook) {
     res.status(404).json({ error: 'webhook_not_found' })
     return
@@ -90,8 +90,8 @@ webhooksRouter.patch('/webhooks/:id', (req, res) => {
   res.json({ webhook })
 })
 
-webhooksRouter.delete('/webhooks/:id', (req, res) => {
-  const deleted = deleteWebhookConfig(String(req.params.id))
+webhooksRouter.delete('/webhooks/:id', async (req, res) => {
+  const deleted = await deleteWebhookConfig(String(req.params.id))
   if (!deleted) {
     res.status(404).json({ error: 'webhook_not_found' })
     return

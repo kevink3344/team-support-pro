@@ -1,4 +1,4 @@
-import { getDb } from './db.js'
+import { getDb, dbGet } from './db.js'
 import { serverConfig } from './config.js'
 import type { SessionUser } from './auth.js'
 
@@ -11,7 +11,7 @@ interface AuthInput {
 export const resolveAuthenticatedUser = async (input: AuthInput): Promise<SessionUser> => {
   const db = getDb()
 
-  const row = db.prepare(`
+  const row = await dbGet(db, `
     SELECT u.Id AS userId, COALESCE(u.DisplayName, u.Name) AS displayName, u.Email AS email,
       COALESCE(o.Id, t.OrganizationId, u.OrganizationId, ?) AS organizationId,
       COALESCE(o.Name, ?, ?) AS organizationName,
@@ -24,7 +24,7 @@ export const resolveAuthenticatedUser = async (input: AuthInput): Promise<Sessio
     LEFT JOIN Teams t ON t.Id = u.TeamId
     LEFT JOIN Organizations o ON o.Id = COALESCE(t.OrganizationId, u.OrganizationId)
     WHERE LOWER(u.Email) = LOWER(?)
-  `).get(
+  `, [
     serverConfig.fallbackOrganization.id,
     serverConfig.fallbackOrganization.name,
     serverConfig.fallbackOrganization.name,
@@ -33,7 +33,7 @@ export const resolveAuthenticatedUser = async (input: AuthInput): Promise<Sessio
     serverConfig.fallbackOrganization.accent,
     serverConfig.fallbackOrganization.accent,
     input.email.toLowerCase(),
-  ) as Record<string, unknown> | undefined
+  ])
 
   if (row) {
     return {

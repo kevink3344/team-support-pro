@@ -1,4 +1,4 @@
-import { getDb } from './db.js'
+import { getDb, dbAll } from './db.js'
 
 export interface TicketReport {
   status: string
@@ -38,74 +38,59 @@ export interface ExportTicketRow {
   TeamName: string
 }
 
-export const getTicketStatusReport = (): TicketReport[] => {
+export const getTicketStatusReport = async (): Promise<TicketReport[]> => {
   const db = getDb()
-  const rows = db.prepare(`
-    SELECT Status as status, COUNT(*) as count
-    FROM Tickets
-    GROUP BY Status
-    ORDER BY count DESC
-  `).all() as TicketReport[]
-  return rows
+  const rows = await dbAll(db, `SELECT Status as status, COUNT(*) as count FROM Tickets GROUP BY Status ORDER BY count DESC`) as Array<{ status: unknown; count: unknown }>
+  return rows.map((r) => ({ status: String(r.status), count: Number(r.count) }))
 }
 
-export const getTicketPriorityReport = (): PriorityReport[] => {
+export const getTicketPriorityReport = async (): Promise<PriorityReport[]> => {
   const db = getDb()
-  const rows = db.prepare(`
-    SELECT Priority as priority, COUNT(*) as count
-    FROM Tickets
-    GROUP BY Priority
-    ORDER BY count DESC
-  `).all() as PriorityReport[]
-  return rows
+  const rows = await dbAll(db, `SELECT Priority as priority, COUNT(*) as count FROM Tickets GROUP BY Priority ORDER BY count DESC`) as Array<{ priority: unknown; count: unknown }>
+  return rows.map((r) => ({ priority: String(r.priority), count: Number(r.count) }))
 }
 
-export const getAssigneeReport = (): AssigneeReport[] => {
+export const getAssigneeReport = async (): Promise<AssigneeReport[]> => {
   const db = getDb()
-  const rows = db.prepare(`
+  const rows = await dbAll(db, `
     SELECT t.AssignedToId as assigneeId, u.Name as assigneeName, COUNT(*) as count
     FROM Tickets t
     LEFT JOIN Users u ON t.AssignedToId = u.Id
     GROUP BY t.AssignedToId, u.Name
     ORDER BY count DESC
-  `).all() as AssigneeReport[]
-  return rows
+  `) as Array<{ assigneeId: unknown; assigneeName: unknown; count: unknown }>
+  return rows.map((r) => ({
+    assigneeId: r.assigneeId ? String(r.assigneeId) : null,
+    assigneeName: r.assigneeName ? String(r.assigneeName) : null,
+    count: Number(r.count),
+  }))
 }
 
-export const getTrendReport = (days: number = 30): TrendReport[] => {
+export const getTrendReport = async (days: number = 30): Promise<TrendReport[]> => {
   const db = getDb()
-  const rows = db.prepare(`
-    SELECT
-      DATE(CreatedAt) as date,
-      COUNT(*) as created
+  const createdRows = await dbAll(db, `
+    SELECT DATE(CreatedAt) as date, COUNT(*) as created
     FROM Tickets
     WHERE CreatedAt >= date('now', '-${days} days')
     GROUP BY DATE(CreatedAt)
     ORDER BY date
-  `).all() as { date: string; created: number }[]
+  `) as Array<{ date: unknown; created: unknown }>
 
-  const resolvedRows = db.prepare(`
-    SELECT
-      DATE(UpdatedAt) as date,
-      COUNT(*) as resolved
+  const resolvedRows = await dbAll(db, `
+    SELECT DATE(UpdatedAt) as date, COUNT(*) as resolved
     FROM Tickets
     WHERE Status IN ('Resolved', 'Closed') AND UpdatedAt >= date('now', '-${days} days')
     GROUP BY DATE(UpdatedAt)
     ORDER BY date
-  `).all() as { date: string; resolved: number }[]
+  `) as Array<{ date: unknown; resolved: unknown }>
 
-  // Merge created and resolved
   const trendMap = new Map<string, TrendReport>()
-  rows.forEach(row => {
-    trendMap.set(row.date, { date: row.date, created: row.created, resolved: 0 })
-  })
-  resolvedRows.forEach(row => {
-    const existing = trendMap.get(row.date)
-    if (existing) {
-      existing.resolved = row.resolved
-    } else {
-      trendMap.set(row.date, { date: row.date, created: 0, resolved: row.resolved })
-    }
+  createdRows.forEach((row) => { trendMap.set(String(row.date), { date: String(row.date), created: Number(row.created), resolved: 0 }) })
+  resolvedRows.forEach((row) => {
+    const d = String(row.date)
+    const existing = trendMap.get(d)
+    if (existing) { existing.resolved = Number(row.resolved) }
+    else { trendMap.set(d, { date: d, created: 0, resolved: Number(row.resolved) }) }
   })
 
   return Array.from(trendMap.values()).sort((a, b) => a.date.localeCompare(b.date))
@@ -130,37 +115,15 @@ const bucketFirstResponseHours = (hours: number): string => {
   return '> 1 day'
 }
 
-export interface ResolutionTimeBucket {
-  bucket: string
-  count: number
-}
+export interface ResolutionTimeBucket { bucket: string; count: number }
+export interface AvgResolutionByPriority { priority: string; avgDays: number; count: number }
+export interface AvgResolutionByTeam { teamId: string; teamName: string; avgDays: number; count: number }
+export interface OpenAgeBucket { bucket: string; count: number }
+export interface FirstResponseBucket { bucket: string; count: number }
 
-export interface AvgResolutionByPriority {
-  priority: string
-  avgDays: number
-  count: number
-}
-
-export interface AvgResolutionByTeam {
-  teamId: string
-  teamName: string
-  avgDays: number
-  count: number
-}
-
-export interface OpenAgeBucket {
-  bucket: string
-  count: number
-}
-
-export interface FirstResponseBucket {
-  bucket: string
-  count: number
-}
-
-export const getResolutionTimeBuckets = (): ResolutionTimeBucket[] => {
+export const getResolutionTimeBuckets = async (): Promise<ResolutionTimeBucket[]> => {
   const db = getDb()
-  const rows = db.prepare(`
+  const rows = await dbAll(db, `
     WITH FirstResolution AS (
       SELECT TicketId, MIN(ActivityAt) AS ResolvedAt
       FROM TicketActivity
@@ -170,75 +133,64 @@ export const getResolutionTimeBuckets = (): ResolutionTimeBucket[] => {
     SELECT (julianday(fr.ResolvedAt) - julianday(t.CreatedAt)) AS daysToResolve
     FROM Tickets t
     JOIN FirstResolution fr ON t.Id = fr.TicketId
-  `).all() as { daysToResolve: number }[]
+  `) as Array<{ daysToResolve: unknown }>
 
   const counts = Object.fromEntries(RESOLUTION_BUCKET_ORDER.map((b) => [b, 0]))
-  for (const row of rows) {
-    counts[bucketResolutionDays(row.daysToResolve)]++
-  }
+  for (const row of rows) counts[bucketResolutionDays(Number(row.daysToResolve))]++
   return RESOLUTION_BUCKET_ORDER.map((bucket) => ({ bucket, count: counts[bucket] }))
 }
 
-export const getAvgResolutionByPriority = (): AvgResolutionByPriority[] => {
+export const getAvgResolutionByPriority = async (): Promise<AvgResolutionByPriority[]> => {
   const db = getDb()
-  return db.prepare(`
+  const rows = await dbAll(db, `
     WITH FirstResolution AS (
       SELECT TicketId, MIN(ActivityAt) AS ResolvedAt
       FROM TicketActivity
       WHERE Message LIKE '% to Resolved.' OR Message LIKE '% to Closed.'
       GROUP BY TicketId
     )
-    SELECT
-      t.Priority AS priority,
-      AVG(julianday(fr.ResolvedAt) - julianday(t.CreatedAt)) AS avgDays,
-      COUNT(*) AS count
+    SELECT t.Priority AS priority, AVG(julianday(fr.ResolvedAt) - julianday(t.CreatedAt)) AS avgDays, COUNT(*) AS count
     FROM Tickets t
     JOIN FirstResolution fr ON t.Id = fr.TicketId
-    GROUP BY t.Priority
-    ORDER BY t.Priority ASC
-  `).all() as AvgResolutionByPriority[]
+    GROUP BY t.Priority ORDER BY t.Priority ASC
+  `) as Array<{ priority: unknown; avgDays: unknown; count: unknown }>
+  return rows.map((r) => ({ priority: String(r.priority), avgDays: Number(r.avgDays), count: Number(r.count) }))
 }
 
-export const getAvgResolutionByTeam = (): AvgResolutionByTeam[] => {
+export const getAvgResolutionByTeam = async (): Promise<AvgResolutionByTeam[]> => {
   const db = getDb()
-  return db.prepare(`
+  const rows = await dbAll(db, `
     WITH FirstResolution AS (
       SELECT TicketId, MIN(ActivityAt) AS ResolvedAt
       FROM TicketActivity
       WHERE Message LIKE '% to Resolved.' OR Message LIKE '% to Closed.'
       GROUP BY TicketId
     )
-    SELECT
-      t.TeamId AS teamId,
-      team.Name AS teamName,
-      AVG(julianday(fr.ResolvedAt) - julianday(t.CreatedAt)) AS avgDays,
-      COUNT(*) AS count
+    SELECT t.TeamId AS teamId, team.Name AS teamName,
+      AVG(julianday(fr.ResolvedAt) - julianday(t.CreatedAt)) AS avgDays, COUNT(*) AS count
     FROM Tickets t
     JOIN FirstResolution fr ON t.Id = fr.TicketId
     JOIN Teams team ON t.TeamId = team.Id
-    GROUP BY t.TeamId, team.Name
-    ORDER BY team.Name ASC
-  `).all() as AvgResolutionByTeam[]
+    GROUP BY t.TeamId, team.Name ORDER BY team.Name ASC
+  `) as Array<{ teamId: unknown; teamName: unknown; avgDays: unknown; count: unknown }>
+  return rows.map((r) => ({ teamId: String(r.teamId), teamName: String(r.teamName), avgDays: Number(r.avgDays), count: Number(r.count) }))
 }
 
-export const getOpenTicketAgeBuckets = (): OpenAgeBucket[] => {
+export const getOpenTicketAgeBuckets = async (): Promise<OpenAgeBucket[]> => {
   const db = getDb()
-  const rows = db.prepare(`
+  const rows = await dbAll(db, `
     SELECT (julianday('now') - julianday(CreatedAt)) AS ageInDays
-    FROM Tickets
-    WHERE Status IN ('Open', 'In Progress', 'Pending')
-  `).all() as { ageInDays: number }[]
+    FROM Tickets WHERE Status IN ('Open', 'In Progress', 'Pending')
+  `) as Array<{ ageInDays: unknown }>
 
   const counts = Object.fromEntries(RESOLUTION_BUCKET_ORDER.map((b) => [b, 0]))
-  for (const row of rows) {
-    counts[bucketResolutionDays(row.ageInDays)]++
-  }
+  for (const row of rows) counts[bucketResolutionDays(Number(row.ageInDays))]++
   return RESOLUTION_BUCKET_ORDER.map((bucket) => ({ bucket, count: counts[bucket] }))
 }
 
-export const getFirstResponseTimeBuckets = (): FirstResponseBucket[] => {
+export const getFirstResponseTimeBuckets = async (): Promise<FirstResponseBucket[]> => {
   const db = getDb()
-  const rows = db.prepare(`
+  const rows = await dbAll(db, `
     WITH FirstResponse AS (
       SELECT TicketId, MIN(ActivityAt) AS FirstResponseAt
       FROM TicketActivity
@@ -248,29 +200,38 @@ export const getFirstResponseTimeBuckets = (): FirstResponseBucket[] => {
     SELECT (julianday(fr.FirstResponseAt) - julianday(t.CreatedAt)) * 24 AS hoursToFirstResponse
     FROM Tickets t
     JOIN FirstResponse fr ON t.Id = fr.TicketId
-  `).all() as { hoursToFirstResponse: number }[]
+  `) as Array<{ hoursToFirstResponse: unknown }>
 
   const counts = Object.fromEntries(FIRST_RESPONSE_BUCKET_ORDER.map((b) => [b, 0]))
-  for (const row of rows) {
-    counts[bucketFirstResponseHours(row.hoursToFirstResponse)]++
-  }
+  for (const row of rows) counts[bucketFirstResponseHours(Number(row.hoursToFirstResponse))]++
   return FIRST_RESPONSE_BUCKET_ORDER.map((bucket) => ({ bucket, count: counts[bucket] }))
 }
 
-export const getAllTicketsForExport = (): ExportTicketRow[] => {
+export const getAllTicketsForExport = async (): Promise<ExportTicketRow[]> => {
   const db = getDb()
-  return db.prepare(`
-    SELECT
-      t.Id, t.Title, t.Description, t.Status, t.Priority,
-      t.RequestorName, t.RequestorEmail, t.Location,
-      t.CreatedAt, t.UpdatedAt,
-      u.Name as AssigneeName,
-      c.Name as CategoryName,
-      team.Name as TeamName
+  const rows = await dbAll(db, `
+    SELECT t.Id, t.Title, t.Description, t.Status, t.Priority,
+      t.RequestorName, t.RequestorEmail, t.Location, t.CreatedAt, t.UpdatedAt,
+      u.Name as AssigneeName, c.Name as CategoryName, team.Name as TeamName
     FROM Tickets t
     LEFT JOIN Users u ON t.AssignedToId = u.Id
     LEFT JOIN Categories c ON t.CategoryId = c.Id
     LEFT JOIN Teams team ON t.TeamId = team.Id
     ORDER BY t.CreatedAt DESC
-  `).all() as ExportTicketRow[]
+  `) as Array<Record<string, unknown>>
+  return rows.map((r) => ({
+    Id: String(r.Id),
+    Title: String(r.Title),
+    Description: String(r.Description),
+    Status: String(r.Status),
+    Priority: String(r.Priority),
+    RequestorName: String(r.RequestorName),
+    RequestorEmail: String(r.RequestorEmail),
+    Location: String(r.Location),
+    CreatedAt: String(r.CreatedAt),
+    UpdatedAt: String(r.UpdatedAt),
+    AssigneeName: r.AssigneeName ? String(r.AssigneeName) : null,
+    CategoryName: String(r.CategoryName),
+    TeamName: String(r.TeamName),
+  }))
 }

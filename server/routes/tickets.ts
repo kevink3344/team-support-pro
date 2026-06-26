@@ -121,9 +121,9 @@ ticketsRouter.post('/', requireAuth, async (req, res) => {
       return
     }
 
-    dispatchWebhookEvent(user.organizationId, 'ticket.created', { ticket })
+    void dispatchWebhookEvent(user.organizationId, 'ticket.created', { ticket })
     if (ticket.assignedToId) {
-      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket })
+      void dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket })
     }
 
     res.status(201).json({ ticket })
@@ -158,7 +158,7 @@ ticketsRouter.post('/public', async (req, res) => {
       listTeams(),
       listCategories(),
     ])
-    const page = resolveAnonymousPageConfig(pagePath, organizations.map((o) => o.id))
+    const page = await resolveAnonymousPageConfig(pagePath, organizations.map((o) => o.id))
     const team = teams.find((t) => t.id === teamId)
     const category = categories.find((c) => c.id === categoryId)
 
@@ -223,10 +223,9 @@ ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
   const db = getDb()
   const newTeamId = typeof req.body?.teamId === 'string' && req.body.teamId.trim() ? req.body.teamId.trim() : user.teamId
   if (newTeamId !== user.teamId) {
-    const targetTeam = db
-      .prepare('SELECT OrganizationId FROM Teams WHERE Id = ?')
-      .get(newTeamId) as { OrganizationId: string } | undefined
-    if (!targetTeam || targetTeam.OrganizationId !== user.organizationId) {
+    const targetTeamResult = await db.execute({ sql: 'SELECT OrganizationId FROM Teams WHERE Id = ?', args: [newTeamId] })
+    const targetTeam = targetTeamResult.rows[0] as { OrganizationId?: unknown } | undefined
+    if (!targetTeam || String(targetTeam.OrganizationId) !== user.organizationId) {
       res.status(403).json({ error: 'cross_org_team_reassign_forbidden' })
       return
     }
@@ -270,7 +269,7 @@ ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
         return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
       })
       if (cfInputs.length) {
-        upsertCustomFieldValues(ticketId, ticket.teamId, cfInputs)
+        await upsertCustomFieldValues(ticketId, ticket.teamId, cfInputs)
       }
     }
 
@@ -281,13 +280,13 @@ ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
     const refreshed = await getTicketById(ticketId)
     const finalTicket = refreshed ?? ticket
 
-    dispatchWebhookEvent(user.organizationId, 'ticket.updated', { ticket: finalTicket })
+    void dispatchWebhookEvent(user.organizationId, 'ticket.updated', { ticket: finalTicket })
     if (existingTicket && existingTicket.assignedToId !== finalTicket.assignedToId && finalTicket.assignedToId) {
-      dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket: finalTicket })
+      void dispatchWebhookEvent(user.organizationId, 'ticket.assigned', { ticket: finalTicket })
     }
     if (!wasAlreadyResolved && finalTicket.resolvedAt != null) {
       const resolvedEvent: WebhookEvent = finalTicket.status === 'Closed' ? 'ticket.closed' : 'ticket.resolved'
-      dispatchWebhookEvent(user.organizationId, resolvedEvent, { ticket: finalTicket })
+      void dispatchWebhookEvent(user.organizationId, resolvedEvent, { ticket: finalTicket })
     }
 
     res.json({ ticket: finalTicket })
@@ -466,9 +465,9 @@ ticketsRouter.delete('/:ticketId/attachments/:attachmentId', requireAuth, async 
 // Watchers
 // ---------------------------------------------------------------------------
 
-ticketsRouter.get('/watchers/my-tickets', requireAuth, (req, res) => {
+ticketsRouter.get('/watchers/my-tickets', requireAuth, async (req, res) => {
   const user = req.user!
-  res.json({ ticketIds: listWatchedTicketIds(user.id) })
+  res.json({ ticketIds: await listWatchedTicketIds(user.id) })
 })
 
 ticketsRouter.get('/:ticketId/watchers', requireAuth, async (req, res) => {
@@ -478,7 +477,7 @@ ticketsRouter.get('/:ticketId/watchers', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'invalid_ticket_id' })
     return
   }
-  res.json({ watchers: listTicketWatchers(ticketId) })
+  res.json({ watchers: await listTicketWatchers(ticketId) })
 })
 
 ticketsRouter.post('/:ticketId/watchers', requireAuth, async (req, res) => {
@@ -492,17 +491,16 @@ ticketsRouter.post('/:ticketId/watchers', requireAuth, async (req, res) => {
   }
 
   const db = getDb()
-  const targetUser = db
-    .prepare('SELECT OrganizationId FROM Users WHERE Id = ?')
-    .get(targetUserId) as { OrganizationId: string } | undefined
+  const targetUserResult = await db.execute({ sql: 'SELECT OrganizationId FROM Users WHERE Id = ?', args: [targetUserId] })
+  const targetUser = targetUserResult.rows[0] as { OrganizationId?: unknown } | undefined
 
-  if (!targetUser || targetUser.OrganizationId !== user.organizationId) {
+  if (!targetUser || String(targetUser.OrganizationId) !== user.organizationId) {
     res.status(403).json({ error: 'cross_org_watcher_forbidden' })
     return
   }
 
-  addTicketWatcher(ticketId, targetUserId)
-  res.json({ watchers: listTicketWatchers(ticketId) })
+  await addTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: await listTicketWatchers(ticketId) })
 })
 
 ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res) => {
@@ -520,6 +518,6 @@ ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res
     return
   }
 
-  removeTicketWatcher(ticketId, targetUserId)
-  res.json({ watchers: listTicketWatchers(ticketId) })
+  await removeTicketWatcher(ticketId, targetUserId)
+  res.json({ watchers: await listTicketWatchers(ticketId) })
 })

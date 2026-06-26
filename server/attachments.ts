@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 
-import { getDb } from './db.js'
+import { getDb, dbGet, dbAll, dbRun } from './db.js'
 
 export interface TicketAttachmentRecord {
   id: string
@@ -30,30 +30,17 @@ interface CreateAttachmentInput {
 const BASE64_TEXT_PATTERN = /^[A-Za-z0-9+/=\r\n]+$/
 
 const looksLikeLegacyBase64Blob = (fileContent: Buffer, contentType: string) => {
-  if (!fileContent.length) {
-    return false
-  }
-
+  if (!fileContent.length) return false
   const normalizedContentType = contentType.toLowerCase()
-  if (normalizedContentType.startsWith('text/')) {
-    return false
-  }
+  if (normalizedContentType.startsWith('text/')) return false
 
   const sourceText = fileContent.toString('utf8').trim()
-  if (!sourceText || sourceText.length % 4 !== 0 || !BASE64_TEXT_PATTERN.test(sourceText)) {
-    return false
-  }
+  if (!sourceText || sourceText.length % 4 !== 0 || !BASE64_TEXT_PATTERN.test(sourceText)) return false
 
   try {
     const decoded = Buffer.from(sourceText, 'base64')
-    if (!decoded.length || decoded.length >= fileContent.length) {
-      return false
-    }
-
-    if (normalizedContentType === 'application/pdf') {
-      return decoded.subarray(0, 4).toString('utf8') === '%PDF'
-    }
-
+    if (!decoded.length || decoded.length >= fileContent.length) return false
+    if (normalizedContentType === 'application/pdf') return decoded.subarray(0, 4).toString('utf8') === '%PDF'
     return true
   } catch {
     return false
@@ -61,10 +48,7 @@ const looksLikeLegacyBase64Blob = (fileContent: Buffer, contentType: string) => 
 }
 
 const normalizeAttachmentFileContent = (fileContent: Buffer, contentType: string) => {
-  if (!looksLikeLegacyBase64Blob(fileContent, contentType)) {
-    return fileContent
-  }
-
+  if (!looksLikeLegacyBase64Blob(fileContent, contentType)) return fileContent
   return Buffer.from(fileContent.toString('utf8').trim(), 'base64')
 }
 
@@ -81,22 +65,27 @@ const mapAttachmentRecord = (record: Record<string, unknown>): TicketAttachmentR
 
 const mapAttachmentBlobRecord = (record: Record<string, unknown>): TicketAttachmentBlobRecord => {
   const metadata = mapAttachmentRecord(record)
-  const rawFileContent = Buffer.from(record.fileContent as Buffer)
-
-  return {
-    ...metadata,
-    fileContent: normalizeAttachmentFileContent(rawFileContent, metadata.contentType),
+  // libSQL returns ArrayBuffer for BLOB fields; convert to Buffer
+  const rawContent = record.fileContent
+  let rawBuffer: Buffer
+  if (rawContent instanceof ArrayBuffer) {
+    rawBuffer = Buffer.from(rawContent)
+  } else if (Buffer.isBuffer(rawContent)) {
+    rawBuffer = rawContent
+  } else {
+    rawBuffer = Buffer.alloc(0)
   }
+  return { ...metadata, fileContent: normalizeAttachmentFileContent(rawBuffer, metadata.contentType) }
 }
 
 export const listTicketAttachments = async (ticketId: string): Promise<TicketAttachmentRecord[]> => {
   const db = getDb()
-  const rows = db.prepare(`
+  const rows = await dbAll(db, `
     SELECT Id AS id, TicketId AS ticketId, FileName AS fileName, ContentType AS contentType,
       FileSizeBytes AS fileSizeBytes, UploadedByUserId AS uploadedByUserId,
       UploadedByName AS uploadedByName, UploadedAt AS uploadedAt
     FROM TicketAttachments WHERE TicketId = ? AND IsDeleted = 0 ORDER BY UploadedAt DESC
-  `).all(ticketId) as Record<string, unknown>[]
+  `, [ticketId])
   return rows.map(mapAttachmentRecord)
 }
 
@@ -105,12 +94,12 @@ export const getTicketAttachmentById = async (
   attachmentId: string,
 ): Promise<TicketAttachmentBlobRecord | null> => {
   const db = getDb()
-  const row = db.prepare(`
+  const row = await dbGet(db, `
     SELECT Id AS id, TicketId AS ticketId, FileName AS fileName, ContentType AS contentType,
       FileSizeBytes AS fileSizeBytes, FileContent AS fileContent,
       UploadedByUserId AS uploadedByUserId, UploadedByName AS uploadedByName, UploadedAt AS uploadedAt
     FROM TicketAttachments WHERE TicketId = ? AND Id = ? AND IsDeleted = 0
-  `).get(ticketId, attachmentId) as Record<string, unknown> | undefined
+  `, [ticketId, attachmentId])
   return row ? mapAttachmentBlobRecord(row) : null
 }
 
@@ -120,20 +109,18 @@ export const createTicketAttachment = async (input: CreateAttachmentInput): Prom
   const attachmentId = `att-${crypto.randomUUID()}`
   const uploadedAt = new Date().toISOString()
 
-  const tx = db.transaction(() => {
-    db.prepare(`
-      INSERT INTO TicketAttachments (Id, TicketId, FileName, ContentType, FileSizeBytes, FileContent, UploadedByUserId, UploadedByName, UploadedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(attachmentId, input.ticketId, input.fileName.trim(), input.contentType || 'application/octet-stream', input.fileSizeBytes, input.fileContent, input.uploadedByUserId, input.uploadedByName, uploadedAt)
-
-    db.prepare('UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?').run(uploadedAt, input.ticketId)
-
-    db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(
-      `attachment-${crypto.randomUUID()}`, input.ticketId, input.uploadedByName,
-      `Uploaded attachment: ${input.fileName.trim()}.`, uploadedAt,
-    )
-  })
-  tx()
+  await db.batch([
+    {
+      sql: `INSERT INTO TicketAttachments (Id, TicketId, FileName, ContentType, FileSizeBytes, FileContent, UploadedByUserId, UploadedByName, UploadedAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [attachmentId, input.ticketId, input.fileName.trim(), input.contentType || 'application/octet-stream', input.fileSizeBytes, input.fileContent, input.uploadedByUserId, input.uploadedByName, uploadedAt],
+    },
+    { sql: 'UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?', args: [uploadedAt, input.ticketId] },
+    {
+      sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',
+      args: [`attachment-${crypto.randomUUID()}`, input.ticketId, input.uploadedByName, `Uploaded attachment: ${input.fileName.trim()}.`, uploadedAt],
+    },
+  ], 'write')
 
   const created = await getTicketAttachmentById(input.ticketId, attachmentId)
   if (!created) return null
@@ -153,17 +140,14 @@ export const deleteTicketAttachment = async (
   const db = getDb()
   const deletedAt = new Date().toISOString()
 
-  const tx = db.transaction(() => {
-    const result = db.prepare('UPDATE TicketAttachments SET IsDeleted = 1, DeletedAt = ?, DeletedByUserId = ? WHERE TicketId = ? AND Id = ? AND IsDeleted = 0').run(deletedAt, deletedByUserId, ticketId, attachmentId)
-    if (result.changes === 0) return false
+  // First soft-delete the attachment and check if it was actually updated
+  const result = await dbRun(db, 'UPDATE TicketAttachments SET IsDeleted = 1, DeletedAt = ?, DeletedByUserId = ? WHERE TicketId = ? AND Id = ? AND IsDeleted = 0', [deletedAt, deletedByUserId, ticketId, attachmentId])
+  if (result.rowsAffected === 0) return false
 
-    db.prepare('UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?').run(deletedAt, ticketId)
-    db.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)').run(
-      `attachment-${crypto.randomUUID()}`, ticketId, deletedByName,
-      `Removed attachment: ${existing.fileName}.`, deletedAt,
-    )
-    return true
-  })
+  await db.batch([
+    { sql: 'UPDATE Tickets SET UpdatedAt = ? WHERE Id = ?', args: [deletedAt, ticketId] },
+    { sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)', args: [`attachment-${crypto.randomUUID()}`, ticketId, deletedByName, `Removed attachment: ${existing.fileName}.`, deletedAt] },
+  ], 'write')
 
-  return tx() as boolean
+  return true
 }

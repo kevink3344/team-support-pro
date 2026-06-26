@@ -1,402 +1,442 @@
-import Database from 'better-sqlite3'
-import fs from 'node:fs'
+import { createClient, type Client, type InValue } from '@libsql/client'
 import path from 'node:path'
+import fs from 'node:fs'
 
 import { serverConfig } from './config.js'
 
-let db: Database.Database | null = null
+export type { Client }
+export type Row = Record<string, InValue>
+
+// ---------------------------------------------------------------------------
+// Singleton client
+// ---------------------------------------------------------------------------
+
+let client: Client | null = null
+
+const resolveSqliteUrl = (): string => {
+  const configuredPath = serverConfig.db.sqlitePath.trim()
+  if (configuredPath) {
+    const abs = path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.resolve(process.cwd(), configuredPath)
+    return `file:${abs}`
+  }
+  if (serverConfig.isProduction) {
+    const dir = '/home/data'
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    return `file:/home/data/dev.sqlite3`
+  }
+  return `file:${path.resolve(process.cwd(), 'dev.sqlite3')}`
+}
+
+export const getDb = (): Client => {
+  if (!client) {
+    const tursoUrl = serverConfig.db.tursoUrl.trim()
+    const tursoToken = serverConfig.db.tursoToken.trim()
+    if (tursoUrl) {
+      client = createClient({ url: tursoUrl, authToken: tursoToken || undefined })
+      console.log('Database: connected to Turso remote')
+    } else {
+      client = createClient({ url: resolveSqliteUrl() })
+      console.log('Database: connected to local SQLite file')
+    }
+  }
+  return client
+}
 
 export const hasDatabaseConfig = () => true
 
-const resolveSqlitePath = () => {
-  const configuredPath = serverConfig.db.sqlitePath.trim()
-  if (configuredPath) {
-    return path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.resolve(process.cwd(), configuredPath)
-  }
+// ---------------------------------------------------------------------------
+// Query helpers — wrap libsql execute for convenience
+// ---------------------------------------------------------------------------
 
-  if (serverConfig.isProduction) {
-    return '/home/data/dev.sqlite3'
-  }
-
-  return path.resolve(process.cwd(), 'dev.sqlite3')
+export const dbGet = async (
+  db: Client,
+  sql: string,
+  args: InValue[] = [],
+): Promise<Row | undefined> => {
+  const result = await db.execute({ sql, args })
+  return result.rows[0] as Row | undefined
 }
 
-const ensureSqliteDirectory = (sqlitePath: string) => {
-  const directory = path.dirname(sqlitePath)
-  if (!fs.existsSync(directory)) {
-    fs.mkdirSync(directory, { recursive: true })
-  }
+export const dbAll = async (
+  db: Client,
+  sql: string,
+  args: InValue[] = [],
+): Promise<Row[]> => {
+  const result = await db.execute({ sql, args })
+  return result.rows as unknown as Row[]
 }
 
-export const getDb = (): Database.Database => {
-  if (!db) {
-    const dbPath = resolveSqlitePath()
-    ensureSqliteDirectory(dbPath)
-    db = new Database(dbPath)
-    db.pragma('journal_mode = WAL')
-    db.pragma('foreign_keys = ON')
-    initializeSchema(db)
-    if (isDatabaseEmpty(db)) {
-      seedDatabase(db)
+export const dbRun = async (
+  db: Client,
+  sql: string,
+  args: InValue[] = [],
+): Promise<{ rowsAffected: number }> => {
+  const result = await db.execute({ sql, args })
+  return { rowsAffected: result.rowsAffected }
+}
+
+// ---------------------------------------------------------------------------
+// Schema & migrations
+// ---------------------------------------------------------------------------
+
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS Organizations (
+    Id TEXT PRIMARY KEY,
+    Name TEXT NOT NULL,
+    Code TEXT NOT NULL,
+    AccentColor TEXT NOT NULL DEFAULT '#334155',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS Teams (
+    Id TEXT PRIMARY KEY,
+    OrganizationId TEXT NOT NULL,
+    Name TEXT NOT NULL,
+    Code TEXT NOT NULL,
+    AccentColor TEXT NOT NULL DEFAULT '#0078d4',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS Categories (
+    Id TEXT PRIMARY KEY,
+    TeamId TEXT NOT NULL,
+    Name TEXT NOT NULL,
+    Description TEXT NOT NULL DEFAULT '',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TeamId) REFERENCES Teams(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS Users (
+    Id TEXT PRIMARY KEY,
+    Name TEXT NOT NULL,
+    DisplayName TEXT,
+    Email TEXT NOT NULL,
+    OrganizationId TEXT NOT NULL,
+    TeamId TEXT NOT NULL,
+    Role TEXT NOT NULL DEFAULT 'Staff',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id),
+    FOREIGN KEY (TeamId) REFERENCES Teams(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS Tickets (
+    Id TEXT PRIMARY KEY,
+    Title TEXT NOT NULL,
+    Description TEXT NOT NULL,
+    Status TEXT NOT NULL DEFAULT 'Open',
+    Priority TEXT NOT NULL DEFAULT 'Medium',
+    TeamId TEXT NOT NULL,
+    CategoryId TEXT NOT NULL,
+    AssignedToId TEXT,
+    RequestorName TEXT NOT NULL,
+    RequestorEmail TEXT NOT NULL,
+    Location TEXT NOT NULL DEFAULT 'Not specified',
+    DueLabel TEXT NOT NULL DEFAULT 'New in queue',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TeamId) REFERENCES Teams(Id),
+    FOREIGN KEY (CategoryId) REFERENCES Categories(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketActivity (
+    Id TEXT PRIMARY KEY,
+    TicketId TEXT NOT NULL,
+    Actor TEXT NOT NULL,
+    Message TEXT NOT NULL,
+    ActivityAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketAttachments (
+    Id TEXT PRIMARY KEY,
+    TicketId TEXT NOT NULL,
+    FileName TEXT NOT NULL,
+    ContentType TEXT NOT NULL DEFAULT 'application/octet-stream',
+    FileSizeBytes INTEGER NOT NULL DEFAULT 0,
+    FileContent BLOB,
+    UploadedByUserId TEXT NOT NULL,
+    UploadedByName TEXT NOT NULL,
+    UploadedAt TEXT DEFAULT (datetime('now')),
+    IsDeleted INTEGER NOT NULL DEFAULT 0,
+    DeletedAt TEXT,
+    DeletedByUserId TEXT,
+    FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TeamTicketTrends (
+    TrendDate TEXT NOT NULL,
+    TeamId TEXT NOT NULL,
+    TicketCount INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (TrendDate, TeamId)
+  )`,
+  `CREATE TABLE IF NOT EXISTS AppSettings (
+    Key TEXT PRIMARY KEY,
+    Value TEXT NOT NULL,
+    UpdatedAt TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketWatchers (
+    TicketId TEXT NOT NULL,
+    UserId TEXT NOT NULL,
+    AddedAt TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (TicketId, UserId),
+    FOREIGN KEY (TicketId) REFERENCES Tickets(Id),
+    FOREIGN KEY (UserId) REFERENCES Users(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS FeedbackForms (
+    Id TEXT PRIMARY KEY,
+    OrganizationId TEXT NOT NULL,
+    IsEnabled INTEGER NOT NULL DEFAULT 0,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS FeedbackFormFields (
+    Id TEXT PRIMARY KEY,
+    FormId TEXT NOT NULL,
+    FieldType TEXT NOT NULL,
+    Label TEXT NOT NULL,
+    IsRequired INTEGER NOT NULL DEFAULT 0,
+    SortOrder INTEGER NOT NULL DEFAULT 0,
+    OptionsJson TEXT NOT NULL DEFAULT '[]',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (FormId) REFERENCES FeedbackForms(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS FeedbackTokens (
+    Token TEXT PRIMARY KEY,
+    TicketId TEXT,
+    OrganizationId TEXT NOT NULL,
+    IsTest INTEGER NOT NULL DEFAULT 0,
+    ExpiresAt TEXT NOT NULL,
+    UsedAt TEXT,
+    CreatedAt TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS FeedbackResponses (
+    Id TEXT PRIMARY KEY,
+    Token TEXT NOT NULL,
+    TicketId TEXT,
+    OrganizationId TEXT NOT NULL,
+    TeamId TEXT,
+    CategoryId TEXT,
+    RequestorEmail TEXT,
+    IsTest INTEGER NOT NULL DEFAULT 0,
+    FormSnapshotJson TEXT NOT NULL DEFAULT '[]',
+    SubmittedAt TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS FeedbackResponseAnswers (
+    Id TEXT PRIMARY KEY,
+    ResponseId TEXT NOT NULL,
+    FieldId TEXT NOT NULL,
+    FieldLabel TEXT NOT NULL,
+    FieldType TEXT NOT NULL,
+    Value TEXT NOT NULL,
+    FOREIGN KEY (ResponseId) REFERENCES FeedbackResponses(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketFieldDefinitions (
+    Id TEXT PRIMARY KEY,
+    TeamId TEXT NOT NULL,
+    FieldType TEXT NOT NULL,
+    Label TEXT NOT NULL,
+    IsRequired INTEGER NOT NULL DEFAULT 0,
+    SortOrder INTEGER NOT NULL DEFAULT 0,
+    OptionsJson TEXT NOT NULL DEFAULT '[]',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TeamId) REFERENCES Teams(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketCustomFieldValues (
+    Id TEXT PRIMARY KEY,
+    TicketId TEXT NOT NULL,
+    FieldId TEXT NOT NULL,
+    FieldLabel TEXT NOT NULL,
+    FieldType TEXT NOT NULL,
+    Value TEXT NOT NULL,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS WebhookConfigs (
+    Id TEXT PRIMARY KEY,
+    OrganizationId TEXT NOT NULL,
+    Url TEXT NOT NULL,
+    Secret TEXT NOT NULL DEFAULT '',
+    Events TEXT NOT NULL DEFAULT '[]',
+    IsEnabled INTEGER NOT NULL DEFAULT 1,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+  )`,
+]
+
+const MIGRATION_STATEMENTS = [
+  `ALTER TABLE Teams ADD COLUMN OrganizationId TEXT`,
+  `ALTER TABLE Users ADD COLUMN OrganizationId TEXT`,
+  `ALTER TABLE Tickets ADD COLUMN ResolvedAt TEXT`,
+]
+
+const runMigrations = async (db: Client) => {
+  // Run each migration individually — ignore errors (column already exists)
+  for (const sql of MIGRATION_STATEMENTS) {
+    try {
+      await db.execute(sql)
+    } catch {
+      // Column already exists — safe to ignore
     }
   }
-  return db
+
+  const fallback = serverConfig.fallbackOrganization
+  await db.execute({
+    sql: `INSERT INTO Organizations (Id, Name, Code, AccentColor)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(Id) DO UPDATE SET
+            Name = excluded.Name, Code = excluded.Code,
+            AccentColor = excluded.AccentColor, UpdatedAt = datetime('now')`,
+    args: [fallback.id, fallback.name, fallback.code, fallback.accent],
+  })
+  await db.execute({
+    sql: `UPDATE Teams SET OrganizationId = ? WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
+    args: [fallback.id],
+  })
+  await db.execute({
+    sql: `UPDATE Users SET OrganizationId = COALESCE(
+            (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = Users.TeamId), ?
+          ) WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
+    args: [fallback.id],
+  })
 }
 
-const isDatabaseEmpty = (database: Database.Database): boolean => {
-  const row = database.prepare('SELECT COUNT(*) as count FROM Teams').get() as { count: number }
-  return row.count === 0
+const isDatabaseEmpty = async (db: Client): Promise<boolean> => {
+  const result = await db.execute('SELECT COUNT(*) AS count FROM Teams')
+  const count = Number(result.rows[0]?.count ?? 0)
+  return count === 0
 }
 
-const tableHasColumn = (database: Database.Database, tableName: string, columnName: string) => {
-  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
-  return columns.some((column) => column.name === columnName)
-}
-
-const migrateLegacySchema = (database: Database.Database) => {
-  if (!tableHasColumn(database, 'Teams', 'OrganizationId')) {
-    database.exec('ALTER TABLE Teams ADD COLUMN OrganizationId TEXT')
-  }
-
-  if (!tableHasColumn(database, 'Users', 'OrganizationId')) {
-    database.exec('ALTER TABLE Users ADD COLUMN OrganizationId TEXT')
-  }
-
-  if (!tableHasColumn(database, 'Tickets', 'ResolvedAt')) {
-    database.exec('ALTER TABLE Tickets ADD COLUMN ResolvedAt TEXT')
-  }
-
-  const fallbackOrganization = serverConfig.fallbackOrganization
-  database
-    .prepare(
-      "INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?) ON CONFLICT(Id) DO UPDATE SET Name = excluded.Name, Code = excluded.Code, AccentColor = excluded.AccentColor, UpdatedAt = datetime('now')",
-    )
-    .run(
-      fallbackOrganization.id,
-      fallbackOrganization.name,
-      fallbackOrganization.code,
-      fallbackOrganization.accent,
-    )
-
-  database
-    .prepare("UPDATE Teams SET OrganizationId = ? WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''")
-    .run(fallbackOrganization.id)
-
-  database
-    .prepare(`
-      UPDATE Users
-      SET OrganizationId = COALESCE(
-        (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = Users.TeamId),
-        ?
-      )
-      WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''
-    `)
-    .run(fallbackOrganization.id)
-}
-
-const initializeSchema = (database: Database.Database) => {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS Organizations (
-      Id TEXT PRIMARY KEY,
-      Name TEXT NOT NULL,
-      Code TEXT NOT NULL,
-      AccentColor TEXT NOT NULL DEFAULT '#334155',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS Teams (
-      Id TEXT PRIMARY KEY,
-      OrganizationId TEXT NOT NULL,
-      Name TEXT NOT NULL,
-      Code TEXT NOT NULL,
-      AccentColor TEXT NOT NULL DEFAULT '#0078d4',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS Categories (
-      Id TEXT PRIMARY KEY,
-      TeamId TEXT NOT NULL,
-      Name TEXT NOT NULL,
-      Description TEXT NOT NULL DEFAULT '',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (TeamId) REFERENCES Teams(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS Users (
-      Id TEXT PRIMARY KEY,
-      Name TEXT NOT NULL,
-      DisplayName TEXT,
-      Email TEXT NOT NULL,
-      OrganizationId TEXT NOT NULL,
-      TeamId TEXT NOT NULL,
-      Role TEXT NOT NULL DEFAULT 'Staff',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id),
-      FOREIGN KEY (TeamId) REFERENCES Teams(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS Tickets (
-      Id TEXT PRIMARY KEY,
-      Title TEXT NOT NULL,
-      Description TEXT NOT NULL,
-      Status TEXT NOT NULL DEFAULT 'Open',
-      Priority TEXT NOT NULL DEFAULT 'Medium',
-      TeamId TEXT NOT NULL,
-      CategoryId TEXT NOT NULL,
-      AssignedToId TEXT,
-      RequestorName TEXT NOT NULL,
-      RequestorEmail TEXT NOT NULL,
-      Location TEXT NOT NULL DEFAULT 'Not specified',
-      DueLabel TEXT NOT NULL DEFAULT 'New in queue',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (TeamId) REFERENCES Teams(Id),
-      FOREIGN KEY (CategoryId) REFERENCES Categories(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS TicketActivity (
-      Id TEXT PRIMARY KEY,
-      TicketId TEXT NOT NULL,
-      Actor TEXT NOT NULL,
-      Message TEXT NOT NULL,
-      ActivityAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS TicketAttachments (
-      Id TEXT PRIMARY KEY,
-      TicketId TEXT NOT NULL,
-      FileName TEXT NOT NULL,
-      ContentType TEXT NOT NULL DEFAULT 'application/octet-stream',
-      FileSizeBytes INTEGER NOT NULL DEFAULT 0,
-      FileContent BLOB,
-      UploadedByUserId TEXT NOT NULL,
-      UploadedByName TEXT NOT NULL,
-      UploadedAt TEXT DEFAULT (datetime('now')),
-      IsDeleted INTEGER NOT NULL DEFAULT 0,
-      DeletedAt TEXT,
-      DeletedByUserId TEXT,
-      FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS TeamTicketTrends (
-      TrendDate TEXT NOT NULL,
-      TeamId TEXT NOT NULL,
-      TicketCount INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (TrendDate, TeamId)
-    );
-
-    CREATE TABLE IF NOT EXISTS AppSettings (
-      Key TEXT PRIMARY KEY,
-      Value TEXT NOT NULL,
-      UpdatedAt TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS TicketWatchers (
-      TicketId TEXT NOT NULL,
-      UserId TEXT NOT NULL,
-      AddedAt TEXT DEFAULT (datetime('now')),
-      PRIMARY KEY (TicketId, UserId),
-      FOREIGN KEY (TicketId) REFERENCES Tickets(Id),
-      FOREIGN KEY (UserId) REFERENCES Users(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS FeedbackForms (
-      Id TEXT PRIMARY KEY,
-      OrganizationId TEXT NOT NULL,
-      IsEnabled INTEGER NOT NULL DEFAULT 0,
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS FeedbackFormFields (
-      Id TEXT PRIMARY KEY,
-      FormId TEXT NOT NULL,
-      FieldType TEXT NOT NULL,
-      Label TEXT NOT NULL,
-      IsRequired INTEGER NOT NULL DEFAULT 0,
-      SortOrder INTEGER NOT NULL DEFAULT 0,
-      OptionsJson TEXT NOT NULL DEFAULT '[]',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (FormId) REFERENCES FeedbackForms(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS FeedbackTokens (
-      Token TEXT PRIMARY KEY,
-      TicketId TEXT,
-      OrganizationId TEXT NOT NULL,
-      IsTest INTEGER NOT NULL DEFAULT 0,
-      ExpiresAt TEXT NOT NULL,
-      UsedAt TEXT,
-      CreatedAt TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS FeedbackResponses (
-      Id TEXT PRIMARY KEY,
-      Token TEXT NOT NULL,
-      TicketId TEXT,
-      OrganizationId TEXT NOT NULL,
-      TeamId TEXT,
-      CategoryId TEXT,
-      RequestorEmail TEXT,
-      IsTest INTEGER NOT NULL DEFAULT 0,
-      FormSnapshotJson TEXT NOT NULL DEFAULT '[]',
-      SubmittedAt TEXT DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS FeedbackResponseAnswers (
-      Id TEXT PRIMARY KEY,
-      ResponseId TEXT NOT NULL,
-      FieldId TEXT NOT NULL,
-      FieldLabel TEXT NOT NULL,
-      FieldType TEXT NOT NULL,
-      Value TEXT NOT NULL,
-      FOREIGN KEY (ResponseId) REFERENCES FeedbackResponses(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS TicketFieldDefinitions (
-      Id TEXT PRIMARY KEY,
-      TeamId TEXT NOT NULL,
-      FieldType TEXT NOT NULL,
-      Label TEXT NOT NULL,
-      IsRequired INTEGER NOT NULL DEFAULT 0,
-      SortOrder INTEGER NOT NULL DEFAULT 0,
-      OptionsJson TEXT NOT NULL DEFAULT '[]',
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (TeamId) REFERENCES Teams(Id)
-    );
-
-    CREATE TABLE IF NOT EXISTS TicketCustomFieldValues (
-      Id TEXT PRIMARY KEY,
-      TicketId TEXT NOT NULL,
-      FieldId TEXT NOT NULL,
-      FieldLabel TEXT NOT NULL,
-      FieldType TEXT NOT NULL,
-      Value TEXT NOT NULL,
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
-    );
-    CREATE TABLE IF NOT EXISTS WebhookConfigs (
-      Id TEXT PRIMARY KEY,
-      OrganizationId TEXT NOT NULL,
-      Url TEXT NOT NULL,
-      Secret TEXT NOT NULL DEFAULT '',
-      Events TEXT NOT NULL DEFAULT '[]',
-      IsEnabled INTEGER NOT NULL DEFAULT 1,
-      CreatedAt TEXT DEFAULT (datetime('now')),
-      UpdatedAt TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
-    );
-  `)
-
-  migrateLegacySchema(database)
-}
-
-const seedDatabase = (database: Database.Database) => {
+const seedDatabase = async (db: Client) => {
   const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toISOString()
+  const fallback = serverConfig.fallbackOrganization
 
-  database.exec('BEGIN TRANSACTION')
+  const statements: Array<{ sql: string; args: InValue[] }> = []
 
-  try {
-    const fallbackOrganization = serverConfig.fallbackOrganization
+  statements.push({
+    sql: 'INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)',
+    args: [fallback.id, fallback.name, fallback.code, fallback.accent],
+  })
 
-    const insertOrganization = database.prepare('INSERT INTO Organizations (Id, Name, Code, AccentColor) VALUES (?, ?, ?, ?)')
-    insertOrganization.run(
-      fallbackOrganization.id,
-      fallbackOrganization.name,
-      fallbackOrganization.code,
-      fallbackOrganization.accent,
-    )
+  const teams: [string, string, string, string][] = [
+    ['it', 'IT Support', 'IT', '#0078d4'],
+    ['facilities', 'Facilities', 'FAC', '#2f9e44'],
+    ['hr', 'Human Resources', 'HR', '#e8590c'],
+  ]
+  for (const [id, name, code, accent] of teams) {
+    statements.push({
+      sql: 'INSERT INTO Teams (Id, OrganizationId, Name, Code, AccentColor) VALUES (?, ?, ?, ?, ?)',
+      args: [id, fallback.id, name, code, accent],
+    })
+  }
 
-    // Teams
-    const insertTeam = database.prepare('INSERT INTO Teams (Id, OrganizationId, Name, Code, AccentColor) VALUES (?, ?, ?, ?, ?)')
-    insertTeam.run('it', fallbackOrganization.id, 'IT Support', 'IT', '#0078d4')
-    insertTeam.run('facilities', fallbackOrganization.id, 'Facilities', 'FAC', '#2f9e44')
-    insertTeam.run('hr', fallbackOrganization.id, 'Human Resources', 'HR', '#e8590c')
+  const categories: [string, string, string, string][] = [
+    ['cat-it-hardware', 'it', 'Hardware', 'Hardware issues and requests'],
+    ['cat-it-software', 'it', 'Software', 'Software installation and issues'],
+    ['cat-it-network', 'it', 'Network', 'Network and connectivity issues'],
+    ['cat-it-account', 'it', 'Account Access', 'Account and password issues'],
+    ['cat-fac-maintenance', 'facilities', 'Maintenance', 'Building maintenance requests'],
+    ['cat-fac-safety', 'facilities', 'Safety', 'Safety concerns and reports'],
+    ['cat-hr-onboarding', 'hr', 'Onboarding', 'New employee onboarding'],
+    ['cat-hr-benefits', 'hr', 'Benefits', 'Benefits questions and requests'],
+  ]
+  for (const [id, teamId, name, desc] of categories) {
+    statements.push({
+      sql: 'INSERT INTO Categories (Id, TeamId, Name, Description) VALUES (?, ?, ?, ?)',
+      args: [id, teamId, name, desc],
+    })
+  }
 
-    // Categories
-    const insertCategory = database.prepare('INSERT INTO Categories (Id, TeamId, Name, Description) VALUES (?, ?, ?, ?)')
-    insertCategory.run('cat-it-hardware', 'it', 'Hardware', 'Hardware issues and requests')
-    insertCategory.run('cat-it-software', 'it', 'Software', 'Software installation and issues')
-    insertCategory.run('cat-it-network', 'it', 'Network', 'Network and connectivity issues')
-    insertCategory.run('cat-it-account', 'it', 'Account Access', 'Account and password issues')
-    insertCategory.run('cat-fac-maintenance', 'facilities', 'Maintenance', 'Building maintenance requests')
-    insertCategory.run('cat-fac-safety', 'facilities', 'Safety', 'Safety concerns and reports')
-    insertCategory.run('cat-hr-onboarding', 'hr', 'Onboarding', 'New employee onboarding')
-    insertCategory.run('cat-hr-benefits', 'hr', 'Benefits', 'Benefits questions and requests')
+  const users: [string, string, string, string, string, string][] = [
+    ['u-kevin', 'Kevin Key', 'kevin.key@company.com', fallback.id, 'it', 'Admin'],
+    ['u-diana', 'Diana Park', 'diana.park@company.com', fallback.id, 'it', 'Staff'],
+    ['u-alex', 'Alex Rivera', 'alex.rivera@company.com', fallback.id, 'it', 'Staff'],
+    ['u-michael', 'Michael Chen', 'michael.chen@company.com', fallback.id, 'facilities', 'Staff'],
+    ['u-sarah', 'Sarah Johnson', 'sarah.johnson@company.com', fallback.id, 'facilities', 'Admin'],
+    ['u-emily', 'Emily Davis', 'emily.davis@company.com', fallback.id, 'hr', 'Staff'],
+  ]
+  for (const [id, name, email, orgId, teamId, role] of users) {
+    statements.push({
+      sql: 'INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [id, name, name, email, orgId, teamId, role],
+    })
+  }
 
-    // Users
-    const insertUser = database.prepare('INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    insertUser.run('u-kevin', 'Kevin Key', 'Kevin Key', 'kevin.key@company.com', fallbackOrganization.id, 'it', 'Admin')
-    insertUser.run('u-diana', 'Diana Park', 'Diana Park', 'diana.park@company.com', fallbackOrganization.id, 'it', 'Staff')
-    insertUser.run('u-alex', 'Alex Rivera', 'Alex Rivera', 'alex.rivera@company.com', fallbackOrganization.id, 'it', 'Staff')
-    insertUser.run('u-michael', 'Michael Chen', 'Michael Chen', 'michael.chen@company.com', fallbackOrganization.id, 'facilities', 'Staff')
-    insertUser.run('u-sarah', 'Sarah Johnson', 'Sarah Johnson', 'sarah.johnson@company.com', fallbackOrganization.id, 'facilities', 'Admin')
-    insertUser.run('u-emily', 'Emily Davis', 'Emily Davis', 'emily.davis@company.com', fallbackOrganization.id, 'hr', 'Staff')
+  const ticketSql = `INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  const tickets: InValue[][] = [
+    ['TKT-10001', 'Laptop not booting', 'My laptop shows a black screen after the login prompt. Tried restarting multiple times.', 'Open', 'High', 'it', 'cat-it-hardware', 'u-diana', 'James Wilson', 'james.wilson@company.com', 'Building A, Room 204', 'Today', daysAgo(0), daysAgo(0)],
+    ['TKT-10002', 'Install Adobe Creative Suite', 'Need Adobe Creative Suite installed for the marketing project starting next week.', 'In Progress', 'Medium', 'it', 'cat-it-software', 'u-alex', 'Maria Garcia', 'maria.garcia@company.com', 'Building B, Room 110', 'This week', daysAgo(2), daysAgo(1)],
+    ['TKT-10003', 'VPN connection drops frequently', 'Remote VPN disconnects every 15-20 minutes. Using Cisco AnyConnect on Windows 11.', 'Open', 'High', 'it', 'cat-it-network', 'u-kevin', 'Tom Anderson', 'tom.anderson@company.com', 'Remote', 'Today', daysAgo(1), daysAgo(0)],
+    ['TKT-10004', 'Password reset for ERP system', 'Locked out of the ERP system after too many failed attempts. Need urgent password reset.', 'Resolved', 'Critical', 'it', 'cat-it-account', 'u-diana', 'Lisa Brown', 'lisa.brown@company.com', 'Building A, Room 312', 'Completed', daysAgo(3), daysAgo(2)],
+    ['TKT-10005', 'New monitor request', 'Need an additional 27-inch monitor for dual-screen setup. Approved by manager.', 'Pending', 'Low', 'it', 'cat-it-hardware', null, 'Robert Taylor', 'robert.taylor@company.com', 'Building C, Room 501', 'Next week', daysAgo(5), daysAgo(3)],
+    ['TKT-10006', 'Broken window in conference room', 'Large crack in the window of conference room 3B. Potential safety hazard.', 'Open', 'High', 'facilities', 'cat-fac-safety', 'u-michael', 'Anna Lee', 'anna.lee@company.com', 'Building A, Conference Room 3B', 'Today', daysAgo(0), daysAgo(0)],
+    ['TKT-10007', 'HVAC not working in east wing', 'Temperature is too high in the east wing offices. AC appears to be off.', 'In Progress', 'Medium', 'facilities', 'cat-fac-maintenance', 'u-sarah', 'David Kim', 'david.kim@company.com', 'Building B, East Wing', 'This week', daysAgo(1), daysAgo(0)],
+    ['TKT-10008', 'New hire onboarding - Jane Smith', 'Jane Smith starts Monday. Need workstation setup, badge, and system access.', 'Open', 'High', 'hr', 'cat-hr-onboarding', 'u-emily', 'Mark Thompson', 'mark.thompson@company.com', 'Building A, HR Office', 'This week', daysAgo(2), daysAgo(1)],
+    ['TKT-10009', 'Printer paper jam on 3rd floor', 'The HP LaserJet on the 3rd floor keeps jamming. Already tried clearing it.', 'Closed', 'Low', 'it', 'cat-it-hardware', 'u-alex', 'Chris Martin', 'chris.martin@company.com', 'Building A, 3rd Floor', 'Completed', daysAgo(7), daysAgo(5)],
+    ['TKT-10010', 'Benefits enrollment question', 'Need help understanding the dental plan options for open enrollment.', 'Pending', 'Low', 'hr', 'cat-hr-benefits', 'u-emily', 'Rachel Green', 'rachel.green@company.com', 'Remote', 'Next week', daysAgo(3), daysAgo(2)],
+  ]
+  for (const args of tickets) statements.push({ sql: ticketSql, args })
 
-    // Tickets
-    const insertTicket = database.prepare(`
-      INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    insertTicket.run('TKT-10001', 'Laptop not booting', 'My laptop shows a black screen after the login prompt. Tried restarting multiple times.', 'Open', 'High', 'it', 'cat-it-hardware', 'u-diana', 'James Wilson', 'james.wilson@company.com', 'Building A, Room 204', 'Today', daysAgo(0), daysAgo(0))
-    insertTicket.run('TKT-10002', 'Install Adobe Creative Suite', 'Need Adobe Creative Suite installed for the marketing project starting next week.', 'In Progress', 'Medium', 'it', 'cat-it-software', 'u-alex', 'Maria Garcia', 'maria.garcia@company.com', 'Building B, Room 110', 'This week', daysAgo(2), daysAgo(1))
-    insertTicket.run('TKT-10003', 'VPN connection drops frequently', 'Remote VPN disconnects every 15-20 minutes. Using Cisco AnyConnect on Windows 11.', 'Open', 'High', 'it', 'cat-it-network', 'u-kevin', 'Tom Anderson', 'tom.anderson@company.com', 'Remote', 'Today', daysAgo(1), daysAgo(0))
-    insertTicket.run('TKT-10004', 'Password reset for ERP system', 'Locked out of the ERP system after too many failed attempts. Need urgent password reset.', 'Resolved', 'Critical', 'it', 'cat-it-account', 'u-diana', 'Lisa Brown', 'lisa.brown@company.com', 'Building A, Room 312', 'Completed', daysAgo(3), daysAgo(2))
-    insertTicket.run('TKT-10005', 'New monitor request', 'Need an additional 27-inch monitor for dual-screen setup. Approved by manager.', 'Pending', 'Low', 'it', 'cat-it-hardware', null, 'Robert Taylor', 'robert.taylor@company.com', 'Building C, Room 501', 'Next week', daysAgo(5), daysAgo(3))
-    insertTicket.run('TKT-10006', 'Broken window in conference room', 'Large crack in the window of conference room 3B. Potential safety hazard.', 'Open', 'High', 'facilities', 'cat-fac-safety', 'u-michael', 'Anna Lee', 'anna.lee@company.com', 'Building A, Conference Room 3B', 'Today', daysAgo(0), daysAgo(0))
-    insertTicket.run('TKT-10007', 'HVAC not working in east wing', 'Temperature is too high in the east wing offices. AC appears to be off.', 'In Progress', 'Medium', 'facilities', 'cat-fac-maintenance', 'u-sarah', 'David Kim', 'david.kim@company.com', 'Building B, East Wing', 'This week', daysAgo(1), daysAgo(0))
-    insertTicket.run('TKT-10008', 'New hire onboarding - Jane Smith', 'Jane Smith starts Monday. Need workstation setup, badge, and system access.', 'Open', 'High', 'hr', 'cat-hr-onboarding', 'u-emily', 'Mark Thompson', 'mark.thompson@company.com', 'Building A, HR Office', 'This week', daysAgo(2), daysAgo(1))
-    insertTicket.run('TKT-10009', 'Printer paper jam on 3rd floor', 'The HP LaserJet on the 3rd floor keeps jamming. Already tried clearing it.', 'Closed', 'Low', 'it', 'cat-it-hardware', 'u-alex', 'Chris Martin', 'chris.martin@company.com', 'Building A, 3rd Floor', 'Completed', daysAgo(7), daysAgo(5))
-    insertTicket.run('TKT-10010', 'Benefits enrollment question', 'Need help understanding the dental plan options for open enrollment.', 'Pending', 'Low', 'hr', 'cat-hr-benefits', 'u-emily', 'Rachel Green', 'rachel.green@company.com', 'Remote', 'Next week', daysAgo(3), daysAgo(2))
+  const activities: [string, string, string, string, string][] = [
+    ['act-1', 'TKT-10001', 'System', 'Ticket created from TeamSupportPro.', daysAgo(0)],
+    ['act-2', 'TKT-10002', 'System', 'Ticket created from TeamSupportPro.', daysAgo(2)],
+    ['act-3', 'TKT-10002', 'Alex Rivera', 'Changed status from Open to In Progress.', daysAgo(1)],
+    ['act-4', 'TKT-10002', 'Alex Rivera', 'Started downloading installer from Adobe admin console.', daysAgo(1)],
+    ['act-5', 'TKT-10003', 'System', 'Ticket created from TeamSupportPro.', daysAgo(1)],
+    ['act-6', 'TKT-10004', 'System', 'Ticket created from TeamSupportPro.', daysAgo(3)],
+    ['act-7', 'TKT-10004', 'Diana Park', 'Changed status from Open to In Progress.', daysAgo(3)],
+    ['act-8', 'TKT-10004', 'Diana Park', 'Password reset completed. User notified via email.', daysAgo(2)],
+    ['act-9', 'TKT-10004', 'Diana Park', 'Changed status from In Progress to Resolved.', daysAgo(2)],
+    ['act-10', 'TKT-10005', 'System', 'Ticket created from TeamSupportPro.', daysAgo(5)],
+    ['act-11', 'TKT-10005', 'Kevin Key', 'Changed status from Open to Pending.', daysAgo(3)],
+    ['act-12', 'TKT-10005', 'Kevin Key', 'Waiting for equipment procurement approval.', daysAgo(3)],
+    ['act-13', 'TKT-10006', 'System', 'Ticket created from TeamSupportPro.', daysAgo(0)],
+    ['act-14', 'TKT-10007', 'System', 'Ticket created from TeamSupportPro.', daysAgo(1)],
+    ['act-15', 'TKT-10007', 'Sarah Johnson', 'Changed status from Open to In Progress.', daysAgo(0)],
+    ['act-16', 'TKT-10007', 'Sarah Johnson', 'HVAC technician dispatched. ETA 2 hours.', daysAgo(0)],
+    ['act-17', 'TKT-10008', 'System', 'Ticket created from TeamSupportPro.', daysAgo(2)],
+    ['act-18', 'TKT-10009', 'System', 'Ticket created from TeamSupportPro.', daysAgo(7)],
+    ['act-19', 'TKT-10009', 'Alex Rivera', 'Cleared paper jam and replaced rollers.', daysAgo(5)],
+    ['act-20', 'TKT-10009', 'Alex Rivera', 'Changed status from Open to Closed.', daysAgo(5)],
+    ['act-21', 'TKT-10010', 'System', 'Ticket created from TeamSupportPro.', daysAgo(3)],
+  ]
+  for (const [id, ticketId, actor, message, at] of activities) {
+    statements.push({
+      sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',
+      args: [id, ticketId, actor, message, at],
+    })
+  }
 
-    // Ticket Activity
-    const insertActivity = database.prepare('INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)')
-    insertActivity.run('act-1', 'TKT-10001', 'System', 'Ticket created from TeamSupportPro.', daysAgo(0))
-    insertActivity.run('act-2', 'TKT-10002', 'System', 'Ticket created from TeamSupportPro.', daysAgo(2))
-    insertActivity.run('act-3', 'TKT-10002', 'Alex Rivera', 'Changed status from Open to In Progress.', daysAgo(1))
-    insertActivity.run('act-4', 'TKT-10002', 'Alex Rivera', 'Started downloading installer from Adobe admin console.', daysAgo(1))
-    insertActivity.run('act-5', 'TKT-10003', 'System', 'Ticket created from TeamSupportPro.', daysAgo(1))
-    insertActivity.run('act-6', 'TKT-10004', 'System', 'Ticket created from TeamSupportPro.', daysAgo(3))
-    insertActivity.run('act-7', 'TKT-10004', 'Diana Park', 'Changed status from Open to In Progress.', daysAgo(3))
-    insertActivity.run('act-8', 'TKT-10004', 'Diana Park', 'Password reset completed. User notified via email.', daysAgo(2))
-    insertActivity.run('act-9', 'TKT-10004', 'Diana Park', 'Changed status from In Progress to Resolved.', daysAgo(2))
-    insertActivity.run('act-10', 'TKT-10005', 'System', 'Ticket created from TeamSupportPro.', daysAgo(5))
-    insertActivity.run('act-11', 'TKT-10005', 'Kevin Key', 'Changed status from Open to Pending.', daysAgo(3))
-    insertActivity.run('act-12', 'TKT-10005', 'Kevin Key', 'Waiting for equipment procurement approval.', daysAgo(3))
-    insertActivity.run('act-13', 'TKT-10006', 'System', 'Ticket created from TeamSupportPro.', daysAgo(0))
-    insertActivity.run('act-14', 'TKT-10007', 'System', 'Ticket created from TeamSupportPro.', daysAgo(1))
-    insertActivity.run('act-15', 'TKT-10007', 'Sarah Johnson', 'Changed status from Open to In Progress.', daysAgo(0))
-    insertActivity.run('act-16', 'TKT-10007', 'Sarah Johnson', 'HVAC technician dispatched. ETA 2 hours.', daysAgo(0))
-    insertActivity.run('act-17', 'TKT-10008', 'System', 'Ticket created from TeamSupportPro.', daysAgo(2))
-    insertActivity.run('act-18', 'TKT-10009', 'System', 'Ticket created from TeamSupportPro.', daysAgo(7))
-    insertActivity.run('act-19', 'TKT-10009', 'Alex Rivera', 'Cleared paper jam and replaced rollers.', daysAgo(5))
-    insertActivity.run('act-20', 'TKT-10009', 'Alex Rivera', 'Changed status from Open to Closed.', daysAgo(5))
-    insertActivity.run('act-21', 'TKT-10010', 'System', 'Ticket created from TeamSupportPro.', daysAgo(3))
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().split('T')[0]
+    statements.push({ sql: 'INSERT INTO TeamTicketTrends (TrendDate, TeamId, TicketCount) VALUES (?, ?, ?)', args: [d, 'it', Math.floor(Math.random() * 5) + 2] })
+    statements.push({ sql: 'INSERT INTO TeamTicketTrends (TrendDate, TeamId, TicketCount) VALUES (?, ?, ?)', args: [d, 'facilities', Math.floor(Math.random() * 3) + 1] })
+    statements.push({ sql: 'INSERT INTO TeamTicketTrends (TrendDate, TeamId, TicketCount) VALUES (?, ?, ?)', args: [d, 'hr', Math.floor(Math.random() * 2) + 1] })
+  }
 
-    // Trends
-    const insertTrend = database.prepare('INSERT INTO TeamTicketTrends (TrendDate, TeamId, TicketCount) VALUES (?, ?, ?)')
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 86400000).toISOString().split('T')[0]
-      insertTrend.run(d, 'it', Math.floor(Math.random() * 5) + 2)
-      insertTrend.run(d, 'facilities', Math.floor(Math.random() * 3) + 1)
-      insertTrend.run(d, 'hr', Math.floor(Math.random() * 2) + 1)
-    }
+  await db.batch(statements, 'write')
+  console.log('Database seeded with mock data.')
+}
 
-    database.exec('COMMIT')
-    console.log('SQLite database seeded with mock data.')
-  } catch (error) {
-    database.exec('ROLLBACK')
-    throw error
+// ---------------------------------------------------------------------------
+// Public init — called once at startup from index.ts
+// ---------------------------------------------------------------------------
+
+export const initDb = async (): Promise<void> => {
+  const db = getDb()
+
+  // Create tables one by one (batch doesn't support DDL on remote Turso)
+  for (const sql of SCHEMA_STATEMENTS) {
+    await db.execute(sql)
+  }
+
+  await runMigrations(db)
+
+  if (await isDatabaseEmpty(db)) {
+    await seedDatabase(db)
   }
 }

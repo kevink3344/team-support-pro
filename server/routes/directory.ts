@@ -233,17 +233,17 @@ directoryRouter.delete('/teams/:teamId', requireAdmin, async (req, res) => {
 // Ticket field definitions (per-team)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/teams/:teamId/ticket-fields', requireAuth, (req, res) => {
-  const fields = getTicketFieldDefinitions(String(req.params.teamId))
+directoryRouter.get('/teams/:teamId/ticket-fields', requireAuth, async (req, res) => {
+  const fields = await getTicketFieldDefinitions(String(req.params.teamId))
   res.json({ fields })
 })
 
-directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, (req, res) => {
+directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, async (req, res) => {
   if (!Array.isArray(req.body?.fields)) {
     res.status(400).json({ error: 'invalid_ticket_fields_payload' })
     return
   }
-  const fields = saveTicketFieldDefinitions(String(req.params.teamId), req.body.fields as Array<Partial<TicketFieldDefinition>>)
+  const fields = await saveTicketFieldDefinitions(String(req.params.teamId), req.body.fields as Array<Partial<TicketFieldDefinition>>)
   res.json({ fields })
 })
 

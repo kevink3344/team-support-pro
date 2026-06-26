@@ -12,7 +12,7 @@ import {
   type FeedbackFormField,
 } from '../feedback.js'
 import { serverConfig } from '../config.js'
-import { getDb } from '../db.js'
+import { getDb, dbGet } from '../db.js'
 
 export const feedbackRouter = Router()
 
@@ -20,43 +20,43 @@ export const feedbackRouter = Router()
 // Feedback Form per-org design (admin)
 // ---------------------------------------------------------------------------
 
-feedbackRouter.get('/form/:orgId', requireAdmin, (req, res) => {
-  const form = getFeedbackForm(String(req.params.orgId))
+feedbackRouter.get('/form/:orgId', requireAdmin, async (req, res) => {
+  const form = await getFeedbackForm(String(req.params.orgId))
   res.json({ form })
 })
 
-feedbackRouter.put('/form/:orgId', requireAdmin, (req, res) => {
+feedbackRouter.put('/form/:orgId', requireAdmin, async (req, res) => {
   if (!Array.isArray(req.body?.fields)) {
     res.status(400).json({ error: 'invalid_feedback_form_payload' })
     return
   }
-  const form = saveFeedbackFormFields(String(req.params.orgId), req.body.fields as Array<Partial<FeedbackFormField>>)
+  const form = await saveFeedbackFormFields(String(req.params.orgId), req.body.fields as Array<Partial<FeedbackFormField>>)
   res.json({ form })
 })
 
-feedbackRouter.patch('/form/:orgId/enabled', requireAdmin, (req, res) => {
+feedbackRouter.patch('/form/:orgId/enabled', requireAdmin, async (req, res) => {
   if (typeof req.body?.isEnabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_feedback_form_enabled_payload' })
     return
   }
-  const form = setFeedbackFormEnabled(String(req.params.orgId), req.body.isEnabled)
+  const form = await setFeedbackFormEnabled(String(req.params.orgId), req.body.isEnabled)
   res.json({ form })
 })
 
-feedbackRouter.post('/form/:orgId/test-token', requireAdmin, (req, res) => {
-  const form = getFeedbackForm(String(req.params.orgId))
+feedbackRouter.post('/form/:orgId/test-token', requireAdmin, async (req, res) => {
+  const form = await getFeedbackForm(String(req.params.orgId))
   if (form.fields.length === 0) {
     res.status(400).json({ error: 'feedback_form_has_no_fields' })
     return
   }
-  const token = createTestFeedbackToken(String(req.params.orgId))
+  const token = await createTestFeedbackToken(String(req.params.orgId))
   const baseUrl = (serverConfig.allowedOrigins[0] ?? serverConfig.clientUrl).replace(/\/$/, '')
   res.json({ token, url: `${baseUrl}/feedback/${token}` })
 })
 
-feedbackRouter.get('/responses/:orgId', requireAdmin, (req, res) => {
+feedbackRouter.get('/responses/:orgId', requireAdmin, async (req, res) => {
   const includeTest = req.query.includeTest === 'true'
-  const responses = listFeedbackResponses(String(req.params.orgId), includeTest)
+  const responses = await listFeedbackResponses(String(req.params.orgId), includeTest)
   res.json({ responses })
 })
 
@@ -64,9 +64,9 @@ feedbackRouter.get('/responses/:orgId', requireAdmin, (req, res) => {
 // Public feedback endpoints (no auth)
 // ---------------------------------------------------------------------------
 
-feedbackRouter.get('/public/:token', (req, res) => {
+feedbackRouter.get('/public/:token', async (req, res) => {
   const token = String(req.params.token)
-  const resolution = resolveToken(token)
+  const resolution = await resolveToken(token)
 
   if (resolution.status !== 'valid' || !resolution.data) {
     res.status(resolution.status === 'invalid' ? 404 : 410).json({ error: resolution.status })
@@ -74,21 +74,19 @@ feedbackRouter.get('/public/:token', (req, res) => {
   }
 
   const { organizationId, ticketId, isTest } = resolution.data
-  const form = getFeedbackForm(organizationId)
+  const form = await getFeedbackForm(organizationId)
 
   let ticketContext: { id: string; title: string } | null = null
   if (ticketId) {
     const db = getDb()
-    const row = db
-      .prepare('SELECT Id AS id, Title AS title FROM Tickets WHERE Id = ? LIMIT 1')
-      .get(ticketId) as { id: string; title: string } | undefined
-    ticketContext = row ?? null
+    const row = await dbGet(db, 'SELECT Id AS id, Title AS title FROM Tickets WHERE Id = ? LIMIT 1', [ticketId]) as { id?: unknown; title?: unknown } | undefined
+    ticketContext = row ? { id: String(row.id), title: String(row.title) } : null
   }
 
   res.json({ form, ticketContext, isTest })
 })
 
-feedbackRouter.post('/public/:token', (req, res) => {
+feedbackRouter.post('/public/:token', async (req, res) => {
   const token = String(req.params.token)
 
   if (!Array.isArray(req.body?.answers)) {
@@ -105,7 +103,7 @@ feedbackRouter.post('/public/:token', (req, res) => {
     return [{ fieldId, value }]
   })
 
-  const result = submitFeedbackResponse(token, answers)
+  const result = await submitFeedbackResponse(token, answers)
   if (!result.ok) {
     res.status(result.error === 'invalid' || result.error === 'expired' || result.error === 'used' ? 410 : 400).json({ error: result.error })
     return

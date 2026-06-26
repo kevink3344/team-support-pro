@@ -1,4 +1,4 @@
-import { getDb } from './db.js'
+import { getDb, dbGet, dbAll } from './db.js'
 
 export interface DashboardSummaryRecord {
   stats: {
@@ -23,7 +23,7 @@ const statusOrder = ['Open', 'In Progress', 'Pending', 'Resolved', 'Closed']
 export const getDashboardSummary = async (teamId: string): Promise<DashboardSummaryRecord> => {
   const db = getDb()
 
-  const statsRow = db.prepare(`
+  const statsRow = await dbGet(db, `
     SELECT
       COUNT(*) AS total,
       SUM(CASE WHEN Status = 'Open' THEN 1 ELSE 0 END) AS open,
@@ -32,33 +32,28 @@ export const getDashboardSummary = async (teamId: string): Promise<DashboardSumm
       SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
     FROM Tickets
     WHERE TeamId = ?
-  `).get(teamId) as Record<string, unknown>
+  `, [teamId])
 
-  const statusRows = db.prepare(`
-    SELECT Status AS status, COUNT(*) AS count FROM Tickets GROUP BY Status
-  `).all() as Array<{ status: string; count: number }>
+  const statusRows = await dbAll(db, `SELECT Status AS status, COUNT(*) AS count FROM Tickets GROUP BY Status`) as Array<{ status: unknown; count: unknown }>
+  const workloadRows = await dbAll(db, `SELECT TeamId AS teamId, COUNT(*) AS count FROM Tickets GROUP BY TeamId`) as Array<{ teamId: unknown; count: unknown }>
 
-  const workloadRows = db.prepare(`
-    SELECT TeamId AS teamId, COUNT(*) AS count FROM Tickets GROUP BY TeamId
-  `).all() as Array<{ teamId: string; count: number }>
-
-  const statusMap = new Map(statusRows.map((row) => [row.status, row.count]))
+  const statusMap = new Map(statusRows.map((row) => [String(row.status), Number(row.count)]))
 
   return {
     stats: {
-      total: Number(statsRow.total ?? 0),
-      open: Number(statsRow.open ?? 0),
-      inProgress: Number(statsRow.inProgress ?? 0),
-      pending: Number(statsRow.pending ?? 0),
-      critical: Number(statsRow.critical ?? 0),
+      total: Number(statsRow?.total ?? 0),
+      open: Number(statsRow?.open ?? 0),
+      inProgress: Number(statsRow?.inProgress ?? 0),
+      pending: Number(statsRow?.pending ?? 0),
+      critical: Number(statsRow?.critical ?? 0),
     },
     statusCounts: statusOrder.map((status) => ({
       status,
       count: statusMap.get(status) ?? 0,
     })),
     teamWorkload: workloadRows.map((row) => ({
-      teamId: row.teamId,
-      count: row.count,
+      teamId: String(row.teamId),
+      count: Number(row.count),
     })),
   }
 }

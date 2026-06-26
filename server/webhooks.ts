@@ -1,5 +1,5 @@
 import crypto from 'crypto'
-import { getDb } from './db.js'
+import { getDb, dbGet, dbAll, dbRun } from './db.js'
 
 export type WebhookEvent =
   | 'ticket.created'
@@ -30,46 +30,44 @@ export interface WebhookConfig {
 }
 
 interface WebhookConfigRow {
-  Id: string
-  OrganizationId: string
-  Url: string
-  Secret: string
-  Events: string
-  IsEnabled: number
-  CreatedAt: string
-  UpdatedAt: string
+  Id: unknown
+  OrganizationId: unknown
+  Url: unknown
+  Secret: unknown
+  Events: unknown
+  IsEnabled: unknown
+  CreatedAt: unknown
+  UpdatedAt: unknown
 }
 
 const mapRow = (row: WebhookConfigRow): WebhookConfig => ({
-  id: row.Id,
-  organizationId: row.OrganizationId,
-  url: row.Url,
-  secret: row.Secret,
+  id: String(row.Id),
+  organizationId: String(row.OrganizationId),
+  url: String(row.Url),
+  secret: String(row.Secret),
   events: (() => {
     try {
-      const parsed = JSON.parse(row.Events)
+      const parsed = JSON.parse(String(row.Events))
       return Array.isArray(parsed) ? (parsed as WebhookEvent[]) : []
     } catch {
       return []
     }
   })(),
-  isEnabled: row.IsEnabled === 1,
-  createdAt: row.CreatedAt,
-  updatedAt: row.UpdatedAt,
+  isEnabled: Number(row.IsEnabled) === 1,
+  createdAt: String(row.CreatedAt),
+  updatedAt: String(row.UpdatedAt),
 })
 
-export const listWebhookConfigs = (organizationId: string): WebhookConfig[] => {
+export const listWebhookConfigs = async (organizationId: string): Promise<WebhookConfig[]> => {
   const db = getDb()
-  const rows = db
-    .prepare('SELECT * FROM WebhookConfigs WHERE OrganizationId = ? ORDER BY CreatedAt ASC')
-    .all(organizationId) as WebhookConfigRow[]
-  return rows.map(mapRow)
+  const rows = await dbAll(db, 'SELECT * FROM WebhookConfigs WHERE OrganizationId = ? ORDER BY CreatedAt ASC', [organizationId])
+  return rows.map((r) => mapRow(r as unknown as WebhookConfigRow))
 }
 
-export const getWebhookConfig = (id: string): WebhookConfig | null => {
+export const getWebhookConfig = async (id: string): Promise<WebhookConfig | null> => {
   const db = getDb()
-  const row = db.prepare('SELECT * FROM WebhookConfigs WHERE Id = ?').get(id) as WebhookConfigRow | undefined
-  return row ? mapRow(row) : null
+  const row = await dbGet(db, 'SELECT * FROM WebhookConfigs WHERE Id = ?', [id])
+  return row ? mapRow(row as unknown as WebhookConfigRow) : null
 }
 
 export interface CreateWebhookInput {
@@ -88,10 +86,10 @@ const isValidUrl = (url: string): boolean => {
   }
 }
 
-export const createWebhookConfig = (
+export const createWebhookConfig = async (
   organizationId: string,
   input: CreateWebhookInput,
-): WebhookConfig | null => {
+): Promise<WebhookConfig | null> => {
   const url = input.url.trim()
   if (!url || !isValidUrl(url)) return null
   const validEvents = input.events.filter((e) => (WEBHOOK_EVENTS as string[]).includes(e))
@@ -100,19 +98,8 @@ export const createWebhookConfig = (
   const db = getDb()
   const id = `wh-${crypto.randomUUID()}`
   const now = new Date().toISOString()
-  db.prepare(
-    `INSERT INTO WebhookConfigs (Id, OrganizationId, Url, Secret, Events, IsEnabled, CreatedAt, UpdatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    organizationId,
-    url,
-    input.secret?.trim() ?? '',
-    JSON.stringify(validEvents),
-    input.isEnabled !== false ? 1 : 0,
-    now,
-    now,
-  )
+  await dbRun(db, `INSERT INTO WebhookConfigs (Id, OrganizationId, Url, Secret, Events, IsEnabled, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, organizationId, url, input.secret?.trim() ?? '', JSON.stringify(validEvents), input.isEnabled !== false ? 1 : 0, now, now])
   return getWebhookConfig(id)
 }
 
@@ -123,11 +110,11 @@ export interface UpdateWebhookInput {
   isEnabled?: boolean
 }
 
-export const updateWebhookConfig = (
+export const updateWebhookConfig = async (
   id: string,
   input: UpdateWebhookInput,
-): WebhookConfig | null => {
-  const existing = getWebhookConfig(id)
+): Promise<WebhookConfig | null> => {
+  const existing = await getWebhookConfig(id)
   if (!existing) return null
 
   const url = input.url !== undefined ? input.url.trim() : existing.url
@@ -144,16 +131,15 @@ export const updateWebhookConfig = (
   const now = new Date().toISOString()
 
   const db = getDb()
-  db.prepare(
-    `UPDATE WebhookConfigs SET Url = ?, Secret = ?, Events = ?, IsEnabled = ?, UpdatedAt = ? WHERE Id = ?`,
-  ).run(url, secret, JSON.stringify(events), isEnabled ? 1 : 0, now, id)
+  await dbRun(db, `UPDATE WebhookConfigs SET Url = ?, Secret = ?, Events = ?, IsEnabled = ?, UpdatedAt = ? WHERE Id = ?`,
+    [url, secret, JSON.stringify(events), isEnabled ? 1 : 0, now, id])
   return getWebhookConfig(id)
 }
 
-export const deleteWebhookConfig = (id: string): boolean => {
+export const deleteWebhookConfig = async (id: string): Promise<boolean> => {
   const db = getDb()
-  const result = db.prepare('DELETE FROM WebhookConfigs WHERE Id = ?').run(id)
-  return result.changes > 0
+  const result = await dbRun(db, 'DELETE FROM WebhookConfigs WHERE Id = ?', [id])
+  return result.rowsAffected > 0
 }
 
 const signPayload = (secret: string, body: string): string => {
@@ -162,20 +148,14 @@ const signPayload = (secret: string, body: string): string => {
   return `sha256=${hmac.digest('hex')}`
 }
 
-export const dispatchWebhookEvent = (
+export const dispatchWebhookEvent = async (
   organizationId: string,
   event: WebhookEvent,
   data: Record<string, unknown>,
-): void => {
+): Promise<void> => {
   const db = getDb()
-  const rows = db
-    .prepare(
-      `SELECT * FROM WebhookConfigs
-       WHERE OrganizationId = ? AND IsEnabled = 1`,
-    )
-    .all(organizationId) as WebhookConfigRow[]
-
-  const configs = rows.map(mapRow).filter((c) => c.events.includes(event))
+  const rows = await dbAll(db, `SELECT * FROM WebhookConfigs WHERE OrganizationId = ? AND IsEnabled = 1`, [organizationId])
+  const configs = rows.map((r) => mapRow(r as unknown as WebhookConfigRow)).filter((c) => c.events.includes(event))
   if (!configs.length) return
 
   const payload = JSON.stringify({
@@ -199,16 +179,8 @@ export const dispatchWebhookEvent = (
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000)
 
-    fetch(config.url, {
-      method: 'POST',
-      headers,
-      body: payload,
-      signal: controller.signal,
-    })
-      .then(() => clearTimeout(timeout))
-      .catch((err: unknown) => {
-        clearTimeout(timeout)
-        console.warn(`[webhook] delivery failed to ${config.url} (event: ${event}):`, err instanceof Error ? err.message : err)
-      })
+    fetch(config.url, { method: 'POST', headers, body: payload, signal: controller.signal })
+      .catch(() => { /* fire and forget */ })
+      .finally(() => clearTimeout(timeout))
   }
 }

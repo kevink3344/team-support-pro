@@ -16,45 +16,45 @@ import {
 export const reportsRouter = Router()
 reportsRouter.use(requireAdmin)
 
-reportsRouter.get('/status', (_req, res) => {
-  res.json(getTicketStatusReport())
+reportsRouter.get('/status', async (_req, res) => {
+  res.json(await getTicketStatusReport())
 })
 
-reportsRouter.get('/priority', (_req, res) => {
-  res.json(getTicketPriorityReport())
+reportsRouter.get('/priority', async (_req, res) => {
+  res.json(await getTicketPriorityReport())
 })
 
-reportsRouter.get('/assignee', (_req, res) => {
-  res.json(getAssigneeReport())
+reportsRouter.get('/assignee', async (_req, res) => {
+  res.json(await getAssigneeReport())
 })
 
-reportsRouter.get('/trends', (req, res) => {
+reportsRouter.get('/trends', async (req, res) => {
   const days = parseInt(req.query.days as string) || 30
-  res.json(getTrendReport(days))
+  res.json(await getTrendReport(days))
 })
 
-reportsRouter.get('/resolution-time', (_req, res) => {
-  res.json(getResolutionTimeBuckets())
+reportsRouter.get('/resolution-time', async (_req, res) => {
+  res.json(await getResolutionTimeBuckets())
 })
 
-reportsRouter.get('/avg-resolution-by-priority', (_req, res) => {
-  res.json(getAvgResolutionByPriority())
+reportsRouter.get('/avg-resolution-by-priority', async (_req, res) => {
+  res.json(await getAvgResolutionByPriority())
 })
 
-reportsRouter.get('/avg-resolution-by-team', (_req, res) => {
-  res.json(getAvgResolutionByTeam())
+reportsRouter.get('/avg-resolution-by-team', async (_req, res) => {
+  res.json(await getAvgResolutionByTeam())
 })
 
-reportsRouter.get('/open-ticket-age', (_req, res) => {
-  res.json(getOpenTicketAgeBuckets())
+reportsRouter.get('/open-ticket-age', async (_req, res) => {
+  res.json(await getOpenTicketAgeBuckets())
 })
 
-reportsRouter.get('/first-response-time', (_req, res) => {
-  res.json(getFirstResponseTimeBuckets())
+reportsRouter.get('/first-response-time', async (_req, res) => {
+  res.json(await getFirstResponseTimeBuckets())
 })
 
-reportsRouter.get('/export/csv', (_req, res) => {
-  const data = getAllTicketsForExport()
+reportsRouter.get('/export/csv', async (_req, res) => {
+  const data = await getAllTicketsForExport()
   const csv = [
     ['ID', 'Title', 'Description', 'Status', 'Priority', 'Requestor Name', 'Requestor Email', 'Location', 'Created At', 'Updated At', 'Assignee', 'Category', 'Team'],
     ...data.map((row) => [
@@ -81,7 +81,7 @@ reportsRouter.get('/export/csv', (_req, res) => {
 
 reportsRouter.get('/export/excel', async (_req, res) => {
   const XLSX = await import('xlsx')
-  const data = getAllTicketsForExport()
+  const data = await getAllTicketsForExport()
   const ws = XLSX.utils.json_to_sheet(data)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Tickets')
