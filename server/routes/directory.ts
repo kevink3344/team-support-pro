@@ -1,4 +1,4 @@
-import { Router } from 'express'
+import { Router, type RequestHandler } from 'express'
 import {
   buildCookieOptions,
   createSessionToken,
@@ -41,7 +41,7 @@ export const directoryRouter = Router()
 // Directory (full dataset for the app shell)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/', requireAuth, async (req, res) => {
+const directoryLoadHandler: RequestHandler = async (req, res) => {
   try {
     const directory = await loadDirectoryData(req.user!.organizationId)
     res.json(directory)
@@ -49,7 +49,10 @@ directoryRouter.get('/', requireAuth, async (req, res) => {
     console.error('Loading directory data failed.', error)
     res.status(500).json({ error: 'directory_load_failed' })
   }
-})
+}
+
+directoryRouter.get('/', requireAuth, directoryLoadHandler)
+directoryRouter.get('/directory', requireAuth, directoryLoadHandler)
 
 directoryRouter.get('/public', async (_req, res) => {
   try {
