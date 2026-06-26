@@ -358,6 +358,7 @@ const mergePersistedActivity = (
 // NotificationItem, toMentionHandle, buildMentionLookup, extractMentionedUserIds, buildSeedNotificationItems imported from ./lib/notifications
 
 function App() {
+  const [directoryLoaded, setDirectoryLoaded] = useState(false)
   const [organizations, setOrganizations] = useState(initialOrganizations)
   const [teams, setTeams] = useState(initialTeams)
   const [categories, setCategories] = useState(initialCategories)
@@ -616,10 +617,10 @@ function App() {
 
   const deferredSearch = useDeferredValue(searchText)
   const attachmentInputRef = useRef<HTMLInputElement | null>(null)
-  const availableOrganizations = organizations.length > 0 ? organizations : initialOrganizations
-  const availableTeams = teams.length > 0 ? teams : initialTeams
-  const availableCategories = categories.length > 0 ? categories : initialCategories
-  const availableUsers = users.length > 0 ? users : initialUsers
+  const availableOrganizations = !directoryLoaded && organizations.length === 0 ? initialOrganizations : organizations
+  const availableTeams = !directoryLoaded && teams.length === 0 ? initialTeams : teams
+  const availableCategories = !directoryLoaded && categories.length === 0 ? initialCategories : categories
+  const availableUsers = !directoryLoaded && users.length === 0 ? initialUsers : users
   const selectedLoginUser = availableUsers.find(
     (user) => user.email.toLowerCase() === localLoginEmail.trim().toLowerCase(),
   ) ?? availableUsers[0]
@@ -1211,6 +1212,9 @@ function App() {
 
   useEffect(() => {
     if (!authReady || !authSession) {
+      if (authReady && !authSession) {
+        setDirectoryLoaded(false)
+      }
       return
     }
 
@@ -1256,6 +1260,8 @@ function App() {
           if (Array.isArray(payload.users)) {
             setUsers(payload.users)
           }
+
+          setDirectoryLoaded(true)
         }
       } catch {
         // The app can continue from mock directory data if the API is unavailable.
