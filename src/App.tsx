@@ -2431,6 +2431,9 @@ function App() {
           priority: ticket.priority,
           categoryId: ticket.categoryId,
           assignedToId: nextAssignedToId,
+          requestorName: ticket.requestorName,
+          requestorEmail: ticket.requestorEmail,
+          location: ticket.location,
         }),
       })
 
