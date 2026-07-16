@@ -11,6 +11,12 @@ import {
   readAboutPageHtml,
   writeAboutPageHtml,
 } from '../app-settings.js'
+import {
+  listLocations,
+  createLocation,
+  updateLocation,
+  deleteLocation,
+} from '../locations.js'
 
 export const settingsRouter = Router()
 settingsRouter.use(requireAdmin)
@@ -154,4 +160,84 @@ settingsRouter.patch('/about', async (req, res) => {
   }
   await writeAboutPageHtml(html)
   res.json({ html: await readAboutPageHtml() })
+})
+
+// ---------------------------------------------------------------------------
+// Locations
+// ---------------------------------------------------------------------------
+
+settingsRouter.get('/locations', async (_req, res) => {
+  try {
+    const locations = await listLocations(false)
+    res.json({ locations })
+  } catch (error) {
+    console.error('Loading locations failed.', error)
+    res.status(500).json({ error: 'locations_load_failed' })
+  }
+})
+
+settingsRouter.post('/locations', async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name : ''
+  const sortOrder = typeof req.body?.sortOrder === 'number' ? req.body.sortOrder : 0
+  if (!name.trim()) {
+    res.status(400).json({ error: 'location_name_required' })
+    return
+  }
+  try {
+    const location = await createLocation(name, sortOrder)
+    if (!location) {
+      res.status(409).json({ error: 'location_name_conflict' })
+      return
+    }
+    res.status(201).json({ location })
+  } catch (error) {
+    console.error('Creating location failed.', error)
+    res.status(500).json({ error: 'location_create_failed' })
+  }
+})
+
+settingsRouter.patch('/locations/:locationId', async (req, res) => {
+  const id = typeof req.params.locationId === 'string' ? req.params.locationId : ''
+  if (!id) {
+    res.status(400).json({ error: 'invalid_location_id' })
+    return
+  }
+  const patch: { name?: string; isActive?: boolean; sortOrder?: number } = {}
+  if (typeof req.body?.name === 'string') patch.name = req.body.name
+  if (typeof req.body?.isActive === 'boolean') patch.isActive = req.body.isActive
+  if (typeof req.body?.sortOrder === 'number') patch.sortOrder = req.body.sortOrder
+  try {
+    const location = await updateLocation(id, patch)
+    if (!location) {
+      res.status(400).json({ error: 'location_update_failed' })
+      return
+    }
+    res.json({ location })
+  } catch (error) {
+    console.error('Updating location failed.', error)
+    res.status(500).json({ error: 'location_update_failed' })
+  }
+})
+
+settingsRouter.delete('/locations/:locationId', async (req, res) => {
+  const id = typeof req.params.locationId === 'string' ? req.params.locationId : ''
+  if (!id) {
+    res.status(400).json({ error: 'invalid_location_id' })
+    return
+  }
+  try {
+    const result = await deleteLocation(id)
+    if (result.inUse) {
+      res.status(409).json({ error: 'location_in_use' })
+      return
+    }
+    if (!result.deleted) {
+      res.status(404).json({ error: 'location_not_found' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    console.error('Deleting location failed.', error)
+    res.status(500).json({ error: 'location_delete_failed' })
+  }
 })

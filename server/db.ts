@@ -1,6 +1,5 @@
 import { createClient, type Client, type InValue } from '@libsql/client'
-import path from 'node:path'
-import fs from 'node:fs'
+import sql from 'mssql'
 
 import { serverConfig } from './config.js'
 
@@ -8,40 +7,51 @@ export type { Client }
 export type Row = Record<string, InValue>
 
 // ---------------------------------------------------------------------------
-// Singleton client
+// Singleton libsql client (turso mode)
 // ---------------------------------------------------------------------------
 
 let client: Client | null = null
-
-const resolveSqliteUrl = (): string => {
-  const configuredPath = serverConfig.db.sqlitePath.trim()
-  if (configuredPath) {
-    const abs = path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.resolve(process.cwd(), configuredPath)
-    return `file:${abs}`
-  }
-  if (serverConfig.isProduction) {
-    const dir = '/home/data'
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    return `file:/home/data/dev.sqlite3`
-  }
-  return `file:${path.resolve(process.cwd(), 'dev.sqlite3')}`
-}
+let sqlPool: sql.ConnectionPool | null = null
 
 export const getDb = (): Client => {
-  if (!client) {
-    const tursoUrl = serverConfig.db.tursoUrl.trim()
-    const tursoToken = serverConfig.db.tursoToken.trim()
-    if (tursoUrl) {
-      client = createClient({ url: tursoUrl, authToken: tursoToken || undefined })
-      console.log('Database: connected to Turso remote')
-    } else {
-      client = createClient({ url: resolveSqliteUrl() })
-      console.log('Database: connected to local SQLite file')
+  const mode = serverConfig.db.mode
+  if (mode === 'sqlserver') {
+    // Return a stub — SQL Server callers go through getPool() via the helpers
+    if (!client) {
+      // Create a noop libsql client (unused) to satisfy TypeScript callers
+      // Actual queries are routed through mssql pool in dbGet/dbAll/dbRun
+      client = createClient({ url: 'file::memory:' })
     }
+    return client
   }
-  return client
+  if (mode === 'turso') {
+    if (!client) {
+      const tursoUrl = serverConfig.db.tursoUrl.trim()
+      if (!tursoUrl) throw new Error('DB_MODE is "turso" but TURSO_DB_URL is not set.')
+      client = createClient({ url: tursoUrl, authToken: serverConfig.db.tursoToken.trim() || undefined })
+      console.log('Database: connected to Turso remote')
+    }
+    return client
+  }
+  throw new Error(`DB_MODE "${mode}" is not configured. Set DB_MODE to "turso" or "sqlserver" in your .env file.`)
+}
+
+export const getPool = async (): Promise<sql.ConnectionPool> => {
+  if (!sqlPool) {
+    const { server, port, database, user, password } = serverConfig.db
+    if (!server || !database) throw new Error('DB_MODE is "sqlserver" but DB_SERVER/DB_DATABASE are not configured.')
+    sqlPool = await sql.connect({
+      server,
+      port,
+      database,
+      user,
+      password,
+      options: { encrypt: true, trustServerCertificate: false },
+      pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+    })
+    console.log('Database: connected to SQL Server')
+  }
+  return sqlPool
 }
 
 export const hasDatabaseConfig = () => true
@@ -50,30 +60,55 @@ export const hasDatabaseConfig = () => true
 // Query helpers — wrap libsql execute for convenience
 // ---------------------------------------------------------------------------
 
+// Convert SQLite-style ? positional args to SQL Server @p1, @p2, ... named params
+const toMssqlSql = (query: string): string => {
+  let i = 0
+  return query.replace(/\?/g, () => `@p${++i}`)
+}
+
+const runMssql = async (query: string, args: InValue[] = []) => {
+  const pool = await getPool()
+  const req = pool.request()
+  args.forEach((v, idx) => { req.input(`p${idx + 1}`, v as sql.ISqlTypeFactoryWithNoParams) })
+  return req.query(toMssqlSql(query))
+}
+
 export const dbGet = async (
   db: Client,
-  sql: string,
+  query: string,
   args: InValue[] = [],
 ): Promise<Row | undefined> => {
-  const result = await db.execute({ sql, args })
+  if (serverConfig.db.mode === 'sqlserver') {
+    const result = await runMssql(query, args)
+    return result.recordset[0] as Row | undefined
+  }
+  const result = await db.execute({ sql: query, args })
   return result.rows[0] as Row | undefined
 }
 
 export const dbAll = async (
   db: Client,
-  sql: string,
+  query: string,
   args: InValue[] = [],
 ): Promise<Row[]> => {
-  const result = await db.execute({ sql, args })
+  if (serverConfig.db.mode === 'sqlserver') {
+    const result = await runMssql(query, args)
+    return result.recordset as unknown as Row[]
+  }
+  const result = await db.execute({ sql: query, args })
   return result.rows as unknown as Row[]
 }
 
 export const dbRun = async (
   db: Client,
-  sql: string,
+  query: string,
   args: InValue[] = [],
 ): Promise<{ rowsAffected: number }> => {
-  const result = await db.execute({ sql, args })
+  if (serverConfig.db.mode === 'sqlserver') {
+    const result = await runMssql(query, args)
+    return { rowsAffected: result.rowsAffected }
+  }
+  const result = await db.execute({ sql: query, args })
   return { rowsAffected: result.rowsAffected }
 }
 
@@ -265,6 +300,14 @@ const SCHEMA_STATEMENTS = [
     UpdatedAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
   )`,
+  `CREATE TABLE IF NOT EXISTS Locations (
+    Id TEXT PRIMARY KEY,
+    Name TEXT NOT NULL UNIQUE,
+    IsActive INTEGER NOT NULL DEFAULT 1,
+    SortOrder INTEGER NOT NULL DEFAULT 0,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now'))
+  )`,
 ]
 
 const MIGRATION_STATEMENTS = [
@@ -426,12 +469,64 @@ const seedDatabase = async (db: Client) => {
 // Public init — called once at startup from index.ts
 // ---------------------------------------------------------------------------
 
+const seedLocations = async (db: Client): Promise<void> => {
+  try {
+    const countRow = await db.execute('SELECT COUNT(1) AS cnt FROM Locations')
+    const count = Number(countRow.rows[0]?.cnt ?? 0)
+    if (count > 0) return // already seeded
+
+    const url = 'https://services2.arcgis.com/oqISN6Dt6ax5xklN/arcgis/rest/services/wcpss_location_details_opendata_public/FeatureServer/0/query?outFields=NAME&where=1%3D1&f=geojson'
+    const response = await fetch(url)
+    if (!response.ok) {
+      console.warn('Locations seed: ArcGIS request failed with status', response.status)
+      return
+    }
+    const geoJson = (await response.json()) as { features?: Array<{ properties?: { NAME?: string } }> }
+    const names = Array.from(
+      new Set(
+        (geoJson.features ?? [])
+          .map((f) => f.properties?.NAME?.trim() ?? '')
+          .filter((n) => n.length > 0),
+      ),
+    ).sort((a, b) => a.localeCompare(b))
+
+    if (names.length === 0) {
+      console.warn('Locations seed: no NAME values found in GeoJSON response')
+      return
+    }
+
+    const { randomUUID } = await import('node:crypto')
+    const now = new Date().toISOString()
+    const statements: Array<{ sql: string; args: InValue[] }> = names.map((name, index) => ({
+      sql: 'INSERT OR IGNORE INTO Locations (Id, Name, IsActive, SortOrder, CreatedAt, UpdatedAt) VALUES (?, ?, 1, ?, ?, ?)',
+      args: [`loc-${randomUUID()}`, name, index, now, now],
+    }))
+
+    // Batch in chunks of 50 to avoid query size limits
+    const CHUNK = 50
+    for (let i = 0; i < statements.length; i += CHUNK) {
+      await db.batch(statements.slice(i, i + CHUNK), 'write')
+    }
+
+    console.log(`Locations seed: inserted ${names.length} locations from WCPSS ArcGIS data`)
+  } catch (err) {
+    console.warn('Locations seed failed (non-fatal):', err instanceof Error ? err.message : err)
+  }
+}
+
 export const initDb = async (): Promise<void> => {
+  if (serverConfig.db.mode === 'sqlserver') {
+    // SQL Server database is managed externally; skip SQLite schema/seed init
+    await getPool() // validate connection at startup
+    console.log('Database: SQL Server init complete (schema management is external)')
+    return
+  }
+
   const db = getDb()
 
   // Create tables one by one (batch doesn't support DDL on remote Turso)
-  for (const sql of SCHEMA_STATEMENTS) {
-    await db.execute(sql)
+  for (const stmt of SCHEMA_STATEMENTS) {
+    await db.execute(stmt)
   }
 
   await runMigrations(db)
@@ -439,4 +534,6 @@ export const initDb = async (): Promise<void> => {
   if (await isDatabaseEmpty(db)) {
     await seedDatabase(db)
   }
+
+  await seedLocations(db)
 }

@@ -3,7 +3,7 @@ import { Building2, CheckCircle2, Send, Ticket } from 'lucide-react'
 
 import { apiUrl, appConfig } from '../config'
 import { defaultThemeConfig } from '../theme'
-import type { AnonymousPageConfig, Category, Organization, Team, Ticket as TicketRecord } from '../types'
+import type { AnonymousPageConfig, Category, Location, Organization, Team, Ticket as TicketRecord } from '../types'
 
 type AnonymousTicketForm = {
   title: string
@@ -37,6 +37,7 @@ const getAnonymousPagePath = () => {
 export function AnonymousTicketPage() {
   const [teams, setTeams] = useState<Team[]>([])
   const [categories, setCategories] = useState<Category[]>([])
+  const [locations, setLocations] = useState<Location[]>([])
   const [form, setForm] = useState<AnonymousTicketForm>(initialForm)
   const [loading, setLoading] = useState(true)
   const [submitPending, setSubmitPending] = useState(false)
@@ -98,7 +99,21 @@ export function AnonymousTicketPage() {
       }
     }
 
+    const loadLocations = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/locations'))
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { locations?: Location[] }
+        if (!cancelled && Array.isArray(payload.locations)) {
+          setLocations(payload.locations)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
     void loadDirectory()
+    void loadLocations()
     return () => {
       cancelled = true
     }
@@ -292,12 +307,18 @@ export function AnonymousTicketPage() {
               </label>
               <label className="field md:col-span-2">
                 <span className="field-label">Location</span>
-                <input
+                <select
                   className="input-control"
                   value={form.location}
                   onChange={(event) => setForm((current) => ({ ...current, location: event.target.value }))}
-                  placeholder="Building, floor, room, or remote"
-                />
+                >
+                  <option value="">— Select a location —</option>
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.name}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="field md:col-span-2">
                 <span className="field-label">Description</span>

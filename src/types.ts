@@ -32,6 +32,13 @@ export type AppView =
 export type ListViewMode = 'table' | 'cards'
 export type ThemeMode = 'light' | 'dark'
 
+export interface Location {
+  id: string
+  name: string
+  isActive: boolean
+  sortOrder: number
+}
+
 export type CustomFieldType = 'text' | 'select' | 'checkbox' | 'number' | 'date'
 
 export interface TicketFieldDefinition {

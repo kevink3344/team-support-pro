@@ -141,6 +141,16 @@ components:
       properties:
         error: { type: string }
 
+    Location:
+      type: object
+      properties:
+        id: { type: string, example: "loc-a1b2c3" }
+        name: { type: string, example: "Adams Elementary School" }
+        isActive: { type: boolean, example: true }
+        sortOrder: { type: integer, example: 0 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
 security:
   - cookieAuth: []
   - apiKeyHeader: []
@@ -160,6 +170,119 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean }
+
+  /api/locations:
+    get:
+      summary: List active locations (public)
+      description: Returns all active locations. No authentication required. Used to populate location dropdowns in ticket forms.
+      security: []
+      responses:
+        "200":
+          description: Active locations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Location' }
+
+  /api/settings/locations:
+    get:
+      summary: List all locations (admin)
+      description: Returns all locations including inactive ones. Requires admin authentication.
+      responses:
+        "200":
+          description: All locations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  locations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Location' }
+    post:
+      summary: Create a location (admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, example: "Adams Elementary School" }
+                sortOrder: { type: integer, example: 0 }
+      responses:
+        "201":
+          description: Location created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  location: { $ref: '#/components/schemas/Location' }
+        "409":
+          description: Name conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/settings/locations/{locationId}:
+    patch:
+      summary: Update a location (admin)
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                isActive: { type: boolean }
+                sortOrder: { type: integer }
+      responses:
+        "200":
+          description: Updated location
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  location: { $ref: '#/components/schemas/Location' }
+        "400":
+          description: Update failed (name conflict or empty name)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      summary: Delete a location (admin)
+      description: Deletes the location. Returns 409 if the location is referenced by any ticket.
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        "409":
+          description: Location is in use by one or more tickets
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /auth/oidc:
     get:

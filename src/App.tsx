@@ -71,6 +71,7 @@ import type {
   FeedbackFieldType,
   FeedbackResponseSummary,
   ListViewMode,
+  Location,
   Organization,
   Team,
   ThemeConfig,
@@ -111,6 +112,7 @@ type SettingsAccordionSection =
   | 'manageTeams'
   | 'trendSeeding'
   | 'categories'
+  | 'locations'
   | 'email'
   | 'powerBi'
   | 'feedbackForm'
@@ -149,6 +151,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'manageTeams',
   'trendSeeding',
   'categories',
+  'locations',
   'email',
   'powerBi',
   'feedbackForm',
@@ -501,6 +504,15 @@ function App() {
   const [webhookEditSecret, setWebhookEditSecret] = useState('')
   const [webhookEditEvents, setWebhookEditEvents] = useState<WebhookEvent[]>([])
   const [webhookTestingId, setWebhookTestingId] = useState<string | null>(null)
+  // Location state
+  const [locations, setLocations] = useState<Location[]>([])
+  const [allLocations, setAllLocations] = useState<Location[]>([])
+  const [locationAddName, setLocationAddName] = useState('')
+  const [locationsPending, setLocationsPending] = useState(false)
+  const [locationsError, setLocationsError] = useState('')
+  const [locationsNotice, setLocationsNotice] = useState('')
+  const [locationEditId, setLocationEditId] = useState<string | null>(null)
+  const [locationEditName, setLocationEditName] = useState('')
   const [settingsMode, setSettingsMode] = useState<ThemeMode>('light')
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
@@ -511,6 +523,7 @@ function App() {
     manageTeams: false,
     trendSeeding: false,
     categories: false,
+    locations: false,
     email: false,
     powerBi: false,
     feedbackForm: false,
@@ -1095,6 +1108,22 @@ function App() {
       void refreshWebhooks()
     }
 
+    const loadAllLocations = async () => {
+      if (authSession?.role !== 'Admin') return
+      try {
+        const response = await fetch(apiUrl('/api/settings/locations'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { locations?: Location[] }
+        if (!cancelled && Array.isArray(payload.locations)) {
+          setAllLocations(payload.locations)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    void loadAllLocations()
+
     return () => {
       cancelled = true
     }
@@ -1268,6 +1297,19 @@ function App() {
       }
     }
 
+    const loadLocations = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/locations'))
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as { locations?: Location[] }
+        if (!cancelled && Array.isArray(payload.locations)) {
+          setLocations(payload.locations)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
     const loadTickets = async () => {
       try {
         const response = await fetch(apiUrl('/api/tickets'), {
@@ -1339,6 +1381,7 @@ function App() {
     }
 
     void loadDirectory()
+    void loadLocations()
     void loadTickets()
     void loadTrends()
     void loadDashboardSummary()
@@ -3253,6 +3296,127 @@ function App() {
       setWebhooksError('Request failed.')
     } finally {
       setWebhookTestingId(null)
+    }
+  }
+
+  const refreshLocations = async () => {
+    try {
+      const [publicRes, adminRes] = await Promise.all([
+        fetch(apiUrl('/api/locations')),
+        fetch(apiUrl('/api/settings/locations'), { credentials: 'include' }),
+      ])
+      if (publicRes.ok) {
+        const payload = (await publicRes.json()) as { locations?: Location[] }
+        if (Array.isArray(payload.locations)) setLocations(payload.locations)
+      }
+      if (adminRes.ok) {
+        const payload = (await adminRes.json()) as { locations?: Location[] }
+        if (Array.isArray(payload.locations)) setAllLocations(payload.locations)
+      }
+    } catch {
+      // non-fatal
+    }
+  }
+
+  const addLocation = async () => {
+    const name = locationAddName.trim()
+    if (!name) return
+    setLocationsPending(true)
+    setLocationsError('')
+    setLocationsNotice('')
+    try {
+      const res = await fetch(apiUrl('/api/settings/locations'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (res.status === 409) {
+        setLocationsError('A location with that name already exists.')
+      } else if (!res.ok) {
+        setLocationsError('Failed to add location.')
+      } else {
+        setLocationAddName('')
+        setLocationsNotice('Location added.')
+        await refreshLocations()
+      }
+    } catch {
+      setLocationsError('Request failed.')
+    } finally {
+      setLocationsPending(false)
+    }
+  }
+
+  const saveLocationEdit = async (id: string) => {
+    const name = locationEditName.trim()
+    if (!name) return
+    setLocationsPending(true)
+    setLocationsError('')
+    setLocationsNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/locations/${id}`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      if (res.status === 400 || res.status === 409) {
+        setLocationsError('Could not update location. Name may already be in use.')
+      } else if (!res.ok) {
+        setLocationsError('Failed to update location.')
+      } else {
+        setLocationEditId(null)
+        setLocationEditName('')
+        setLocationsNotice('Location updated.')
+        await refreshLocations()
+      }
+    } catch {
+      setLocationsError('Request failed.')
+    } finally {
+      setLocationsPending(false)
+    }
+  }
+
+  const toggleLocationActive = async (loc: Location) => {
+    setLocationsError('')
+    setLocationsNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/locations/${loc.id}`), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !loc.isActive }),
+      })
+      if (!res.ok) {
+        setLocationsError('Failed to update location.')
+      } else {
+        await refreshLocations()
+      }
+    } catch {
+      setLocationsError('Request failed.')
+    }
+  }
+
+  const removeLocation = async (id: string) => {
+    setLocationsError('')
+    setLocationsNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/settings/locations/${id}`), {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      if (res.status === 409) {
+        setLocationsError('Cannot delete — this location is referenced by one or more tickets.')
+      } else if (res.status === 404) {
+        setLocationsError('Location not found.')
+      } else if (!res.ok) {
+        setLocationsError('Failed to delete location.')
+      } else {
+        setLocationsNotice('Location deleted.')
+        await refreshLocations()
+      }
+    } catch {
+      setLocationsError('Request failed.')
     }
   }
 
@@ -6203,6 +6367,129 @@ function App() {
             `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams.`,
             openManageCategoriesPage,
           )
+        case 'locations':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {currentUser.role !== 'Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to manage locations.
+                </div>
+              ) : (
+                <>
+                  <div className="text-sm text-[color:var(--text-muted)]">
+                    Add, edit, or deactivate locations. Deactivated locations are hidden from ticket forms but preserved on existing tickets. Locations referenced by tickets cannot be deleted.
+                  </div>
+                  {locationsError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {locationsError}
+                    </div>
+                  )}
+                  {locationsNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {locationsNotice}
+                    </div>
+                  )}
+                  {/* Add form */}
+                  <div className="surface-muted flex items-end gap-2 p-3">
+                    <label className="flex-1 space-y-1">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">New location name</div>
+                      <input
+                        className="input-control"
+                        placeholder="e.g. Adams Elementary School"
+                        value={locationAddName}
+                        onChange={(event) => setLocationAddName(event.target.value)}
+                        onKeyDown={(event) => { if (event.key === 'Enter') void addLocation() }}
+                        disabled={locationsPending}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={locationsPending || !locationAddName.trim()}
+                      onClick={() => void addLocation()}
+                    >
+                      {locationsPending ? 'Adding…' : 'Add'}
+                    </button>
+                  </div>
+                  {/* Location list */}
+                  <div className="space-y-1">
+                    {allLocations.length === 0 && (
+                      <div className="text-sm text-[color:var(--text-muted)]">No locations yet.</div>
+                    )}
+                    {allLocations.map((loc) => (
+                      <div
+                        key={loc.id}
+                        className="surface-muted flex flex-wrap items-center gap-2 px-3 py-2"
+                        data-inactive={!loc.isActive || undefined}
+                        style={!loc.isActive ? { opacity: 0.55 } : undefined}
+                      >
+                        {locationEditId === loc.id ? (
+                          <>
+                            <input
+                              className="input-control flex-1"
+                              value={locationEditName}
+                              onChange={(event) => setLocationEditName(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') void saveLocationEdit(loc.id)
+                                if (event.key === 'Escape') { setLocationEditId(null); setLocationEditName('') }
+                              }}
+                              disabled={locationsPending}
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              className="primary-button"
+                              disabled={locationsPending || !locationEditName.trim()}
+                              onClick={() => void saveLocationEdit(loc.id)}
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button"
+                              onClick={() => { setLocationEditId(null); setLocationEditName('') }}
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <span className="flex-1 text-sm">{loc.name}</span>
+                            {!loc.isActive && (
+                              <span className="rounded-[2px] border border-[color:var(--border)] px-2 py-0.5 text-xs text-[color:var(--text-muted)]">
+                                Inactive
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              className="secondary-button text-xs"
+                              onClick={() => { setLocationEditId(loc.id); setLocationEditName(loc.name); setLocationsError(''); setLocationsNotice('') }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button text-xs"
+                              onClick={() => void toggleLocationActive(loc)}
+                            >
+                              {loc.isActive ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary-button text-xs text-rose-600 hover:text-rose-700"
+                              onClick={() => void removeLocation(loc.id)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )
         case 'email':
           return (
             <div className="settings-accordion-content space-y-3">
@@ -7050,6 +7337,10 @@ function App() {
       categories: {
         title: 'Categories',
         description: 'Add new categories and maintain team mappings.',
+      },
+      locations: {
+        title: 'Locations',
+        description: 'Manage the list of locations available when creating or editing a ticket.',
       },
       email: {
         title: 'Email Notifications',
@@ -8130,7 +8421,7 @@ function App() {
                     </label>
                     <label className="field md:col-span-2">
                       <span className="field-label">Location</span>
-                      <input
+                      <select
                         className="input-control"
                         value={newTicketForm.location}
                         onChange={(event) =>
@@ -8139,8 +8430,14 @@ function App() {
                             location: event.target.value,
                           }))
                         }
-                        placeholder="Building, room, or remote"
-                      />
+                      >
+                        <option value="">— Select a location —</option>
+                        {locations.map((loc) => (
+                          <option key={loc.id} value={loc.name}>
+                            {loc.name}
+                          </option>
+                        ))}
+                      </select>
                     </label>
                     <label className="field md:col-span-2">
                       <span className="field-label">Description</span>
@@ -8486,7 +8783,7 @@ function App() {
                         </label>
                         <label className="field">
                           <span className="field-label">Location</span>
-                          <input
+                          <select
                             className="input-control"
                             value={detailDraft.location}
                             onChange={(event) =>
@@ -8496,7 +8793,18 @@ function App() {
                                   : current,
                               )
                             }
-                          />
+                          >
+                            <option value="">— Select a location —</option>
+                            {locations.map((loc) => (
+                              <option key={loc.id} value={loc.name}>
+                                {loc.name}
+                              </option>
+                            ))}
+                            {/* keep existing value visible even if it's not in active list */}
+                            {detailDraft.location && !locations.some((l) => l.name === detailDraft.location) && (
+                              <option value={detailDraft.location}>{detailDraft.location}</option>
+                            )}
+                          </select>
                         </label>
                         <label className="field md:col-span-2">
                           <span className="field-label">Title</span>

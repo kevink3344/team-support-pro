@@ -14,6 +14,7 @@ import { getDb, initDb } from './db.js'
 import { readRapidIdentityEnabled, readAboutPageHtml } from './app-settings.js'
 import { requireAuth } from './middleware.js'
 import { listUsers } from './directory.js'
+import { listLocations } from './locations.js'
 
 // Route modules
 import { settingsRouter } from './routes/settings.js'
@@ -149,6 +150,16 @@ app.post('/api/public/tickets', (req, res, next) => {
 app.get('/api/watchers/my-tickets', (req, res, next) => {
   req.url = '/watchers/my-tickets'
   ticketsRouter(req, res, next)
+})
+
+app.get('/api/locations', async (_req, res) => {
+  try {
+    const locations = await listLocations(true)
+    res.json({ locations })
+  } catch (error) {
+    console.error('Loading locations failed.', error)
+    res.status(500).json({ error: 'locations_load_failed' })
+  }
 })
 
 // ---------------------------------------------------------------------------
