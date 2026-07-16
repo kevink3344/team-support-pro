@@ -6,7 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import swaggerUi from 'swagger-ui-express'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 
 import { serverConfig } from './config.js'
 import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonymous-pages.js'
