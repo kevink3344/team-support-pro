@@ -24,6 +24,7 @@ const envSchema = z.object({
   DB_DATABASE: z.string().optional(),
   DB_USER: z.string().optional(),
   DB_PASSWORD: z.string().optional(),
+  DB_MODE: z.enum(['turso', 'sqlserver']).optional(),
   DB_SQLITE_PATH: z.string().optional(),
   TURSO_DB_URL: z.string().optional(),
   TURSO_TOKEN: z.string().optional(),
@@ -83,6 +84,7 @@ export const serverConfig = {
   oidcRedirectUri: parsed.OIDC_REDIRECT_URI,
   jwtSecret: parsed.JWT_SECRET || defaultJwtSecret(),
   db: {
+    mode: (parsed.DB_MODE ?? '') as 'turso' | 'sqlserver' | '',
     server: parsed.DB_SERVER || '',
     port: parsed.DB_PORT || 1433,
     database: parsed.DB_DATABASE || '',

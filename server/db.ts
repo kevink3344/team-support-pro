@@ -69,7 +69,7 @@ const toMssqlSql = (query: string): string => {
 const runMssql = async (query: string, args: InValue[] = []) => {
   const pool = await getPool()
   const req = pool.request()
-  args.forEach((v, idx) => { req.input(`p${idx + 1}`, v as sql.ISqlTypeFactoryWithNoParams) })
+  args.forEach((v, idx) => { req.input(`p${idx + 1}`, v as unknown as sql.ISqlTypeFactoryWithNoParams) })
   return req.query(toMssqlSql(query))
 }
 
@@ -106,7 +106,7 @@ export const dbRun = async (
 ): Promise<{ rowsAffected: number }> => {
   if (serverConfig.db.mode === 'sqlserver') {
     const result = await runMssql(query, args)
-    return { rowsAffected: result.rowsAffected }
+    return { rowsAffected: result.rowsAffected[0] ?? 0 }
   }
   const result = await db.execute({ sql: query, args })
   return { rowsAffected: result.rowsAffected }
