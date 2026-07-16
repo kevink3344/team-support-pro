@@ -5,6 +5,8 @@ import multer from 'multer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
+import swaggerUi from 'swagger-ui-express'
+import yaml from 'js-yaml'
 
 import { serverConfig } from './config.js'
 import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonymous-pages.js'
@@ -85,6 +87,16 @@ app.use(
 )
 app.use(express.json())
 app.use(cookieParser())
+
+// ---------------------------------------------------------------------------
+// Swagger UI
+// ---------------------------------------------------------------------------
+
+const swaggerYamlPath = path.resolve(currentDirPath, '../docs/swagger.yaml')
+if (fs.existsSync(swaggerYamlPath)) {
+  const swaggerDocument = yaml.load(fs.readFileSync(swaggerYamlPath, 'utf8')) as object
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
+}
 
 // ---------------------------------------------------------------------------
 // Public health + auth-settings
