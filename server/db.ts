@@ -314,6 +314,9 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE Teams ADD COLUMN OrganizationId TEXT`,
   `ALTER TABLE Users ADD COLUMN OrganizationId TEXT`,
   `ALTER TABLE Tickets ADD COLUMN ResolvedAt TEXT`,
+  `ALTER TABLE Tickets ADD COLUMN RequestorName TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE Tickets ADD COLUMN RequestorEmail TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE Tickets ADD COLUMN Location TEXT NOT NULL DEFAULT 'Not specified'`,
 ]
 
 const runMigrations = async (db: Client) => {
