@@ -268,7 +268,7 @@ interface SessionApiUser {
   subject?: string
   email: string
   name: string
-  role?: 'Admin' | 'Staff'
+  role?: 'Admin' | 'Super Admin' | 'Staff'
   organizationId?: string
   organizationName?: string
   organizationCode?: string
@@ -434,6 +434,7 @@ function App() {
   const [attachmentDeletePendingId, setAttachmentDeletePendingId] = useState<string | null>(null)
   const [previewAttachmentId, setPreviewAttachmentId] = useState<string | null>(null)
   const [rapidIdentityEnabled, setRapidIdentityEnabled] = useState(true)
+  const [superAdminEnabled, setSuperAdminEnabled] = useState(false)
   const [authSettingsPending, setAuthSettingsPending] = useState(false)
   const [authSettingsError, setAuthSettingsError] = useState('')
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false)
@@ -650,7 +651,7 @@ function App() {
       createMockSessionUser(authSession)
     : availableUsers.find((user) => user.id === currentUserId) ?? availableUsers[0]
   const visibleNavItems =
-    currentUser.role === 'Admin' ? [...navItems, ...adminNavItems] : navItems
+    currentUser.role === 'Admin' || currentUser.role === 'Super Admin' ? [...navItems, ...adminNavItems] : navItems
   const currentTeam = availableTeams.find((team) => team.id === currentUser.teamId) ?? availableTeams[0]
   const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
@@ -919,10 +920,14 @@ function App() {
 
         const payload = (await response.json()) as {
           rapidIdentityEnabled?: boolean
+          superAdminEnabled?: boolean
         }
 
         if (!cancelled && typeof payload.rapidIdentityEnabled === 'boolean') {
           setRapidIdentityEnabled(payload.rapidIdentityEnabled)
+        }
+        if (!cancelled && typeof payload.superAdminEnabled === 'boolean') {
+          setSuperAdminEnabled(payload.superAdminEnabled)
         }
       } catch {
         // Keep default visibility if auth settings cannot be loaded.
@@ -1104,12 +1109,12 @@ function App() {
       void loadFeedbackSettings(authSession.organizationId)
     }
 
-    if (authSession?.role === 'Admin') {
+    if (authSession?.role === 'Admin' || authSession?.role === 'Super Admin') {
       void refreshWebhooks()
     }
 
     const loadAllLocations = async () => {
-      if (authSession?.role !== 'Admin') return
+      if (authSession?.role !== 'Admin' && authSession?.role !== 'Super Admin') return
       try {
         const response = await fetch(apiUrl('/api/settings/locations'), { credentials: 'include' })
         if (!response.ok || cancelled) return
@@ -1437,7 +1442,7 @@ function App() {
         if (!cancelled) {
           const html = payload.html ?? ''
           setAboutPageHtml(html)
-          if (authSession.role === 'Admin') {
+          if (authSession.role === 'Admin' || authSession.role === 'Super Admin') {
             setAboutPageDraft(html)
           }
         }
@@ -1907,6 +1912,13 @@ function App() {
     setActiveView('manage-users')
     setSettingsDrawerTab('add')
     setManageUsersEditDraft(null)
+    setUserDirectoryError('')
+    setUserDirectoryNotice('')
+    setUserForm((current) => ({
+      ...current,
+      organizationId: currentUser.organizationId,
+      teamId: getFirstTeamIdForOrganization(teams, currentUser.organizationId),
+    }))
   }
 
   const openManageTeamsPage = () => {
@@ -1924,6 +1936,7 @@ function App() {
   const closeSettingsDrawer = () => {
     setSettingsDrawerSection(null)
     setManageOrganizationEditDraft(null)
+    setManageUsersEditDraft(null)
     setManageTeamEditDraft(null)
     setManageCategoryEditDraft(null)
   }
@@ -4160,7 +4173,7 @@ function App() {
   }
 
   const visibleDashboardWidgetIds: DashboardWidgetId[] =
-    currentUser.role === 'Admin'
+    currentUser.role === 'Admin' || currentUser.role === 'Super Admin'
       ? [...dashboardWidgetOrder]
       : dashboardWidgetOrder.filter((widgetId) => widgetId !== 'trends' && widgetId !== 'status')
 
@@ -4363,7 +4376,7 @@ function App() {
               Team workload
             </div>
             <div className="space-y-2">
-              {(currentUser.role === 'Admin' ? teams.filter((t) => t.organizationId === currentUser.organizationId) : [currentTeam]).map((team) => {
+              {(currentUser.role === 'Admin' || currentUser.role === 'Super Admin' ? teams.filter((t) => t.organizationId === currentUser.organizationId) : [currentTeam]).map((team) => {
                 const total = teamWorkload.find((entry) => entry.teamId === team.id)?.count ?? 0
                 const Icon = teamIcons[team.id] ?? Building2
                 return (
@@ -4625,6 +4638,9 @@ function App() {
   const openManageUsersEdit = (user: User) => {
     setSettingsDrawerTab('edit')
     setManageUsersEditDraft({ ...user })
+    openSettingsDrawer('manageUsers')
+    setUserDirectoryError('')
+    setUserDirectoryNotice('')
   }
 
   const saveManageUsersEdit = async () => {
@@ -4740,6 +4756,7 @@ function App() {
                 }
               >
                 <option value="Admin">Admin</option>
+                {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                 <option value="Staff">Staff</option>
               </select>
             </label>
@@ -5095,6 +5112,7 @@ function App() {
                     }
                   >
                     <option value="Admin">Admin</option>
+                    {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                     <option value="Staff">Staff</option>
                   </select>
                 </label>
@@ -5849,6 +5867,9 @@ function App() {
       case 'manageOrganizations':
         return renderManageOrganizationsEditPanelContent()
       case 'manageUsers':
+        if (settingsDrawerTab === 'edit') {
+          return renderManageUsersEditPanelContent()
+        }
         return (
           <div>
             {renderSettingsDrawerTabs()}
@@ -5928,6 +5949,7 @@ function App() {
                       }
                     >
                       <option value="Admin">Admin</option>
+                      {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                       <option value="Staff">Staff</option>
                     </select>
                   </label>
@@ -6007,6 +6029,7 @@ function App() {
                         }}
                       >
                         <option value="Admin">Admin</option>
+                        {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                         <option value="Staff">Staff</option>
                       </select>
                       {user.name !== 'Administrator' && (
@@ -6276,16 +6299,113 @@ function App() {
             openManageOrganizationsPage,
           )
         case 'manageUsers':
-          return renderSettingsPageLauncher(
-            'Users',
-            `${users.length} user${users.length === 1 ? '' : 's'} across all organizations and teams.`,
-            openManageUsersPage,
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {!directoryLoaded ? (
+                <div className="text-sm text-[color:var(--text-muted)]">Loading users...</div>
+              ) : (
+                <>
+              <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Name</th>
+                      <th className="px-4 py-3 font-semibold">Email</th>
+                      <th className="px-4 py-3 font-semibold">Team</th>
+                      <th className="px-4 py-3 font-semibold">Role</th>
+                      <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((user) => (
+                      <tr key={user.id} className="border-t border-[color:var(--border)]">
+                        <td className="px-4 py-3 font-medium text-[color:var(--text)]">{user.name}</td>
+                        <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.email}</td>
+                        <td className="px-4 py-3 text-[color:var(--text-muted)]">{getTeamById(user.teamId)?.name ?? 'Team'}</td>
+                        <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.role}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            className="secondary-button px-3"
+                            aria-label={`Edit ${user.name}`}
+                            title={`Edit ${user.name}`}
+                            onClick={() => openManageUsersEdit(user)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {users.length === 0 && (
+                <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                  No users yet. Add your first user below.
+                </div>
+              )}
+              <button type="button" className="primary-button" onClick={openManageUsersPage}>
+                Add User
+              </button>
+                </>
+              )}
+            </div>
           )
         case 'manageTeams':
-          return renderSettingsPageLauncher(
-            'Teams',
-            `${teams.length} team${teams.length === 1 ? '' : 's'} available for assignment.`,
-            openManageTeamsPage,
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {!directoryLoaded ? (
+                <div className="text-sm text-[color:var(--text-muted)]">Loading teams...</div>
+              ) : (
+                <>
+              <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Team</th>
+                      <th className="px-4 py-3 font-semibold">Code</th>
+                      <th className="px-4 py-3 font-semibold">Accent</th>
+                      <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {teams.map((team) => (
+                      <tr key={team.id} className="border-t border-[color:var(--border)]">
+                        <td className="px-4 py-3 font-medium text-[color:var(--text)]">{team.name}</td>
+                        <td className="px-4 py-3 font-mono text-[color:var(--text-muted)]">{team.code}</td>
+                        <td className="px-4 py-3 text-[color:var(--text-muted)]">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="h-4 w-4 rounded-full border border-[color:var(--border)]" style={{ backgroundColor: team.accent }} />
+                            {team.accent}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            type="button"
+                            className="secondary-button px-3"
+                            aria-label={`Edit ${team.name}`}
+                            title={`Edit ${team.name}`}
+                            onClick={() => openManageTeamEdit(team)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {teams.length === 0 && (
+                <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                  No teams yet. Add your first team below.
+                </div>
+              )}
+              <button type="button" className="primary-button" onClick={openManageTeamsPage}>
+                Add Team
+              </button>
+                </>
+              )}
+            </div>
           )
         case 'trendSeeding':
           return (
@@ -6366,12 +6486,59 @@ function App() {
             </div>
           )
         case 'categories':
-          return renderSettingsPageLauncher(
-            'Categories',
-            `${categories.length} categor${categories.length === 1 ? 'y' : 'ies'} mapped to teams.`,
-            openManageCategoriesPage,
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {!directoryLoaded ? (
+                <div className="text-sm text-[color:var(--text-muted)]">Loading categories...</div>
+              ) : (
+                <>
+              <div className="overflow-x-auto rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)]">
+                <table className="min-w-full border-collapse text-left text-sm">
+                  <thead className="bg-[color:var(--card-bg)] text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                    <tr>
+                      <th className="px-4 py-3 font-semibold">Team</th>
+                      <th className="px-4 py-3 font-semibold">Category</th>
+                      <th className="px-4 py-3 font-semibold">Description</th>
+                      <th className="px-4 py-3 text-right font-semibold">Edit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {categories.map((category) => {
+                      const team = getTeamById(category.teamId)
+                      return (
+                        <tr key={category.id} className="border-t border-[color:var(--border)]">
+                          <td className="px-4 py-3 text-[color:var(--text-muted)]">{team?.name ?? 'Team'}</td>
+                          <td className="px-4 py-3 font-medium text-[color:var(--text)]">{category.name}</td>
+                          <td className="px-4 py-3 text-[color:var(--text-muted)]">{category.description}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              type="button"
+                              className="secondary-button px-3"
+                              aria-label={`Edit ${category.name}`}
+                              title={`Edit ${category.name}`}
+                              onClick={() => openManageCategoryEdit(category)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {categories.length === 0 && (
+                <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
+                  No categories yet. Add your first category below.
+                </div>
+              )}
+              <button type="button" className="primary-button" onClick={openManageCategoriesPage}>
+                Add Category
+              </button>
+                </>
+              )}
+            </div>
           )
-        case 'locations':
           return (
             <div className="settings-accordion-content space-y-3">
               {currentUser.role !== 'Admin' ? (
@@ -7430,7 +7597,21 @@ function App() {
     )
   }
 
-  const renderAdminSettingsPage = () => (
+  const SUPER_ADMIN_ONLY_SECTIONS: SettingsAccordionSection[] = [
+    'webhooks',
+    'manageOrganizations',
+    'authentication',
+    'anonymousPages',
+    'aboutPage',
+    'email',
+  ]
+
+  const renderAdminSettingsPage = () => {
+    const visibleSections = currentUser.role === 'Super Admin'
+      ? settingsAccordionOrder
+      : settingsAccordionOrder.filter((section) => !SUPER_ADMIN_ONLY_SECTIONS.includes(section))
+
+    return (
     <div className="space-y-4">
       <section className="surface p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -7446,9 +7627,10 @@ function App() {
         </div>
       </section>
 
-      {settingsAccordionOrder.map((section) => renderSettingsAccordionSection(section))}
+      {visibleSections.map((section) => renderSettingsAccordionSection(section))}
     </div>
-  )
+    )
+  }
 
   const renderTicketCollection = () => {
     if (visibleTickets.length === 0) {
@@ -7464,10 +7646,11 @@ function App() {
       const disableAssign = isPending || ticket.assignedToId === currentUser.id
       const disableInProgress = isPending || ticket.status === 'In Progress'
       const disableResolve = isPending
+      const isResolved = ticket.status === 'Resolved'
       const showAssignAction =
-        activeView !== 'my-tickets' && ticket.assignedToId !== currentUser.id
-      const showInProgressAction = ticket.status !== 'In Progress'
-      const showResolveAction = ticket.status !== 'Resolved'
+        !isResolved && activeView !== 'my-tickets' && ticket.assignedToId !== currentUser.id
+      const showInProgressAction = !isResolved && ticket.status !== 'In Progress'
+      const showResolveAction = !isResolved
 
       return (
         <div className="flex flex-wrap items-center gap-2">
@@ -8130,7 +8313,7 @@ function App() {
                   )}
                 </div>
 
-                {currentUser.role === 'Admin' && (
+                {(currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && (
                   <button
                     type="button"
                     className="icon-button text-white"
@@ -8282,21 +8465,21 @@ function App() {
 
             {activeView === 'notifications' && renderNotificationsPage()}
 
-            {activeView === 'reports' && currentUser.role === 'Admin' && (
+            {activeView === 'reports' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && (
               <ReportsPage sessionToken={null} powerBiReportUrl={powerBiReportUrl} />
             )}
 
-            {activeView === 'settings' && currentUser.role === 'Admin' && renderAdminSettingsPage()}
+            {activeView === 'settings' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderAdminSettingsPage()}
 
-            {activeView === 'manage-organizations' && currentUser.role === 'Admin' && renderManageOrganizationsPage()}
+            {activeView === 'manage-organizations' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderManageOrganizationsPage()}
 
-            {activeView === 'manage-users' && currentUser.role === 'Admin' && renderManageUsersPage()}
+            {activeView === 'manage-users' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderManageUsersPage()}
 
-            {activeView === 'manage-teams' && currentUser.role === 'Admin' && renderManageTeamsPage()}
+            {activeView === 'manage-teams' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderManageTeamsPage()}
 
-            {activeView === 'manage-categories' && currentUser.role === 'Admin' && renderManageCategoriesPage()}
+            {activeView === 'manage-categories' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderManageCategoriesPage()}
 
-            {activeView === 'ticket-designer' && currentUser.role === 'Admin' && renderTicketDesignerPage()}
+            {activeView === 'ticket-designer' && (currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && renderTicketDesignerPage()}
 
             {activeView === 'about' && (
               <div className="surface p-6">
@@ -8964,7 +9147,7 @@ function App() {
                                   >
                                     <UserIcon className="h-3.5 w-3.5 text-[color:var(--text-muted)]" />
                                     {watcher.name}
-                                    {(watcher.userId === currentUser.id || currentUser.role === 'Admin') && (
+                                    {(watcher.userId === currentUser.id || currentUser.role === 'Admin' || currentUser.role === 'Super Admin') && (
                                       <button
                                         type="button"
                                         aria-label={`Remove ${watcher.name} from watchers`}

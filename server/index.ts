@@ -107,7 +107,10 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.get('/api/public/auth-settings', async (_req, res) => {
-  res.json({ rapidIdentityEnabled: await readRapidIdentityEnabled() })
+  res.json({
+    rapidIdentityEnabled: await readRapidIdentityEnabled(),
+    superAdminEnabled: serverConfig.superAdminEnabled,
+  })
 })
 
 app.get('/api/public/test-login-users', async (_req, res) => {

@@ -5,7 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   type SessionUser,
 } from '../auth.js'
-import { requireAuth, requireAdmin } from '../middleware.js'
+import { requireAuth, requireAdmin, requireSuperAdmin } from '../middleware.js'
 import {
   createOrganization,
   createCategory,
@@ -43,7 +43,7 @@ export const directoryRouter = Router()
 
 const directoryLoadHandler: RequestHandler = async (req, res) => {
   try {
-    const orgFilter = req.user!.role === 'Admin' ? undefined : req.user!.organizationId
+    const orgFilter = req.user!.organizationId
     const directory = await loadDirectoryData(orgFilter)
     res.json(directory)
   } catch (error) {
@@ -71,8 +71,7 @@ directoryRouter.get('/public', async (_req, res) => {
 
 directoryRouter.get('/organizations', requireAuth, async (req, res) => {
   try {
-    const orgFilter = req.user!.role === 'Admin' ? undefined : req.user!.organizationId
-    res.json({ organizations: await listOrganizations(orgFilter) })
+    res.json({ organizations: await listOrganizations(req.user!.organizationId) })
   } catch (error) {
     console.error('Loading organizations failed.', error)
     res.status(500).json({ error: 'organization_load_failed' })
@@ -90,7 +89,7 @@ directoryRouter.get('/organizations/:organizationId', requireAuth, async (req, r
   res.json({ organization })
 })
 
-directoryRouter.post('/organizations', requireAdmin, async (req, res) => {
+directoryRouter.post('/organizations', requireSuperAdmin, async (req, res) => {
 
   try {
     const organization = await createOrganization({
@@ -112,7 +111,7 @@ directoryRouter.post('/organizations', requireAdmin, async (req, res) => {
   }
 })
 
-directoryRouter.patch('/organizations/:organizationId', requireAdmin, async (req, res) => {
+directoryRouter.patch('/organizations/:organizationId', requireSuperAdmin, async (req, res) => {
 
   try {
     const organization = await updateOrganization(String(req.params.organizationId), {
@@ -133,7 +132,7 @@ directoryRouter.patch('/organizations/:organizationId', requireAdmin, async (req
   }
 })
 
-directoryRouter.delete('/organizations/:organizationId', requireAdmin, async (req, res) => {
+directoryRouter.delete('/organizations/:organizationId', requireSuperAdmin, async (req, res) => {
 
   try {
     const deleted = await deleteOrganization(String(req.params.organizationId))
@@ -362,7 +361,7 @@ directoryRouter.post('/users', requireAdmin, async (req, res) => {
       email: typeof req.body?.email === 'string' ? req.body.email : '',
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
-      role: req.body?.role === 'Admin' ? 'Admin' : 'Staff',
+      role: req.body?.role === 'Admin' ? 'Admin' : req.body?.role === 'Super Admin' ? 'Super Admin' : 'Staff',
     })
 
     if (!createdUser) {
@@ -386,7 +385,7 @@ directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
       email: typeof req.body?.email === 'string' ? req.body.email : '',
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
-      role: req.body?.role === 'Admin' ? 'Admin' : 'Staff',
+      role: req.body?.role === 'Admin' ? 'Admin' : req.body?.role === 'Super Admin' ? 'Super Admin' : 'Staff',
     })
 
     if (!updatedUser) {

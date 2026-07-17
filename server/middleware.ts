@@ -53,7 +53,11 @@ export const readSessionUserFromRequest = (req: express.Request): SessionUser | 
   }
 }
 
-export const isAdminUser = (user: SessionUser | null): user is SessionUser => user?.role === 'Admin'
+export const isAdminUser = (user: SessionUser | null): user is SessionUser =>
+  user?.role === 'Admin' || user?.role === 'Super Admin'
+
+export const isSuperAdminUser = (user: SessionUser | null): user is SessionUser =>
+  user?.role === 'Super Admin'
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -82,6 +86,20 @@ export const requireAdmin = (req: express.Request, res: express.Response, next: 
   }
   if (!isAdminUser(user)) {
     res.status(403).json({ error: 'admin_required' })
+    return
+  }
+  req.user = user
+  next()
+}
+
+export const requireSuperAdmin = (req: express.Request, res: express.Response, next: express.NextFunction): void => {
+  const user = readSessionUserFromRequest(req)
+  if (!user) {
+    res.status(401).json({ error: 'unauthenticated' })
+    return
+  }
+  if (!isSuperAdminUser(user)) {
+    res.status(403).json({ error: 'super_admin_required' })
     return
   }
   req.user = user

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { serverConfig } from '../config.js'
-import { requireAdmin } from '../middleware.js'
+import { requireAdmin, requireSuperAdmin } from '../middleware.js'
 import {
   readRapidIdentityEnabled,
   writeRapidIdentityEnabled,
@@ -19,17 +19,16 @@ import {
 } from '../locations.js'
 
 export const settingsRouter = Router()
-settingsRouter.use(requireAdmin)
 
 // ---------------------------------------------------------------------------
 // Auth settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/auth', async (_req, res) => {
+settingsRouter.get('/auth', requireSuperAdmin, async (_req, res) => {
   res.json({ rapidIdentityEnabled: await readRapidIdentityEnabled() })
 })
 
-settingsRouter.patch('/auth', async (req, res) => {
+settingsRouter.patch('/auth', requireSuperAdmin, async (req, res) => {
   if (typeof req.body?.rapidIdentityEnabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_auth_settings_payload' })
     return
@@ -42,7 +41,7 @@ settingsRouter.patch('/auth', async (req, res) => {
 // Email settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/email', async (_req, res) => {
+settingsRouter.get('/email', requireSuperAdmin, async (_req, res) => {
   const { resendApiKey, from, replyTo, gmailUser, gmailAppPassword, pollIntervalMs } = serverConfig.email
   res.json({
     enabled: await readEmailNotificationsEnabled(),
@@ -54,7 +53,7 @@ settingsRouter.get('/email', async (_req, res) => {
   })
 })
 
-settingsRouter.patch('/email', async (req, res) => {
+settingsRouter.patch('/email', requireSuperAdmin, async (req, res) => {
   if (typeof req.body?.enabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_email_settings_payload' })
     return
@@ -63,7 +62,7 @@ settingsRouter.patch('/email', async (req, res) => {
   res.json({ enabled: await readEmailNotificationsEnabled() })
 })
 
-settingsRouter.post('/email/test-resend', async (_req, res) => {
+settingsRouter.post('/email/test-resend', requireSuperAdmin, async (_req, res) => {
   const { resendApiKey, from, replyTo, testTo } = serverConfig.email
   if (!resendApiKey || !from) {
     res.status(400).json({ ok: false, error: 'RESEND_API_KEY and EMAIL_FROM must be set in environment variables.' })
@@ -94,7 +93,7 @@ settingsRouter.post('/email/test-resend', async (_req, res) => {
   }
 })
 
-settingsRouter.post('/email/test-imap', async (_req, res) => {
+settingsRouter.post('/email/test-imap', requireSuperAdmin, async (_req, res) => {
   const { gmailUser, gmailAppPassword } = serverConfig.email
   if (!gmailUser || !gmailAppPassword) {
     res.status(400).json({ ok: false, error: 'GMAIL_USER and GMAIL_APP_PASSWORD must be set in environment variables.' })
@@ -130,11 +129,11 @@ settingsRouter.post('/email/test-imap', async (_req, res) => {
 // Power BI settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/power-bi', async (_req, res) => {
+settingsRouter.get('/power-bi', requireAdmin, async (_req, res) => {
   res.json({ reportUrl: await readPowerBiReportUrl() })
 })
 
-settingsRouter.patch('/power-bi', async (req, res) => {
+settingsRouter.patch('/power-bi', requireAdmin, async (req, res) => {
   const reportUrl = req.body?.reportUrl
   if (reportUrl !== null && reportUrl !== undefined && typeof reportUrl !== 'string') {
     res.status(400).json({ error: 'invalid_power_bi_settings_payload' })
@@ -148,11 +147,11 @@ settingsRouter.patch('/power-bi', async (req, res) => {
 // About page settings
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/about', async (_req, res) => {
+settingsRouter.get('/about', requireSuperAdmin, async (_req, res) => {
   res.json({ html: await readAboutPageHtml() })
 })
 
-settingsRouter.patch('/about', async (req, res) => {
+settingsRouter.patch('/about', requireSuperAdmin, async (req, res) => {
   const html = req.body?.html
   if (typeof html !== 'string') {
     res.status(400).json({ error: 'invalid_about_page_payload' })
@@ -166,7 +165,7 @@ settingsRouter.patch('/about', async (req, res) => {
 // Locations
 // ---------------------------------------------------------------------------
 
-settingsRouter.get('/locations', async (_req, res) => {
+settingsRouter.get('/locations', requireAdmin, async (_req, res) => {
   try {
     const locations = await listLocations(false)
     res.json({ locations })
@@ -176,7 +175,7 @@ settingsRouter.get('/locations', async (_req, res) => {
   }
 })
 
-settingsRouter.post('/locations', async (req, res) => {
+settingsRouter.post('/locations', requireAdmin, async (req, res) => {
   const name = typeof req.body?.name === 'string' ? req.body.name : ''
   const sortOrder = typeof req.body?.sortOrder === 'number' ? req.body.sortOrder : 0
   if (!name.trim()) {
@@ -196,7 +195,7 @@ settingsRouter.post('/locations', async (req, res) => {
   }
 })
 
-settingsRouter.patch('/locations/:locationId', async (req, res) => {
+settingsRouter.patch('/locations/:locationId', requireAdmin, async (req, res) => {
   const id = typeof req.params.locationId === 'string' ? req.params.locationId : ''
   if (!id) {
     res.status(400).json({ error: 'invalid_location_id' })
@@ -219,7 +218,7 @@ settingsRouter.patch('/locations/:locationId', async (req, res) => {
   }
 })
 
-settingsRouter.delete('/locations/:locationId', async (req, res) => {
+settingsRouter.delete('/locations/:locationId', requireAdmin, async (req, res) => {
   const id = typeof req.params.locationId === 'string' ? req.params.locationId : ''
   if (!id) {
     res.status(400).json({ error: 'invalid_location_id' })

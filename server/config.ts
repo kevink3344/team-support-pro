@@ -40,7 +40,7 @@ const envSchema = z.object({
   AUTH_FALLBACK_TEAM_NAME: z.string().default('IT Support'),
   AUTH_FALLBACK_TEAM_CODE: z.string().default('IT'),
   AUTH_FALLBACK_TEAM_ACCENT: z.string().default('#0078d4'),
-  AUTH_FALLBACK_ROLE: z.enum(['Admin', 'Staff']).default('Staff'),
+  AUTH_FALLBACK_ROLE: z.enum(['Admin', 'Super Admin', 'Staff']).default('Staff'),
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().optional(),
   EMAIL_REPLY_TO: z.string().optional(),
@@ -48,6 +48,7 @@ const envSchema = z.object({
   GMAIL_USER: z.string().optional(),
   GMAIL_APP_PASSWORD: z.string().optional(),
   GMAIL_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(120000),
+  SUPERADMIN_ENABLED: z.enum(['true', 'false']).default('false'),
 })
 
 const parsed = envSchema.parse(process.env)
@@ -122,5 +123,6 @@ export const serverConfig = {
     gmailAppPassword: parsed.GMAIL_APP_PASSWORD?.trim() || '',
     pollIntervalMs: parsed.GMAIL_POLL_INTERVAL_MS,
   },
+  superAdminEnabled: parsed.SUPERADMIN_ENABLED === 'true',
 }
 

@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { requireAdmin } from '../middleware.js'
+import { requireAdmin, requireSuperAdmin } from '../middleware.js'
 import {
   readFeedbackFormGlobalEnabled,
   writeFeedbackFormGlobalEnabled,
@@ -17,17 +17,16 @@ import {
 } from '../webhooks.js'
 
 export const webhooksRouter = Router()
-webhooksRouter.use(requireAdmin)
 
 // ---------------------------------------------------------------------------
 // Feedback global toggle
 // ---------------------------------------------------------------------------
 
-webhooksRouter.get('/feedback', (_req, res) => {
+webhooksRouter.get('/feedback', requireAdmin, (_req, res) => {
   res.json({ enabled: readFeedbackFormGlobalEnabled() })
 })
 
-webhooksRouter.patch('/feedback', (req, res) => {
+webhooksRouter.patch('/feedback', requireAdmin, (req, res) => {
   if (typeof req.body?.enabled !== 'boolean') {
     res.status(400).json({ error: 'invalid_feedback_settings_payload' })
     return
@@ -40,13 +39,13 @@ webhooksRouter.patch('/feedback', (req, res) => {
 // Webhook configs
 // ---------------------------------------------------------------------------
 
-webhooksRouter.get('/webhooks', async (req, res) => {
+webhooksRouter.get('/webhooks', requireSuperAdmin, async (req, res) => {
   const user = req.user!
   const configs = await listWebhookConfigs(user.organizationId)
   res.json({ webhooks: configs })
 })
 
-webhooksRouter.post('/webhooks', async (req, res) => {
+webhooksRouter.post('/webhooks', requireSuperAdmin, async (req, res) => {
   const user = req.user!
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
   const events: WebhookEvent[] = Array.isArray(req.body?.events)
@@ -72,7 +71,7 @@ webhooksRouter.post('/webhooks', async (req, res) => {
   res.status(201).json({ webhook })
 })
 
-webhooksRouter.patch('/webhooks/:id', async (req, res) => {
+webhooksRouter.patch('/webhooks/:id', requireSuperAdmin, async (req, res) => {
   const input: UpdateWebhookInput = {}
   if (typeof req.body?.url === 'string') input.url = req.body.url.trim()
   if (typeof req.body?.secret === 'string') input.secret = req.body.secret
@@ -90,7 +89,7 @@ webhooksRouter.patch('/webhooks/:id', async (req, res) => {
   res.json({ webhook })
 })
 
-webhooksRouter.delete('/webhooks/:id', async (req, res) => {
+webhooksRouter.delete('/webhooks/:id', requireSuperAdmin, async (req, res) => {
   const deleted = await deleteWebhookConfig(String(req.params.id))
   if (!deleted) {
     res.status(404).json({ error: 'webhook_not_found' })
@@ -99,7 +98,7 @@ webhooksRouter.delete('/webhooks/:id', async (req, res) => {
   res.json({ success: true })
 })
 
-webhooksRouter.post('/webhooks/:id/test', (req, res) => {
+webhooksRouter.post('/webhooks/:id/test', requireSuperAdmin, (req, res) => {
   const user = req.user!
   dispatchWebhookEvent(user.organizationId, 'ticket.created', {
     test: true,

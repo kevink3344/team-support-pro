@@ -31,7 +31,7 @@ export interface DirectoryUser {
   email: string
   organizationId: string
   teamId: string
-  role: 'Admin' | 'Staff'
+  role: 'Admin' | 'Super Admin' | 'Staff'
 }
 
 export interface DirectoryOrganizationInput {
@@ -62,11 +62,15 @@ export interface DirectoryUserInput {
   email: string
   organizationId: string
   teamId: string
-  role: 'Admin' | 'Staff'
+  role: 'Admin' | 'Super Admin' | 'Staff'
 }
 
-const normalizeRole = (value: unknown): 'Admin' | 'Staff' =>
-  String(value).toLowerCase() === 'admin' ? 'Admin' : 'Staff'
+const normalizeRole = (value: unknown): 'Admin' | 'Super Admin' | 'Staff' => {
+  const lower = String(value).toLowerCase()
+  if (lower === 'admin') return 'Admin'
+  if (lower === 'super admin') return 'Super Admin'
+  return 'Staff'
+}
 
 const normalizeOrganization = (record: Record<string, unknown>): DirectoryOrganization => ({
   id: String(record.id),
@@ -100,7 +104,7 @@ const normalizeUser = (record: Record<string, unknown>): DirectoryUser => ({
 })
 
 const validString = (value: string) => value.trim().length > 0
-const validRole = (value: string) => value === 'Admin' || value === 'Staff'
+const validRole = (value: string) => value === 'Admin' || value === 'Super Admin' || value === 'Staff'
 const defaultOrganizationId = (input: DirectoryOrganizationInput) => input.id?.trim() || slugify(input.name)
 const defaultTeamId = (input: DirectoryTeamInput) => input.id?.trim() || `team-${slugify(input.organizationId)}-${slugify(input.name)}`
 const defaultCategoryId = (input: DirectoryCategoryInput) => input.id?.trim() || `cat-${slugify(input.teamId)}-${slugify(input.name)}`
