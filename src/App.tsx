@@ -4363,7 +4363,7 @@ function App() {
               Team workload
             </div>
             <div className="space-y-2">
-              {(currentUser.role === 'Admin' ? teams : [currentTeam]).map((team) => {
+              {(currentUser.role === 'Admin' ? teams.filter((t) => t.organizationId === currentUser.organizationId) : [currentTeam]).map((team) => {
                 const total = teamWorkload.find((entry) => entry.teamId === team.id)?.count ?? 0
                 const Icon = teamIcons[team.id] ?? Building2
                 return (
