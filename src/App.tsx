@@ -504,8 +504,6 @@ function App() {
   const [webhookEditSecret, setWebhookEditSecret] = useState('')
   const [webhookEditEvents, setWebhookEditEvents] = useState<WebhookEvent[]>([])
   const [webhookTestingId, setWebhookTestingId] = useState<string | null>(null)
-  const [webhookTestPanelId, setWebhookTestPanelId] = useState<string | null>(null)
-  const [webhookTestBody, setWebhookTestBody] = useState('')
   // Location state
   const [locations, setLocations] = useState<Location[]>([])
   const [allLocations, setAllLocations] = useState<Location[]>([])
@@ -3284,7 +3282,7 @@ function App() {
     }
   }
 
-  const testWebhook = async (id: string, body: string) => {
+  const testWebhook = async (id: string) => {
     setWebhookTestingId(id)
     setWebhooksNotice('')
     setWebhooksError('')
@@ -3292,12 +3290,9 @@ function App() {
       const res = await fetch(apiUrl(`/api/settings/webhooks/${id}/test`), {
         method: 'POST',
         credentials: 'include',
-        headers: body.trim() ? { 'Content-Type': 'application/json' } : undefined,
-        body: body.trim() || undefined,
       })
       if (res.ok) {
         setWebhooksNotice('Test ping sent.')
-        setWebhookTestPanelId(null)
       } else {
         setWebhooksError('Test ping failed.')
       }
@@ -7150,6 +7145,7 @@ function App() {
                             value={webhookEditSecret}
                             onChange={(e) => setWebhookEditSecret(e.target.value)}
                           />
+                          <p className="text-xs text-gray-500 font-medium">Events to subscribe:</p>
                           <div className="flex flex-wrap gap-2">
                             {ALL_WEBHOOK_EVENTS.map((ev) => (
                               <label key={ev} className="flex items-center gap-1 text-xs cursor-pointer">
@@ -7203,15 +7199,11 @@ function App() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setWebhookTestPanelId((cur) => cur === wh.id ? null : wh.id)
-                                  setWebhookTestBody('')
-                                  setWebhooksNotice('')
-                                  setWebhooksError('')
-                                }}
-                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50"
+                                disabled={webhookTestingId === wh.id}
+                                onClick={() => void testWebhook(wh.id)}
+                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
                               >
-                                Test
+                                {webhookTestingId === wh.id ? 'Sending…' : 'Test'}
                               </button>
                               <button
                                 type="button"
@@ -7241,35 +7233,6 @@ function App() {
                               </span>
                             ))}
                           </div>
-                          {webhookTestPanelId === wh.id && (
-                            <div className="mt-2 space-y-2 border-t border-gray-100 pt-2">
-                              <p className="text-xs font-medium text-gray-600">Body <span className="font-normal text-gray-400">(optional — must be valid JSON)</span></p>
-                              <textarea
-                                className="w-full rounded border border-gray-300 px-3 py-1.5 text-xs font-mono min-h-24 resize-y"
-                                placeholder={'{\n  "event": "test",\n  "data": {}\n}'}
-                                value={webhookTestBody}
-                                onChange={(e) => setWebhookTestBody(e.target.value)}
-                                spellCheck={false}
-                              />
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  disabled={webhookTestingId === wh.id}
-                                  onClick={() => void testWebhook(wh.id, webhookTestBody)}
-                                  className="px-3 py-1 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                  {webhookTestingId === wh.id ? 'Sending…' : 'Send Test'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setWebhookTestPanelId(null)}
-                                  className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-50"
-                                >
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          )}
                         </>
                       )}
                     </div>
