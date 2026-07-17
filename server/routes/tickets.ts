@@ -90,7 +90,6 @@ ticketsRouter.post('/', requireAuth, async (req, res) => {
   try {
     const ticket = await createTicket(
       {
-        id: typeof req.body?.id === 'string' ? req.body.id : undefined,
         title: typeof req.body?.title === 'string' ? req.body.title : '',
         description: typeof req.body?.description === 'string' ? req.body.description : '',
         priority: typeof req.body?.priority === 'string' ? req.body.priority : '',

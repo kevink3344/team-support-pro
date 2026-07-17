@@ -504,6 +504,8 @@ function App() {
   const [webhookEditSecret, setWebhookEditSecret] = useState('')
   const [webhookEditEvents, setWebhookEditEvents] = useState<WebhookEvent[]>([])
   const [webhookTestingId, setWebhookTestingId] = useState<string | null>(null)
+  const [webhookTestPanelId, setWebhookTestPanelId] = useState<string | null>(null)
+  const [webhookTestBody, setWebhookTestBody] = useState('')
   // Location state
   const [locations, setLocations] = useState<Location[]>([])
   const [allLocations, setAllLocations] = useState<Location[]>([])
@@ -1172,8 +1174,9 @@ function App() {
       return
     }
 
+    const validIds = new Set(currentTeamCategories.map((c) => c.id))
     setNewTicketForm((current) =>
-      current.categoryId
+      validIds.has(current.categoryId)
         ? current
         : { ...current, categoryId: currentTeamCategories[0].id },
     )
@@ -3281,7 +3284,7 @@ function App() {
     }
   }
 
-  const testWebhook = async (id: string) => {
+  const testWebhook = async (id: string, body: string) => {
     setWebhookTestingId(id)
     setWebhooksNotice('')
     setWebhooksError('')
@@ -3289,9 +3292,12 @@ function App() {
       const res = await fetch(apiUrl(`/api/settings/webhooks/${id}/test`), {
         method: 'POST',
         credentials: 'include',
+        headers: body.trim() ? { 'Content-Type': 'application/json' } : undefined,
+        body: body.trim() || undefined,
       })
       if (res.ok) {
         setWebhooksNotice('Test ping sent.')
+        setWebhookTestPanelId(null)
       } else {
         setWebhooksError('Test ping failed.')
       }
@@ -3424,6 +3430,7 @@ function App() {
   }
 
   const createTicket = async () => {
+    setCreateTicketError('')
     if (
       !newTicketForm.title.trim() ||
       !newTicketForm.requestorName.trim() ||
@@ -3435,7 +3442,6 @@ function App() {
     }
 
     setCreateTicketPending(true)
-    setCreateTicketError('')
 
     try {
       const response = await fetch(apiUrl('/api/tickets'), {
@@ -7182,6 +7188,7 @@ function App() {
                         <>
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-mono truncate flex-1">{wh.url}</span>
+
                             <div className="flex items-center gap-1 shrink-0">
                               {/* Enabled toggle */}
                               <button
@@ -7196,11 +7203,15 @@ function App() {
                               </button>
                               <button
                                 type="button"
-                                disabled={webhookTestingId === wh.id}
-                                onClick={() => void testWebhook(wh.id)}
-                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+                                onClick={() => {
+                                  setWebhookTestPanelId((cur) => cur === wh.id ? null : wh.id)
+                                  setWebhookTestBody('')
+                                  setWebhooksNotice('')
+                                  setWebhooksError('')
+                                }}
+                                className="px-2 py-0.5 text-xs rounded border border-gray-300 hover:bg-gray-50"
                               >
-                                {webhookTestingId === wh.id ? 'Sending…' : 'Test'}
+                                Test
                               </button>
                               <button
                                 type="button"
@@ -7230,6 +7241,35 @@ function App() {
                               </span>
                             ))}
                           </div>
+                          {webhookTestPanelId === wh.id && (
+                            <div className="mt-2 space-y-2 border-t border-gray-100 pt-2">
+                              <p className="text-xs font-medium text-gray-600">Body <span className="font-normal text-gray-400">(optional — must be valid JSON)</span></p>
+                              <textarea
+                                className="w-full rounded border border-gray-300 px-3 py-1.5 text-xs font-mono min-h-24 resize-y"
+                                placeholder={'{\n  "event": "test",\n  "data": {}\n}'}
+                                value={webhookTestBody}
+                                onChange={(e) => setWebhookTestBody(e.target.value)}
+                                spellCheck={false}
+                              />
+                              <div className="flex gap-2">
+                                <button
+                                  type="button"
+                                  disabled={webhookTestingId === wh.id}
+                                  onClick={() => void testWebhook(wh.id, webhookTestBody)}
+                                  className="px-3 py-1 text-sm rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {webhookTestingId === wh.id ? 'Sending…' : 'Send Test'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setWebhookTestPanelId(null)}
+                                  className="px-3 py-1 text-sm rounded border border-gray-300 hover:bg-gray-50"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </>
                       )}
                     </div>
@@ -8319,6 +8359,11 @@ function App() {
                     </div>
                   </div>
 
+                  {currentTeamCategories.length === 0 && (
+                    <div className="mb-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                      No categories are configured for {currentTeam.name}. An administrator must add at least one category in Settings before tickets can be created.
+                    </div>
+                  )}
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="field">
                       <span className="field-label">Team</span>
