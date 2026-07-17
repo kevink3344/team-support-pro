@@ -7973,7 +7973,7 @@ function App() {
                   <div className="truncate text-sm font-semibold text-white">{currentUser.name}</div>
                   <div className="truncate text-[11px] leading-4 text-white/70">{currentTeam.name}</div>
                 </div>
-                <div className="relative hidden sm:block" ref={profileMenuRef}>
+                <div className="relative" ref={profileMenuRef}>
                   <button
                     type="button"
                     className="icon-button"
