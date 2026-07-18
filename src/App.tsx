@@ -659,8 +659,11 @@ function App() {
   const loginOrgCategories = availableCategories.filter((c) => loginOrgTeamIds.has(c.teamId))
   const loginOrgTicketCount = tickets.filter((tk) => loginOrgTeamIds.has(tk.teamId)).length
   const currentUser = authSession
-    ? availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
-      createMockSessionUser(authSession)
+    ? {
+        ...(availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
+          createMockSessionUser(authSession)),
+        role: authSession.role ?? 'Staff',
+      }
     : availableUsers.find((user) => user.id === currentUserId) ?? availableUsers[0]
   const visibleNavItems =
     currentUser.role === 'Admin' || currentUser.role === 'Super Admin' ? [...navItems, ...adminNavItems] : navItems
