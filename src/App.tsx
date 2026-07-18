@@ -997,7 +997,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (authSession?.role !== 'Admin') {
+    if (authSession?.role !== 'Admin' && authSession?.role !== 'Super Admin') {
       setAnonymousPageConfigs([])
       setAnonymousPageSettingsError('')
       setAnonymousPageSettingsNotice('')
@@ -1494,6 +1494,7 @@ function App() {
   useEffect(() => {
     if (
       currentUser.role !== 'Admin' &&
+      currentUser.role !== 'Super Admin' &&
       (
         activeView === 'settings' ||
         activeView === 'reports' ||
@@ -2811,7 +2812,7 @@ function App() {
   }
 
   const savePowerBiSettings = async (nextUrl: string | null) => {
-    if (currentUser.role !== 'Admin') {
+    if (currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin') {
       setPowerBiSettingsError('Only admins can update Power BI settings.')
       return
     }
@@ -2870,7 +2871,7 @@ function App() {
   }
 
   const saveAboutSettings = async (html: string) => {
-    if (currentUser.role !== 'Admin') {
+    if (currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin') {
       setAboutPageError('Administrator access is required to update the About page.')
       return
     }
@@ -2964,7 +2965,7 @@ function App() {
   }
 
   const saveAnonymousPageSettings = async () => {
-    if (currentUser.role !== 'Admin') {
+    if (currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin') {
       setAnonymousPageSettingsError('Only admins can update anonymous page settings.')
       return
     }
@@ -6249,7 +6250,7 @@ function App() {
         case 'anonymousPages':
           return (
             <div className="settings-accordion-content space-y-3">
-              {currentUser.role !== 'Admin' ? (
+              {currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to manage anonymous page mappings.
                 </div>
@@ -6500,7 +6501,7 @@ function App() {
         case 'trendSeeding':
           return (
             <div className="settings-accordion-content space-y-3">
-              {currentUser.role !== 'Admin' ? (
+              {currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to seed dashboard trend history.
                 </div>
@@ -6631,7 +6632,7 @@ function App() {
           )
           return (
             <div className="settings-accordion-content space-y-3">
-              {currentUser.role !== 'Admin' ? (
+              {currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to manage locations.
                 </div>
@@ -6754,7 +6755,7 @@ function App() {
         case 'email':
           return (
             <div className="settings-accordion-content space-y-3">
-              {authSession?.role !== 'Admin' ? (
+              {authSession?.role !== 'Admin' && authSession?.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to manage email settings.
                 </div>
@@ -6865,7 +6866,7 @@ function App() {
         case 'powerBi':
           return (
             <div className="settings-accordion-content space-y-3">
-              {authSession?.role !== 'Admin' ? (
+              {authSession?.role !== 'Admin' && authSession?.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to manage Power BI settings.
                 </div>
@@ -6935,7 +6936,7 @@ function App() {
         case 'aboutPage':
           return (
             <div className="settings-accordion-content space-y-3">
-              {authSession?.role !== 'Admin' ? (
+              {authSession?.role !== 'Admin' && authSession?.role !== 'Super Admin' ? (
                 <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                   Administrator access is required to manage the About page.
                 </div>
@@ -6993,7 +6994,7 @@ function App() {
           )
 
         case 'feedbackForm': {
-          if (currentUser.role !== 'Admin') {
+          if (currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin') {
             return (
               <div className="px-4 py-6 text-sm text-gray-500">Only admins can manage the feedback form.</div>
             )
