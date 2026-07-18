@@ -4254,9 +4254,6 @@ function App() {
               <div className="font-mono text-2xl font-semibold text-[color:var(--text)]">
                 {metricCard.value}
               </div>
-              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                {metricCard.label}
-              </div>
             </div>
           </div>
         </section>
