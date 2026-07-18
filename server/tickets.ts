@@ -269,7 +269,9 @@ export const createTicket = async (input: CreateTicketInput, actor: string): Pro
   const createdAt = new Date().toISOString()
 
   type FieldDefRow = { id: unknown; fieldType: unknown; label: unknown; isRequired: unknown }
-  const fieldDefs = await dbAll(db, 'SELECT Id AS id, FieldType AS fieldType, Label AS label, IsRequired AS isRequired FROM TicketFieldDefinitions WHERE TeamId = ?', [input.teamId]) as FieldDefRow[]
+  const catTeamRow = await dbGet(db, 'SELECT TeamId, (SELECT OrganizationId FROM Teams WHERE Teams.Id = Categories.TeamId) AS organizationId FROM Categories WHERE Id = ?', [input.categoryId])
+  const organizationId = catTeamRow?.organizationId ? String(catTeamRow.organizationId) : ''
+  const fieldDefs = await dbAll(db, 'SELECT Id AS id, FieldType AS fieldType, Label AS label, IsRequired AS isRequired FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId]) as FieldDefRow[]
   const fieldDefMap = new Map(fieldDefs.map((f) => [String(f.id), f]))
 
   const customFieldInserts: Array<{ id: string; fieldId: string; fieldLabel: string; fieldType: string; value: string }> = []
@@ -361,12 +363,12 @@ export const listWatchedTicketIds = async (userId: string): Promise<string[]> =>
 
 export const upsertCustomFieldValues = async (
   ticketId: string,
-  teamId: string,
+  organizationId: string,
   fields: { fieldId: string; value: string }[],
 ): Promise<void> => {
   if (!fields.length) return
   const db = getDb()
-  const defs = await dbAll(db, 'SELECT Id, Label, FieldType FROM TicketFieldDefinitions WHERE TeamId = ?', [teamId]) as Array<{ Id: unknown; Label: unknown; FieldType: unknown }>
+  const defs = await dbAll(db, 'SELECT Id, Label, FieldType FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId]) as Array<{ Id: unknown; Label: unknown; FieldType: unknown }>
   const defMap = new Map(defs.map((d) => [String(d.Id), d]))
   const validFields = fields.filter((f) => defMap.has(f.fieldId))
   if (!validFields.length) return

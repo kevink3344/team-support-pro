@@ -268,7 +268,7 @@ ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
         return [{ fieldId, value: typeof entry.value === 'string' ? entry.value : String(entry.value ?? '') }]
       })
       if (cfInputs.length) {
-        await upsertCustomFieldValues(ticketId, ticket.teamId, cfInputs)
+        await upsertCustomFieldValues(ticketId, user.organizationId, cfInputs)
       }
     }
 

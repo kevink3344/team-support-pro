@@ -43,12 +43,39 @@ export type CustomFieldType = 'text' | 'select' | 'checkbox' | 'number' | 'date'
 
 export interface TicketFieldDefinition {
   id: string
-  teamId: TeamId
+  organizationId: OrganizationId
   fieldType: CustomFieldType
   label: string
   isRequired: boolean
   sortOrder: number
   options: string[]
+}
+
+export type BuiltInFieldKey =
+  | 'title'
+  | 'requestorName'
+  | 'requestorEmail'
+  | 'categoryId'
+  | 'priority'
+  | 'assignedToId'
+  | 'location'
+  | 'description'
+  | 'status'
+
+export type LayoutSlotWidth = 'full' | 'half'
+
+export interface TicketLayoutSlot {
+  fieldRef: BuiltInFieldKey | string
+  width: LayoutSlotWidth
+}
+
+export interface TicketLayoutRow {
+  id: string
+  slots: TicketLayoutSlot[]
+}
+
+export interface TicketLayout {
+  rows: TicketLayoutRow[]
 }
 
 export interface TicketCustomFieldValue {

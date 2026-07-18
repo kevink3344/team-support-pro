@@ -79,6 +79,7 @@ import type {
   TicketAttachment,
   Ticket as TicketRecord,
   TicketFieldDefinition,
+  TicketLayout,
   TicketPriority,
   TicketStatus,
   TicketWatcher,
@@ -87,6 +88,8 @@ import type {
   WebhookConfig,
   WebhookEvent,
 } from './types'
+import { LayoutTicketForm } from './components/LayoutTicketForm'
+import { TicketLayoutDesigner } from './components/TicketLayoutDesigner'
 import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
 import { RichTextEditor } from './RichTextEditor'
@@ -101,7 +104,7 @@ import {
   mergeDashboardLayouts,
   filterDashboardLayouts,
 } from './dashboard/layouts'
-import { STORAGE_KEYS, statusOptions, priorityOptions, navItems, adminNavItems, teamIcons } from './constants'
+import { STORAGE_KEYS, statusOptions, navItems, adminNavItems, teamIcons } from './constants'
 
 type SettingsAccordionSection =
   | 'appearance'
@@ -418,6 +421,9 @@ function App() {
     return isThemeConfig(stored) ? stored : defaultThemeConfig
   })
   const [searchText, setSearchText] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [teamTicketsStatusFilter, setTeamTicketsStatusFilter] = useState<TicketStatus | 'All'>('Open')
   const [detailTicketId, setDetailTicketId] = useState<string | null>(null)
   const [detailWidth, setDetailWidth] = useState(50)
   const [detailResizeActive, setDetailResizeActive] = useState(false)
@@ -483,10 +489,14 @@ function App() {
   const [ticketFieldDefsPending, setTicketFieldDefsPending] = useState(false)
   const [ticketFieldDefsError, setTicketFieldDefsError] = useState('')
   const [ticketFieldDefsNotice, setTicketFieldDefsNotice] = useState('')
-  const [ticketDesignerTeamId, setTicketDesignerTeamId] = useState('')
+  const [ticketDesignerTab, setTicketDesignerTab] = useState<'fields' | 'layout'>('fields')
   const [ticketDesignerAddField, setTicketDesignerAddField] = useState(false)
   const [ticketDesignerNewField, setTicketDesignerNewField] = useState<Partial<TicketFieldDefinition>>({})
   const [ticketDesignerNewFieldOptions, setTicketDesignerNewFieldOptions] = useState('')
+  const [organizationTicketLayout, setOrganizationTicketLayout] = useState<TicketLayout | null>(null)
+  const [, setTicketLayoutPending] = useState(false)
+  const [ticketLayoutError, setTicketLayoutError] = useState('')
+  const [ticketLayoutNotice, setTicketLayoutNotice] = useState('')
   const [createTicketFieldDefs, setCreateTicketFieldDefs] = useState<TicketFieldDefinition[]>([])
   const [newTicketCustomFields, setNewTicketCustomFields] = useState<Record<string, string>>({})
   const [detailCustomFieldDefs, setDetailCustomFieldDefs] = useState<TicketFieldDefinition[]>([])
@@ -584,6 +594,7 @@ function App() {
   const [changePasswordPending, setChangePasswordPending] = useState(false)
   const [changePasswordError, setChangePasswordError] = useState('')
   const [newTicketForm, setNewTicketForm] = useState({
+    teamId: '',
     title: '',
     requestorName: '',
     requestorEmail: '',
@@ -591,6 +602,7 @@ function App() {
     categoryId: '',
     assignedToId: '',
     priority: 'Medium' as TicketPriority,
+    status: 'Open' as TicketStatus,
     description: '',
   })
   const [detailDraft, setDetailDraft] = useState<{
@@ -853,23 +865,33 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (activeView === 'new-ticket' && currentTeam?.id) {
-      fetch(apiUrl(`/api/teams/${encodeURIComponent(currentTeam.id)}/ticket-fields`), { credentials: 'include' })
+    if (activeView === 'new-ticket' && currentUser.organizationId) {
+      fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), { credentials: 'include' })
         .then((res) => res.ok ? res.json() : { fields: [] })
         .then((data) => setCreateTicketFieldDefs(data.fields ?? []))
         .catch(() => setCreateTicketFieldDefs([]))
     }
+  }, [activeView, currentUser.organizationId])
+
+  useEffect(() => {
+    if (!currentUser.organizationId) {
+      setOrganizationTicketLayout(null)
+      return
+    }
+    if (activeView === 'new-ticket' || activeView === 'ticket-designer') {
+      void refreshTicketLayout()
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, currentTeam?.id])
+  }, [activeView, currentUser.organizationId])
 
   useEffect(() => {
     const ticket = tickets.find((t) => t.id === detailTicketId) ?? null
-    if (!ticket) {
+    if (!ticket || !currentUser.organizationId) {
       setDetailCustomFieldDefs([])
       setDetailCustomFieldValues({})
       return
     }
-    fetch(apiUrl(`/api/teams/${encodeURIComponent(ticket.teamId)}/ticket-fields`), { credentials: 'include' })
+    fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), { credentials: 'include' })
       .then((res) => res.ok ? res.json() : { fields: [] })
       .then((data: { fields?: TicketFieldDefinition[] }) => {
         const defs: TicketFieldDefinition[] = data.fields ?? []
@@ -884,8 +906,7 @@ function App() {
         setDetailCustomFieldDefs([])
         setDetailCustomFieldValues({})
       })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailTicketId])
+  }, [detailTicketId, currentUser.organizationId, tickets])
 
   const fetchDashboardTrends = async () => {
     const response = await fetch(apiUrl('/api/dashboard/trends'), {
@@ -1181,9 +1202,9 @@ function App() {
     setNewTicketForm((current) =>
       validIds.has(current.categoryId)
         ? current
-        : { ...current, categoryId: currentTeamCategories[0].id },
+        : { ...current, categoryId: currentTeamCategories[0].id, teamId: currentTeam?.id ?? '' },
     )
-  }, [currentTeamCategories])
+  }, [currentTeamCategories, currentTeam?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -1796,6 +1817,14 @@ function App() {
   }
 
   const visibleTickets = getBaseVisibleTickets().filter((ticket) => {
+    if (
+      activeView === 'team-tickets' &&
+      teamTicketsStatusFilter !== 'All' &&
+      ticket.status !== teamTicketsStatusFilter
+    ) {
+      return false
+    }
+
     const query = deferredSearch.trim().toLowerCase()
     if (!query) {
       return true
@@ -3503,6 +3532,7 @@ function App() {
       setTickets((current) => [payload.ticket as TicketRecord, ...current])
       setNewTicketCustomFields({})
       setNewTicketForm({
+        teamId: currentTeam?.id ?? '',
         title: '',
         requestorName: '',
         requestorEmail: '',
@@ -3510,6 +3540,7 @@ function App() {
         categoryId: currentTeamCategories[0]?.id ?? '',
         assignedToId: '',
         priority: 'Medium',
+        status: 'Open',
         description: '',
       })
       startTransition(() => {
@@ -5548,11 +5579,11 @@ function App() {
     )
   }
 
-  const refreshTicketFieldDefs = async (teamId: string) => {
-    if (!teamId) return
+  const refreshTicketFieldDefs = async () => {
+    if (!currentUser.organizationId) return
     setTicketFieldDefsError('')
     try {
-      const res = await fetch(apiUrl(`/api/teams/${encodeURIComponent(teamId)}/ticket-fields`), { credentials: 'include' })
+      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), { credentials: 'include' })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
       setTicketFieldDefs(data.fields ?? [])
@@ -5561,13 +5592,20 @@ function App() {
     }
   }
 
-  const saveTicketFieldDefs = async (teamId: string, fields: TicketFieldDefinition[]) => {
-    if (!teamId) return
+  useEffect(() => {
+    if (activeView === 'ticket-designer' && currentUser.organizationId) {
+      void refreshTicketFieldDefs()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, currentUser.organizationId])
+
+  const saveTicketFieldDefs = async (fields: TicketFieldDefinition[]) => {
+    if (!currentUser.organizationId) return
     setTicketFieldDefsPending(true)
     setTicketFieldDefsError('')
     setTicketFieldDefsNotice('')
     try {
-      const res = await fetch(apiUrl(`/api/teams/${encodeURIComponent(teamId)}/ticket-fields`), {
+      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), {
         method: 'PUT',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -5585,6 +5623,47 @@ function App() {
     }
   }
 
+  const refreshTicketLayout = async () => {
+    if (!currentUser.organizationId) return
+    setTicketLayoutError('')
+    try {
+      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-layout`), { credentials: 'include' })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setOrganizationTicketLayout(data.layout ?? null)
+    } catch {
+      setTicketLayoutError('Failed to load ticket layout.')
+    }
+  }
+
+  const saveTicketLayout = async (layout: TicketLayout) => {
+    if (!currentUser.organizationId) return
+    setTicketLayoutPending(true)
+    setTicketLayoutError('')
+    setTicketLayoutNotice('')
+    try {
+      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-layout`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ layout }),
+      })
+      if (!res.ok) throw new Error(await res.text())
+      const data = await res.json()
+      setOrganizationTicketLayout(data.layout ?? layout)
+      if (data.errors?.length) {
+        setTicketLayoutError(data.errors.join(' '))
+      } else {
+        setTicketLayoutNotice('Saved.')
+        setTimeout(() => setTicketLayoutNotice(''), 2500)
+      }
+    } catch {
+      setTicketLayoutError('Failed to save ticket layout.')
+    } finally {
+      setTicketLayoutPending(false)
+    }
+  }
+
   const renderTicketDesignerPage = () => {
     const FIELD_TYPES: { value: TicketFieldDefinition['fieldType']; label: string }[] = [
       { value: 'text', label: 'Text' },
@@ -5594,17 +5673,6 @@ function App() {
       { value: 'date', label: 'Date' },
     ]
 
-    const handleTeamChange = (teamId: string) => {
-      setTicketDesignerTeamId(teamId)
-      setTicketFieldDefs([])
-      setTicketFieldDefsError('')
-      setTicketFieldDefsNotice('')
-      setTicketDesignerAddField(false)
-      setTicketDesignerNewField({})
-      setTicketDesignerNewFieldOptions('')
-      refreshTicketFieldDefs(teamId)
-    }
-
     const handleAddField = () => {
       if (!ticketDesignerNewField.label?.trim()) return
       const fieldType = (ticketDesignerNewField.fieldType ?? 'text') as TicketFieldDefinition['fieldType']
@@ -5613,7 +5681,7 @@ function App() {
         : []
       const newField: TicketFieldDefinition = {
         id: `tfd-new-${Date.now()}`,
-        teamId: ticketDesignerTeamId,
+        organizationId: currentUser.organizationId,
         fieldType,
         label: ticketDesignerNewField.label.trim(),
         isRequired: ticketDesignerNewField.isRequired ?? false,
@@ -5625,13 +5693,13 @@ function App() {
       setTicketDesignerAddField(false)
       setTicketDesignerNewField({})
       setTicketDesignerNewFieldOptions('')
-      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+      saveTicketFieldDefs(updated)
     }
 
     const handleDeleteField = (id: string) => {
       const updated = ticketFieldDefs.filter((f) => f.id !== id)
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+      saveTicketFieldDefs(updated)
     }
 
     const handleMoveField = (id: string, direction: -1 | 1) => {
@@ -5644,13 +5712,18 @@ function App() {
       updated[idx] = updated[newIdx]
       updated[newIdx] = temp
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+      saveTicketFieldDefs(updated)
     }
 
     const handleToggleRequired = (id: string) => {
       const updated = ticketFieldDefs.map((f) => f.id === id ? { ...f, isRequired: !f.isRequired } : f)
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(ticketDesignerTeamId, updated)
+      saveTicketFieldDefs(updated)
+    }
+
+    const handleLayoutChange = (layout: TicketLayout) => {
+      setOrganizationTicketLayout(layout)
+      void saveTicketLayout(layout)
     }
 
     return (
@@ -5660,43 +5733,46 @@ function App() {
             <div>
               <div className="text-xl font-semibold">Ticket Designer</div>
               <div className="text-sm text-[color:var(--text-muted)]">
-                Define custom fields that appear on the Create Ticket form for a specific team.
+                Define custom fields and arrange the ticket form layout for your organization.
               </div>
             </div>
           </div>
 
-          {ticketFieldDefsError && (
+          {(ticketFieldDefsError || ticketLayoutError) && (
             <div className="mb-3 rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {ticketFieldDefsError}
+              {ticketFieldDefsError || ticketLayoutError}
             </div>
           )}
-          {ticketFieldDefsNotice && (
+          {(ticketFieldDefsNotice || ticketLayoutNotice) && (
             <div className="mb-3 rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-              {ticketFieldDefsNotice}
+              {ticketFieldDefsNotice || ticketLayoutNotice}
             </div>
           )}
 
-          <div className="mb-5 max-w-xs">
-            <label className="space-y-1">
-              <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Team</div>
-              <select
-                className="input-control"
-                value={ticketDesignerTeamId}
-                onChange={(e) => handleTeamChange(e.target.value)}
-              >
-                <option value="">— Select a team —</option>
-                {teams.filter((t) => t.organizationId === currentUser.organizationId).map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </label>
+          <div className="mb-5 flex gap-2 border-b border-[color:var(--border)]">
+            <button
+              type="button"
+              className="tab-link px-3 py-2 text-sm font-semibold"
+              data-active={ticketDesignerTab === 'fields'}
+              onClick={() => setTicketDesignerTab('fields')}
+            >
+              Custom Fields
+            </button>
+            <button
+              type="button"
+              className="tab-link px-3 py-2 text-sm font-semibold"
+              data-active={ticketDesignerTab === 'layout'}
+              onClick={() => setTicketDesignerTab('layout')}
+            >
+              Layout
+            </button>
           </div>
 
-          {ticketDesignerTeamId && (
+          {ticketDesignerTab === 'fields' && (
             <>
               {ticketFieldDefs.length === 0 && !ticketDesignerAddField && (
                 <div className="mb-4 rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-5 text-sm text-[color:var(--text-muted)]">
-                  No custom fields defined for this team. Add one below.
+                  No custom fields defined for this organization. Add one below.
                 </div>
               )}
 
@@ -5856,6 +5932,20 @@ function App() {
                 </button>
               )}
             </>
+          )}
+
+          {ticketDesignerTab === 'layout' && organizationTicketLayout && (
+            <TicketLayoutDesigner
+              layout={organizationTicketLayout}
+              customFieldDefs={ticketFieldDefs}
+              onChange={handleLayoutChange}
+            />
+          )}
+
+          {ticketDesignerTab === 'layout' && !organizationTicketLayout && (
+            <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-8 text-center text-sm text-[color:var(--text-muted)]">
+              Loading layout…
+            </div>
           )}
         </section>
       </div>
@@ -8122,7 +8212,7 @@ function App() {
         <div className="flex min-w-0 flex-1 flex-col">
           <header className="sticky top-0 z-20 border-b border-[color:var(--border)] bg-[color:var(--header-bg)] text-white">
             <div className="flex min-h-13 flex-wrap items-center justify-between gap-3 px-4 py-2 lg:px-6">
-              <div className="flex min-w-0 items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
                 <button
                   type="button"
                   className="icon-button text-white"
@@ -8143,15 +8233,52 @@ function App() {
                     <PanelLeftClose className="h-5 w-5" />
                   )}
                 </button>
-                <label className="relative hidden w-[28rem] max-w-full md:block">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
-                  <input
-                    value={searchText}
-                    onChange={(event) => setSearchText(event.target.value)}
-                    className="h-10 w-full rounded-[2px] border border-white/10 bg-white/6 pl-9 pr-4 text-sm text-white outline-none placeholder:text-white/45 focus:border-white/25"
-                    placeholder="Search tickets..."
-                  />
-                </label>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="icon-button text-white"
+                    aria-label="Search"
+                    aria-expanded={searchOpen}
+                    onClick={() => {
+                      setSearchOpen((current) => {
+                        const next = !current
+                        if (next) {
+                          setTimeout(() => searchInputRef.current?.focus(), 0)
+                        } else {
+                          setSearchText('')
+                        }
+                        return next
+                      })
+                    }}
+                  >
+                    <Search className="h-5 w-5" />
+                  </button>
+                  <label
+                    className={`relative overflow-hidden transition-all duration-200 ease-in-out ${
+                      searchOpen ? 'w-[250px] opacity-100' : 'w-0 opacity-0'
+                    }`}
+                  >
+                    <input
+                      ref={searchInputRef}
+                      value={searchText}
+                      onChange={(event) => setSearchText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          setSearchOpen(false)
+                          setSearchText('')
+                        }
+                      }}
+                      onBlur={(event) => {
+                        if (!event.target.value) {
+                          setSearchOpen(false)
+                        }
+                      }}
+                      className="h-10 w-full rounded-[2px] border border-white/10 bg-white/6 pl-3 pr-4 text-sm text-white outline-none placeholder:text-white/45 focus:border-white/25"
+                      placeholder="Search tickets..."
+                    />
+                  </label>
+                </div>
               </div>
 
               <div className="flex items-center gap-2">
@@ -8326,20 +8453,9 @@ function App() {
               </div>
             </div>
 
-            <div className="border-t border-white/8 px-4 pb-3 md:hidden">
-              <label className="relative block">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/55" />
-                <input
-                  value={searchText}
-                  onChange={(event) => setSearchText(event.target.value)}
-                  className="h-10 w-full rounded-[2px] border border-white/10 bg-white/6 pl-9 pr-4 text-sm text-white outline-none placeholder:text-white/45 focus:border-white/25"
-                  placeholder="Search tickets..."
-                />
-              </label>
-            </div>
           </header>
 
-          <div className="sticky top-[6.6rem] z-10 border-b border-[color:var(--border)] bg-[color:var(--card-bg)] md:top-13">
+          <div className="sticky top-13 z-10 border-b border-[color:var(--border)] bg-[color:var(--card-bg)]">
             <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-6">
               <div>
                 <div className="text-lg font-semibold">
@@ -8386,6 +8502,22 @@ function App() {
                       >
                         Reset layout
                       </button>
+                    )}
+
+                    {activeView === 'team-tickets' && (
+                      <div className="flex items-center overflow-hidden rounded-[2px] border border-[color:var(--border)]">
+                        {(['All', ...statusOptions] as Array<TicketStatus | 'All'>).map((status) => (
+                          <button
+                            key={status}
+                            type="button"
+                            className="view-toggle"
+                            data-active={teamTicketsStatusFilter === status}
+                            onClick={() => setTeamTicketsStatusFilter(status)}
+                          >
+                            {status}
+                          </button>
+                        ))}
+                      </div>
                     )}
 
                     <div className="flex items-center overflow-hidden rounded-[2px] border border-[color:var(--border)]">
@@ -8486,7 +8618,6 @@ function App() {
                 {aboutPageHtml ? (
                   <div
                     className="about-page-content"
-                    // eslint-disable-next-line react/no-danger
                     dangerouslySetInnerHTML={{ __html: aboutPageHtml }}
                   />
                 ) : (
@@ -8510,184 +8641,21 @@ function App() {
                       No categories are configured for {currentTeam.name}. An administrator must add at least one category in Settings before tickets can be created.
                     </div>
                   )}
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <label className="field">
-                      <span className="field-label">Team</span>
-                      <input className="input-control" value={currentTeam.name} disabled />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Category</span>
-                      <select
-                        className="input-control"
-                        value={newTicketForm.categoryId}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            categoryId: event.target.value,
-                          }))
-                        }
-                      >
-                        {currentTeamCategories.map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field md:col-span-2">
-                      <span className="field-label">Title</span>
-                      <input
-                        className="input-control"
-                        value={newTicketForm.title}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            title: event.target.value,
-                          }))
-                        }
-                        placeholder="Describe the issue or request"
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Requestor</span>
-                      <input
-                        className="input-control"
-                        value={newTicketForm.requestorName}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            requestorName: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Requestor Email</span>
-                      <input
-                        className="input-control"
-                        value={newTicketForm.requestorEmail}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            requestorEmail: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Assigned To</span>
-                      <select
-                        className="input-control"
-                        value={newTicketForm.assignedToId}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            assignedToId: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">Unassigned</option>
-                        {currentTeamMembers.map((user) => (
-                          <option key={user.id} value={user.id}>
-                            {user.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="field-label">Priority</span>
-                      <select
-                        className="input-control"
-                        value={newTicketForm.priority}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            priority: event.target.value as TicketPriority,
-                          }))
-                        }
-                      >
-                        {priorityOptions.map((priority) => (
-                          <option key={priority} value={priority}>
-                            {priority}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field md:col-span-2">
-                      <span className="field-label">Location</span>
-                      <select
-                        className="input-control"
-                        value={newTicketForm.location}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            location: event.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">— Select a location —</option>
-                        {locations.map((loc) => (
-                          <option key={loc.id} value={loc.name}>
-                            {loc.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field md:col-span-2">
-                      <span className="field-label">Description</span>
-                      <textarea
-                        className="input-control min-h-36"
-                        value={newTicketForm.description}
-                        onChange={(event) =>
-                          setNewTicketForm((current) => ({
-                            ...current,
-                            description: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
 
-                    {createTicketFieldDefs.map((def) => (
-                      <label key={def.id} className="field">
-                        <span className="field-label">
-                          {def.label}
-                          {def.isRequired && <span className="ml-1 text-rose-500">*</span>}
-                        </span>
-                        {def.fieldType === 'select' ? (
-                          <select
-                            className="input-control"
-                            value={newTicketCustomFields[def.id] ?? ''}
-                            onChange={(e) =>
-                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.value }))
-                            }
-                          >
-                            <option value="">— Select —</option>
-                            {def.options.map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
-                            ))}
-                          </select>
-                        ) : def.fieldType === 'checkbox' ? (
-                          <input
-                            type="checkbox"
-                            className="mt-1 h-4 w-4"
-                            checked={newTicketCustomFields[def.id] === 'true'}
-                            onChange={(e) =>
-                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.checked ? 'true' : 'false' }))
-                            }
-                          />
-                        ) : (
-                          <input
-                            type={def.fieldType === 'number' ? 'number' : def.fieldType === 'date' ? 'date' : 'text'}
-                            className="input-control"
-                            value={newTicketCustomFields[def.id] ?? ''}
-                            onChange={(e) =>
-                              setNewTicketCustomFields((prev) => ({ ...prev, [def.id]: e.target.value }))
-                            }
-                          />
-                        )}
-                      </label>
-                    ))}
-                  </div>
+                  <LayoutTicketForm
+                    layout={organizationTicketLayout}
+                    customFieldDefs={createTicketFieldDefs}
+                    mode="create"
+                    categories={categories}
+                    users={users}
+                    locations={locations}
+                    values={newTicketForm}
+                    onChange={(patch) => setNewTicketForm((current) => ({ ...current, ...patch }))}
+                    customValues={newTicketCustomFields}
+                    onCustomChange={(fieldId, value) =>
+                      setNewTicketCustomFields((prev) => ({ ...prev, [fieldId]: value }))
+                    }
+                  />
 
                   <div className="mt-4 flex items-center justify-end gap-3">
                     {createTicketError && (
@@ -8860,253 +8828,31 @@ function App() {
                 <div className="flex-1 overflow-y-auto p-5">
                   {detailTab === 'details' ? (
                     <div className="grid gap-4">
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <label className="field">
-                          <span className="field-label">Status</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.status}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      status: event.target.value as TicketStatus,
-                                    }
-                                  : current,
-                              )
+                      <LayoutTicketForm
+                        layout={organizationTicketLayout}
+                        customFieldDefs={detailCustomFieldDefs}
+                        mode="edit"
+                        categories={categories}
+                        users={users}
+                        locations={locations}
+                        values={detailDraft}
+                        onChange={(patch) =>
+                          setDetailDraft((current) => {
+                            if (!current) return current
+                            const next = { ...current, ...patch }
+                            if (patch.teamId && patch.teamId !== current.teamId) {
+                              const firstCategory = categories.find((c) => c.teamId === patch.teamId)
+                              next.categoryId = firstCategory?.id ?? ''
+                              next.assignedToId = ''
                             }
-                          >
-                            {statusOptions.map((status) => (
-                              <option key={status} value={status}>
-                                {status}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Priority</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.priority}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      priority: event.target.value as TicketPriority,
-                                    }
-                                  : current,
-                              )
-                            }
-                          >
-                            {priorityOptions.map((priority) => (
-                              <option key={priority} value={priority}>
-                                {priority}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Team</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.teamId}
-                            onChange={(event) => {
-                              const newTeamId = event.target.value
-                              const firstCategory = categories.find((c) => c.teamId === newTeamId)
-                              setDetailDraft((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      teamId: newTeamId,
-                                      categoryId: firstCategory?.id ?? '',
-                                      assignedToId: '',
-                                    }
-                                  : current,
-                              )
-                            }}
-                          >
-                            {getTeamsForOrganization(teams, currentUser.organizationId).map((team) => (
-                              <option key={team.id} value={team.id}>
-                                {team.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Category</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.categoryId}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, categoryId: event.target.value }
-                                  : current,
-                              )
-                            }
-                          >
-                            {categories.filter((c) => c.teamId === detailDraft.teamId).map((category) => (
-                              <option key={category.id} value={category.id}>
-                                {category.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Assigned To</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.assignedToId}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, assignedToId: event.target.value }
-                                  : current,
-                              )
-                            }
-                          >
-                            <option value="">Unassigned</option>
-                            {users.filter((u) => u.teamId === detailDraft.teamId).map((member) => (
-                              <option key={member.id} value={member.id}>
-                                {member.name}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Location</span>
-                          <select
-                            className="input-control"
-                            value={detailDraft.location}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, location: event.target.value }
-                                  : current,
-                              )
-                            }
-                          >
-                            <option value="">— Select a location —</option>
-                            {locations.map((loc) => (
-                              <option key={loc.id} value={loc.name}>
-                                {loc.name}
-                              </option>
-                            ))}
-                            {/* keep existing value visible even if it's not in active list */}
-                            {detailDraft.location && !locations.some((l) => l.name === detailDraft.location) && (
-                              <option value={detailDraft.location}>{detailDraft.location}</option>
-                            )}
-                          </select>
-                        </label>
-                        <label className="field md:col-span-2">
-                          <span className="field-label">Title</span>
-                          <input
-                            className="input-control"
-                            value={detailDraft.title}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, title: event.target.value }
-                                  : current,
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Requester</span>
-                          <input
-                            className="input-control"
-                            value={detailDraft.requestorName}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, requestorName: event.target.value }
-                                  : current,
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="field">
-                          <span className="field-label">Req. Email</span>
-                          <input
-                            className="input-control"
-                            value={detailDraft.requestorEmail}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, requestorEmail: event.target.value }
-                                  : current,
-                              )
-                            }
-                          />
-                        </label>
-                        <label className="field md:col-span-2">
-                          <span className="field-label">Description</span>
-                          <textarea
-                            className="input-control min-h-36"
-                            value={detailDraft.description}
-                            onChange={(event) =>
-                              setDetailDraft((current) =>
-                                current
-                                  ? { ...current, description: event.target.value }
-                                  : current,
-                              )
-                            }
-                          />
-                        </label>
-                      </div>
-
-                      {detailCustomFieldDefs.length > 0 && (
-                        <div className="border-t border-[color:var(--border)] pt-4">
-                          <div className="mb-3 text-sm font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
-                            Additional Fields
-                          </div>
-                          <div className="grid gap-3 md:grid-cols-2">
-                            {detailCustomFieldDefs.map((def) => (
-                              <label key={def.id} className="field">
-                                <span className="field-label">
-                                  {def.label}
-                                  {def.isRequired && <span className="ml-1 text-rose-500">*</span>}
-                                </span>
-                                {def.fieldType === 'select' ? (
-                                  <select
-                                    className="input-control"
-                                    value={detailCustomFieldValues[def.id] ?? ''}
-                                    onChange={(e) =>
-                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.value }))
-                                    }
-                                  >
-                                    <option value="">— Select —</option>
-                                    {def.options.map((opt) => (
-                                      <option key={opt} value={opt}>{opt}</option>
-                                    ))}
-                                  </select>
-                                ) : def.fieldType === 'checkbox' ? (
-                                  <input
-                                    type="checkbox"
-                                    className="mt-1 h-4 w-4"
-                                    checked={detailCustomFieldValues[def.id] === 'true'}
-                                    onChange={(e) =>
-                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.checked ? 'true' : 'false' }))
-                                    }
-                                  />
-                                ) : (
-                                  <input
-                                    type={def.fieldType === 'number' ? 'number' : def.fieldType === 'date' ? 'date' : 'text'}
-                                    className="input-control"
-                                    value={detailCustomFieldValues[def.id] ?? ''}
-                                    onChange={(e) =>
-                                      setDetailCustomFieldValues((prev) => ({ ...prev, [def.id]: e.target.value }))
-                                    }
-                                  />
-                                )}
-                              </label>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                            return next
+                          })
+                        }
+                        customValues={detailCustomFieldValues}
+                        onCustomChange={(fieldId, value) =>
+                          setDetailCustomFieldValues((prev) => ({ ...prev, [fieldId]: value }))
+                        }
+                      />
 
                       {/* Watchers */}
                       {(() => {

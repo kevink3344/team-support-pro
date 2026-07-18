@@ -34,6 +34,7 @@ import {
   saveTicketFieldDefinitions,
   type TicketFieldDefinition,
 } from '../ticket-designer.js'
+import { getTicketLayout, saveTicketLayout, type TicketLayout } from '../ticket-layout.js'
 
 export const directoryRouter = Router()
 
@@ -231,21 +232,39 @@ directoryRouter.delete('/teams/:teamId', requireAdmin, async (req, res) => {
 })
 
 // ---------------------------------------------------------------------------
-// Ticket field definitions (per-team)
+// Ticket field definitions (per-organization)
 // ---------------------------------------------------------------------------
 
-directoryRouter.get('/teams/:teamId/ticket-fields', requireAuth, async (req, res) => {
-  const fields = await getTicketFieldDefinitions(String(req.params.teamId))
+directoryRouter.get('/organizations/:organizationId/ticket-fields', requireAuth, async (req, res) => {
+  const fields = await getTicketFieldDefinitions(String(req.params.organizationId))
   res.json({ fields })
 })
 
-directoryRouter.put('/teams/:teamId/ticket-fields', requireAdmin, async (req, res) => {
+directoryRouter.put('/organizations/:organizationId/ticket-fields', requireAdmin, async (req, res) => {
   if (!Array.isArray(req.body?.fields)) {
     res.status(400).json({ error: 'invalid_ticket_fields_payload' })
     return
   }
-  const fields = await saveTicketFieldDefinitions(String(req.params.teamId), req.body.fields as Array<Partial<TicketFieldDefinition>>)
+  const fields = await saveTicketFieldDefinitions(String(req.params.organizationId), req.body.fields as Array<Partial<TicketFieldDefinition>>)
   res.json({ fields })
+})
+
+// ---------------------------------------------------------------------------
+// Ticket layout (per-organization)
+// ---------------------------------------------------------------------------
+
+directoryRouter.get('/organizations/:organizationId/ticket-layout', requireAuth, async (req, res) => {
+  const layout = await getTicketLayout(String(req.params.organizationId))
+  res.json({ layout })
+})
+
+directoryRouter.put('/organizations/:organizationId/ticket-layout', requireAdmin, async (req, res) => {
+  if (!req.body?.layout || typeof req.body.layout !== 'object') {
+    res.status(400).json({ error: 'invalid_ticket_layout_payload' })
+    return
+  }
+  const result = await saveTicketLayout(String(req.params.organizationId), req.body.layout as TicketLayout)
+  res.json(result)
 })
 
 // ---------------------------------------------------------------------------

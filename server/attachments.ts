@@ -124,6 +124,7 @@ export const createTicketAttachment = async (input: CreateAttachmentInput): Prom
 
   const created = await getTicketAttachmentById(input.ticketId, attachmentId)
   if (!created) return null
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { fileContent: _fileContent, ...metadata } = created
   return metadata
 }

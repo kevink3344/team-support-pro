@@ -10,7 +10,7 @@ export type CustomFieldType = 'text' | 'select' | 'checkbox' | 'number' | 'date'
 
 export interface TicketFieldDefinition {
   id: string
-  teamId: string
+  organizationId: string
   fieldType: CustomFieldType
   label: string
   isRequired: boolean
@@ -31,7 +31,7 @@ const safeParseJsonArray = (json: string): string[] => {
 
 type FieldRow = {
   id: unknown
-  teamId: unknown
+  organizationId: unknown
   fieldType: unknown
   label: unknown
   isRequired: unknown
@@ -41,7 +41,7 @@ type FieldRow = {
 
 const mapFieldRow = (row: FieldRow): TicketFieldDefinition => ({
   id: String(row.id),
-  teamId: String(row.teamId),
+  organizationId: String(row.organizationId),
   fieldType: String(row.fieldType) as CustomFieldType,
   label: String(row.label),
   isRequired: Number(row.isRequired) === 1,
@@ -53,14 +53,14 @@ const mapFieldRow = (row: FieldRow): TicketFieldDefinition => ({
 // CRUD
 // ---------------------------------------------------------------------------
 
-export const getTicketFieldDefinitions = async (teamId: string): Promise<TicketFieldDefinition[]> => {
+export const getTicketFieldDefinitions = async (organizationId: string): Promise<TicketFieldDefinition[]> => {
   const db = getDb()
-  const rows = await dbAll(db, 'SELECT Id AS id, TeamId AS teamId, FieldType AS fieldType, Label AS label, IsRequired AS isRequired, SortOrder AS sortOrder, OptionsJson AS optionsJson FROM TicketFieldDefinitions WHERE TeamId = ? ORDER BY SortOrder ASC', [teamId]) as FieldRow[]
+  const rows = await dbAll(db, 'SELECT Id AS id, OrganizationId AS organizationId, FieldType AS fieldType, Label AS label, IsRequired AS isRequired, SortOrder AS sortOrder, OptionsJson AS optionsJson FROM TicketFieldDefinitions WHERE OrganizationId = ? ORDER BY SortOrder ASC', [organizationId]) as FieldRow[]
   return rows.map(mapFieldRow)
 }
 
 export const saveTicketFieldDefinitions = async (
-  teamId: string,
+  organizationId: string,
   rawFields: Array<Partial<TicketFieldDefinition>>,
 ): Promise<TicketFieldDefinition[]> => {
   const validFields = rawFields.flatMap((f, idx) => {
@@ -69,7 +69,7 @@ export const saveTicketFieldDefinitions = async (
     if (!label || !VALID_FIELD_TYPES.has(fieldType)) return []
     return [{
       id: typeof f.id === 'string' && f.id.trim() ? f.id.trim() : `tfd-${crypto.randomUUID()}`,
-      teamId,
+      organizationId,
       fieldType,
       label,
       isRequired: f.isRequired === true ? 1 : 0,
@@ -84,13 +84,13 @@ export const saveTicketFieldDefinitions = async (
 
   const db = getDb()
   const statements = [
-    { sql: 'DELETE FROM TicketFieldDefinitions WHERE TeamId = ?', args: [teamId] },
+    { sql: 'DELETE FROM TicketFieldDefinitions WHERE OrganizationId = ?', args: [organizationId] },
     ...validFields.map((f) => ({
-      sql: 'INSERT INTO TicketFieldDefinitions (Id, TeamId, FieldType, Label, IsRequired, SortOrder, OptionsJson) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      args: [f.id, f.teamId, f.fieldType, f.label, f.isRequired, f.sortOrder, f.optionsJson],
+      sql: 'INSERT INTO TicketFieldDefinitions (Id, OrganizationId, FieldType, Label, IsRequired, SortOrder, OptionsJson) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [f.id, f.organizationId, f.fieldType, f.label, f.isRequired, f.sortOrder, f.optionsJson],
     })),
   ]
   await db.batch(statements, 'write')
 
-  return getTicketFieldDefinitions(teamId)
+  return getTicketFieldDefinitions(organizationId)
 }

@@ -269,7 +269,7 @@ const SCHEMA_STATEMENTS = [
   )`,
   `CREATE TABLE IF NOT EXISTS TicketFieldDefinitions (
     Id TEXT PRIMARY KEY,
-    TeamId TEXT NOT NULL,
+    OrganizationId TEXT NOT NULL,
     FieldType TEXT NOT NULL,
     Label TEXT NOT NULL,
     IsRequired INTEGER NOT NULL DEFAULT 0,
@@ -277,7 +277,15 @@ const SCHEMA_STATEMENTS = [
     OptionsJson TEXT NOT NULL DEFAULT '[]',
     CreatedAt TEXT DEFAULT (datetime('now')),
     UpdatedAt TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (TeamId) REFERENCES Teams(Id)
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketLayouts (
+    Id TEXT PRIMARY KEY,
+    OrganizationId TEXT NOT NULL UNIQUE,
+    LayoutJson TEXT NOT NULL DEFAULT '{"rows":[]}',
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    UpdatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
   )`,
   `CREATE TABLE IF NOT EXISTS TicketCustomFieldValues (
     Id TEXT PRIMARY KEY,
@@ -317,6 +325,8 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE Tickets ADD COLUMN RequestorName TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE Tickets ADD COLUMN RequestorEmail TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE Tickets ADD COLUMN Location TEXT NOT NULL DEFAULT 'Not specified'`,
+  `ALTER TABLE TicketFieldDefinitions ADD COLUMN OrganizationId TEXT`,
+  `ALTER TABLE TicketFieldDefinitions DROP COLUMN TeamId`,
 ]
 
 const runMigrations = async (db: Client) => {
@@ -347,6 +357,40 @@ const runMigrations = async (db: Client) => {
             (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = Users.TeamId), ?
           ) WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
     args: [fallback.id],
+  })
+
+  await db.execute({
+    sql: `UPDATE TicketFieldDefinitions SET OrganizationId = COALESCE(
+            (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = TicketFieldDefinitions.TeamId), ?
+          ) WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
+    args: [fallback.id],
+  })
+}
+
+const backfillDefaultLayouts = async (db: Client): Promise<void> => {
+  const fallback = serverConfig.fallbackOrganization
+  const customFields = await dbAll(
+    db,
+    'SELECT Id FROM TicketFieldDefinitions WHERE OrganizationId = ? ORDER BY SortOrder ASC',
+    [fallback.id],
+  )
+  const builtInRows: Array<{ id: string; slots: Array<{ fieldRef: string; width: 'full' | 'half' }> }> = [
+    { id: 'row-default-1', slots: [{ fieldRef: 'title', width: 'full' }] },
+    { id: 'row-default-2', slots: [{ fieldRef: 'requestorName', width: 'half' }, { fieldRef: 'requestorEmail', width: 'half' }] },
+    { id: 'row-default-3', slots: [{ fieldRef: 'categoryId', width: 'half' }, { fieldRef: 'priority', width: 'half' }] },
+    { id: 'row-default-4', slots: [{ fieldRef: 'assignedToId', width: 'half' }, { fieldRef: 'location', width: 'half' }] },
+    { id: 'row-default-5', slots: [{ fieldRef: 'description', width: 'full' }] },
+  ]
+  for (const field of customFields) {
+    builtInRows.push({ id: `row-default-${String(field.id)}`, slots: [{ fieldRef: String(field.id), width: 'full' }] })
+  }
+  const defaultLayout = { rows: builtInRows }
+  await db.execute({
+    sql: `INSERT INTO TicketLayouts (Id, OrganizationId, LayoutJson)
+          VALUES (?, ?, ?)
+          ON CONFLICT(OrganizationId) DO UPDATE SET
+            LayoutJson = excluded.LayoutJson, UpdatedAt = datetime('now')`,
+    args: [`layout-${fallback.id}`, fallback.id, JSON.stringify(defaultLayout)],
   })
 }
 
@@ -537,6 +581,8 @@ export const initDb = async (): Promise<void> => {
   if (await isDatabaseEmpty(db)) {
     await seedDatabase(db)
   }
+
+  await backfillDefaultLayouts(db)
 
   await seedLocations(db)
 }
