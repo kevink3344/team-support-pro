@@ -326,8 +326,43 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE Tickets ADD COLUMN RequestorEmail TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE Tickets ADD COLUMN Location TEXT NOT NULL DEFAULT 'Not specified'`,
   `ALTER TABLE TicketFieldDefinitions ADD COLUMN OrganizationId TEXT`,
-  `ALTER TABLE TicketFieldDefinitions DROP COLUMN TeamId`,
 ]
+
+const recreateTicketFieldDefinitionsWithoutTeamId = async (db: Client): Promise<void> => {
+  // Legacy remote databases were created with a TeamId column that the current
+  // schema no longer uses. SQLite/Turso cannot drop a column that is part of a
+  // foreign key, so we recreate the table and copy the data.
+  const info = await db.execute(
+    "SELECT 1 AS hasTeamId FROM pragma_table_info('TicketFieldDefinitions') WHERE name = 'TeamId'",
+  )
+  if (!info.rows[0]) return
+
+  await db.execute(`
+    CREATE TABLE TicketFieldDefinitions_new (
+      Id TEXT PRIMARY KEY,
+      OrganizationId TEXT NOT NULL,
+      FieldType TEXT NOT NULL,
+      Label TEXT NOT NULL,
+      IsRequired INTEGER NOT NULL DEFAULT 0,
+      SortOrder INTEGER NOT NULL DEFAULT 0,
+      OptionsJson TEXT NOT NULL DEFAULT '[]',
+      CreatedAt TEXT DEFAULT (datetime('now')),
+      UpdatedAt TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
+    )
+  `)
+  await db.execute(`
+    INSERT INTO TicketFieldDefinitions_new
+      (Id, OrganizationId, FieldType, Label, IsRequired, SortOrder, OptionsJson, CreatedAt, UpdatedAt)
+    SELECT
+      Id,
+      COALESCE(OrganizationId, (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = TicketFieldDefinitions.TeamId), ?),
+      FieldType, Label, IsRequired, SortOrder, OptionsJson, CreatedAt, UpdatedAt
+    FROM TicketFieldDefinitions
+  `, [serverConfig.fallbackOrganization.id])
+  await db.execute('DROP TABLE TicketFieldDefinitions')
+  await db.execute('ALTER TABLE TicketFieldDefinitions_new RENAME TO TicketFieldDefinitions')
+}
 
 const runMigrations = async (db: Client) => {
   // Run each migration individually — ignore errors (column already exists)
@@ -338,6 +373,8 @@ const runMigrations = async (db: Client) => {
       // Column already exists — safe to ignore
     }
   }
+
+  await recreateTicketFieldDefinitionsWithoutTeamId(db)
 
   const fallback = serverConfig.fallbackOrganization
   await db.execute({
@@ -355,13 +392,6 @@ const runMigrations = async (db: Client) => {
   await db.execute({
     sql: `UPDATE Users SET OrganizationId = COALESCE(
             (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = Users.TeamId), ?
-          ) WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
-    args: [fallback.id],
-  })
-
-  await db.execute({
-    sql: `UPDATE TicketFieldDefinitions SET OrganizationId = COALESCE(
-            (SELECT Teams.OrganizationId FROM Teams WHERE Teams.Id = TicketFieldDefinitions.TeamId), ?
           ) WHERE OrganizationId IS NULL OR trim(OrganizationId) = ''`,
     args: [fallback.id],
   })
