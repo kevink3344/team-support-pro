@@ -4241,7 +4241,7 @@ function App() {
       return (
         <section className="surface dashboard-widget-panel p-3">
           <div className="mb-2 flex items-center justify-between gap-2 text-[color:var(--text-muted)]">
-            <div className="text-xs font-semibold uppercase tracking-[0.12em]">Metric Card</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.12em]">{metricCard.label}</div>
               <div className="dashboard-widget-handle flex items-center text-xs uppercase tracking-[0.12em]">
               <Grip className="h-4 w-4" />
             </div>
