@@ -365,11 +365,13 @@ const mergePersistedActivity = (
 
 function App() {
   const [directoryLoaded, setDirectoryLoaded] = useState(false)
+  const [testLoginDataPending, setTestLoginDataPending] = useState(true)
   const [organizations, setOrganizations] = useState(initialOrganizations)
   const [teams, setTeams] = useState(initialTeams)
   const [categories, setCategories] = useState(initialCategories)
   const [users, setUsers] = useState(initialUsers)
   const [tickets, setTickets] = useState(initialTickets)
+  const [loginActiveTicketCounts, setLoginActiveTicketCounts] = useState<Record<string, number>>({})
   const [trendPoints, setTrendPoints] = useState<TrendPoint[]>(initialTrendData)
   const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
   const [ticketWatchers, setTicketWatchers] = useState<TicketWatcher[]>([])
@@ -657,7 +659,9 @@ function App() {
   const loginOrgTeams = availableTeams.filter((t) => t.organizationId === resolvedLoginOrgId)
   const loginOrgTeamIds = new Set(loginOrgTeams.map((t) => t.id))
   const loginOrgCategories = availableCategories.filter((c) => loginOrgTeamIds.has(c.teamId))
-  const loginOrgTicketCount = tickets.filter((tk) => loginOrgTeamIds.has(tk.teamId)).length
+  const loginOrgTicketCount = testLoginDataPending
+    ? null
+    : (loginActiveTicketCounts[resolvedLoginOrgId] ?? 0)
   const currentUser = authSession
     ? {
         ...(availableUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase()) ??
@@ -969,6 +973,8 @@ function App() {
           organizations?: typeof initialOrganizations
           teams?: typeof initialTeams
           users?: typeof initialUsers
+          categories?: typeof initialCategories
+          activeTicketCounts?: Record<string, number>
         }
 
         if (cancelled) {
@@ -986,8 +992,20 @@ function App() {
         if (Array.isArray(payload.users)) {
           setUsers(payload.users)
         }
+
+        if (Array.isArray(payload.categories)) {
+          setCategories(payload.categories)
+        }
+
+        if (payload.activeTicketCounts && typeof payload.activeTicketCounts === 'object') {
+          setLoginActiveTicketCounts(payload.activeTicketCounts)
+        }
       } catch {
         // The login screen can fall back to bundled mock users when the server list is unavailable.
+      } finally {
+        if (!cancelled) {
+          setTestLoginDataPending(false)
+        }
       }
     }
 
@@ -8054,15 +8072,21 @@ function App() {
                 </p>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgTeams.length}</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">
+                      {testLoginDataPending ? '…' : loginOrgTeams.length}
+                    </div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Teams</div>
                   </div>
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgCategories.length}</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">
+                      {testLoginDataPending ? '…' : loginOrgCategories.length}
+                    </div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Categories</div>
                   </div>
                   <div className="surface-dark p-4">
-                    <div className="mb-2 font-mono text-2xl font-semibold">{loginOrgTicketCount}</div>
+                    <div className="mb-2 font-mono text-2xl font-semibold">
+                      {testLoginDataPending ? '…' : loginOrgTicketCount}
+                    </div>
                     <div className="text-xs uppercase tracking-[0.12em] text-white/65">Active Tickets</div>
                   </div>
                 </div>
@@ -8094,7 +8118,7 @@ function App() {
                         <span className="field-label">Organization</span>
                         <select
                           className="input-control"
-                          value={resolvedLoginOrgId}
+                          value={testLoginDataPending ? '' : resolvedLoginOrgId}
                           onChange={(event) => {
                             const orgId = event.target.value
                             setLoginOrgId(orgId)
@@ -8103,13 +8127,19 @@ function App() {
                               setLocalLoginEmail(firstUser.email)
                             }
                           }}
-                          disabled={localLoginPending || availableOrganizations.length === 0}
+                          disabled={localLoginPending || testLoginDataPending || availableOrganizations.length === 0}
                         >
-                          {availableOrganizations.map((org) => (
-                            <option key={org.id} value={org.id}>
-                              {org.name}
-                            </option>
-                          ))}
+                          {testLoginDataPending ? (
+                            <option value="">Loading organizations…</option>
+                          ) : availableOrganizations.length === 0 ? (
+                            <option value="">No organizations available</option>
+                          ) : (
+                            availableOrganizations.map((org) => (
+                              <option key={org.id} value={org.id}>
+                                {org.name}
+                              </option>
+                            ))
+                          )}
                         </select>
                       </label>
                       <label className="field">

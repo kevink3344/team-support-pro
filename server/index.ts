@@ -12,7 +12,7 @@ import { serverConfig } from './config.js'
 import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonymous-pages.js'
 import { listOrganizations } from './directory.js'
 import { upsertLocalAccountPersisted } from './local-auth.js'
-import { getDb, initDb } from './db.js'
+import { getDb, initDb, dbAll } from './db.js'
 import { readRapidIdentityEnabled, readAboutPageHtml } from './app-settings.js'
 import { requireAuth } from './middleware.js'
 import { listUsers } from './directory.js'
@@ -115,12 +115,28 @@ app.get('/api/public/auth-settings', async (_req, res) => {
 
 app.get('/api/public/test-login-users', async (_req, res) => {
   try {
-    const [organizations, teams, users] = await Promise.all([
+    const directory = await import('./directory.js')
+    const [organizations, teams, users, categories] = await Promise.all([
       listOrganizations(),
-      (await import('./directory.js')).listTeams(),
+      directory.listTeams(),
       listUsers(),
+      directory.listCategories(),
     ])
-    res.json({ organizations, teams, users })
+
+    const db = getDb()
+    const activeTicketRows = await dbAll(
+      db,
+      `SELECT t.OrganizationId AS organizationId, COUNT(*) AS count
+       FROM Tickets tk
+       JOIN Teams t ON t.Id = tk.TeamId
+       WHERE tk.Status IN ('Open', 'In Progress', 'Pending')
+       GROUP BY t.OrganizationId`,
+    )
+    const activeTicketCounts = Object.fromEntries(
+      activeTicketRows.map((row) => [String(row.organizationId), Number(row.count)]),
+    )
+
+    res.json({ organizations, teams, users, categories, activeTicketCounts })
   } catch (error) {
     console.error('Loading test login users failed.', error)
     res.status(500).json({ error: 'test_login_users_failed' })
