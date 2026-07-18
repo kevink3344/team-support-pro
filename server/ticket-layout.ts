@@ -122,7 +122,7 @@ export const getTicketLayout = async (organizationId: string): Promise<TicketLay
       { id: 'row-default-5', slots: [{ fieldRef: 'description', width: 'full' }] },
     ] }
   }
-  const customFieldRows = await dbAll(db, 'SELECT Id FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId])
+  const customFieldRows = await dbAll(db, 'SELECT Id AS id FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId])
   const customFieldIds = new Set(customFieldRows.map((r) => String(r.id)))
   const parsed = (() => {
     try {
@@ -140,7 +140,7 @@ export const saveTicketLayout = async (
   layout: TicketLayout,
 ): Promise<{ layout: TicketLayout; errors: string[] }> => {
   const db = getDb()
-  const customFieldRows = await dbAll(db, 'SELECT Id FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId])
+  const customFieldRows = await dbAll(db, 'SELECT Id AS id FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId])
   const customFieldIds = new Set(customFieldRows.map((r) => String(r.id)))
   const { layout: normalized, errors } = normalizeLayout(layout, customFieldIds)
 

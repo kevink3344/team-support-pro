@@ -401,7 +401,7 @@ const backfillDefaultLayouts = async (db: Client): Promise<void> => {
   const fallback = serverConfig.fallbackOrganization
   const customFields = await dbAll(
     db,
-    'SELECT Id FROM TicketFieldDefinitions WHERE OrganizationId = ? ORDER BY SortOrder ASC',
+    'SELECT Id AS id FROM TicketFieldDefinitions WHERE OrganizationId = ? ORDER BY SortOrder ASC',
     [fallback.id],
   )
   const builtInRows: Array<{ id: string; slots: Array<{ fieldRef: string; width: 'full' | 'half' }> }> = [
