@@ -27,7 +27,7 @@ import { reportsRouter } from './routes/reports.js'
 import { authRouter } from './routes/auth.js'
 import { directoryRouter } from './routes/directory.js'
 import { dashboardRouter } from './routes/dashboard.js'
-import { ticketsRouter } from './routes/tickets.js'
+import { ticketsRouter, adminTicketsRouter } from './routes/tickets.js'
 
 const app = express()
 const currentFilePath = fileURLToPath(import.meta.url)
@@ -174,6 +174,7 @@ app.use('/api', directoryRouter)
 app.use('/api/dashboard', dashboardRouter)
 app.use('/api/admin/dashboard', dashboardRouter)
 app.use('/api/tickets', ticketsRouter)
+app.use('/api/admin/tickets', adminTicketsRouter)
 app.post('/api/public/tickets', (req, res, next) => {
   req.url = '/public'
   ticketsRouter(req, res, next)

@@ -1,6 +1,6 @@
 import multer from 'multer'
 import { Router } from 'express'
-import { requireAuth, isAdminUser } from '../middleware.js'
+import { requireAuth, requireAdmin, isAdminUser } from '../middleware.js'
 import {
   createTicket,
   createTicketComment,
@@ -16,6 +16,7 @@ import {
   listWatchedTicketIds,
   upsertCustomFieldValues,
 } from '../tickets.js'
+import { seedRandomTickets } from '../ticket-seeding.js'
 import {
   createTicketAttachment,
   deleteTicketAttachment,
@@ -519,4 +520,49 @@ ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res
 
   await removeTicketWatcher(ticketId, targetUserId)
   res.json({ watchers: await listTicketWatchers(ticketId) })
+})
+
+// ---------------------------------------------------------------------------
+// Admin ticket seeding
+// ---------------------------------------------------------------------------
+
+export const adminTicketsRouter = Router()
+
+adminTicketsRouter.post('/seed', requireAdmin, async (req, res) => {
+  const user = req.user!
+  const assignToStaff = req.body?.assignToStaff === true
+  const teamId =
+    typeof req.body?.teamId === 'string' && req.body.teamId.trim().length > 0
+      ? req.body.teamId.trim()
+      : undefined
+
+  try {
+    const tickets = await seedRandomTickets({
+      organizationId: user.organizationId,
+      actor: user.name,
+      assignToStaff,
+      teamId,
+    })
+    res.status(201).json({ tickets })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : ''
+    if (message === 'organization_not_found') {
+      res.status(400).json({ error: 'organization_not_found' })
+      return
+    }
+    if (message === 'organization_has_no_teams') {
+      res.status(400).json({ error: 'organization_has_no_teams' })
+      return
+    }
+    if (message === 'team_not_found') {
+      res.status(400).json({ error: 'team_not_found' })
+      return
+    }
+    if (message === 'organization_has_no_categories') {
+      res.status(400).json({ error: 'organization_has_no_categories' })
+      return
+    }
+    console.error('Seeding random tickets failed.', error)
+    res.status(500).json({ error: 'ticket_seed_failed' })
+  }
 })

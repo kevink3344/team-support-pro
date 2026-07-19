@@ -23,6 +23,17 @@ const builtInFieldLabels: Record<BuiltInFieldKey, string> = {
 
 const isBuiltInField = (ref: string): ref is BuiltInFieldKey => ref in builtInFieldLabels
 
+const defaultTicketLayout: TicketLayout = {
+  rows: [
+    { id: 'row-default-1', slots: [{ fieldRef: 'title', width: 'full' }] },
+    { id: 'row-default-2', slots: [{ fieldRef: 'requestorName', width: 'half' }, { fieldRef: 'requestorEmail', width: 'half' }] },
+    { id: 'row-default-3', slots: [{ fieldRef: 'categoryId', width: 'half' }, { fieldRef: 'priority', width: 'half' }] },
+    { id: 'row-default-4', slots: [{ fieldRef: 'assignedToId', width: 'half' }, { fieldRef: 'location', width: 'half' }] },
+    { id: 'row-default-5', slots: [{ fieldRef: 'description', width: 'full' }] },
+    { id: 'row-default-6', slots: [{ fieldRef: 'status', width: 'full' }] },
+  ],
+}
+
 interface LayoutTicketFormProps {
   layout: TicketLayout | null
   customFieldDefs: TicketFieldDefinition[]
@@ -246,7 +257,10 @@ export function LayoutTicketForm({
     return def ? renderCustomField(def) : null
   }
 
-  const rows = layout?.rows ?? []
+  const rows =
+    layout && layout.rows.length > 0
+      ? layout.rows
+      : defaultTicketLayout.rows
 
   return (
     <div className="space-y-4">

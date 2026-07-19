@@ -114,6 +114,7 @@ type SettingsAccordionSection =
   | 'manageUsers'
   | 'manageTeams'
   | 'trendSeeding'
+  | 'ticketSeeding'
   | 'categories'
   | 'locations'
   | 'email'
@@ -153,6 +154,7 @@ const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'manageUsers',
   'manageTeams',
   'trendSeeding',
+  'ticketSeeding',
   'categories',
   'locations',
   'email',
@@ -535,6 +537,7 @@ function App() {
     manageUsers: false,
     manageTeams: false,
     trendSeeding: false,
+    ticketSeeding: false,
     categories: false,
     locations: false,
     email: false,
@@ -591,6 +594,11 @@ function App() {
   const [trendSeedPendingAction, setTrendSeedPendingAction] = useState<'seed' | 'clear' | null>(null)
   const [trendSeedError, setTrendSeedError] = useState('')
   const [trendSeedNotice, setTrendSeedNotice] = useState('')
+  const [ticketSeedAssignEnabled, setTicketSeedAssignEnabled] = useState(true)
+  const [ticketSeedTeamId, setTicketSeedTeamId] = useState('')
+  const [ticketSeedPending, setTicketSeedPending] = useState(false)
+  const [ticketSeedError, setTicketSeedError] = useState('')
+  const [ticketSeedNotice, setTicketSeedNotice] = useState('')
   const [changePasswordModal, setChangePasswordModal] = useState<{ userId: string; userName: string } | null>(null)
   const [changePasswordValue, setChangePasswordValue] = useState('')
   const [changePasswordPending, setChangePasswordPending] = useState(false)
@@ -712,6 +720,14 @@ function App() {
         (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
       ).length,
     [tickets, currentUser.teamId, availableUsers],
+  )
+  const myTicketsCount = useMemo(
+    () =>
+      tickets.filter(
+        (ticket) =>
+          ticket.teamId === currentUser.teamId && ticket.assignedToId === currentUser.id,
+      ).length,
+    [tickets, currentUser.teamId, currentUser.id],
   )
   const activePalette = isThemeConfig(themeConfig)
     ? themeConfig[themeMode]
@@ -885,11 +901,15 @@ function App() {
       setOrganizationTicketLayout(null)
       return
     }
-    if (activeView === 'new-ticket' || activeView === 'ticket-designer') {
+    const shouldLoadLayout =
+      activeView === 'new-ticket' ||
+      activeView === 'ticket-designer' ||
+      detailTicketId !== null
+    if (shouldLoadLayout) {
       void refreshTicketLayout()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, currentUser.organizationId])
+  }, [activeView, currentUser.organizationId, detailTicketId])
 
   useEffect(() => {
     const ticket = tickets.find((t) => t.id === detailTicketId) ?? null
@@ -934,6 +954,48 @@ function App() {
     }
 
     return Array.isArray(payload.trends) ? payload.trends : null
+  }
+
+  const fetchTickets = async () => {
+    const response = await fetch(apiUrl('/api/tickets'), {
+      credentials: 'include',
+    })
+
+    if (response.status === 401) {
+      setAuthSession(null)
+      return null
+    }
+
+    if (!response.ok) {
+      return null
+    }
+
+    const payload = (await response.json()) as {
+      tickets?: TicketRecord[]
+    }
+
+    return Array.isArray(payload.tickets) ? payload.tickets : null
+  }
+
+  const fetchDashboardSummary = async () => {
+    const response = await fetch(apiUrl('/api/dashboard/summary'), {
+      credentials: 'include',
+    })
+
+    if (response.status === 401) {
+      setAuthSession(null)
+      return null
+    }
+
+    if (!response.ok) {
+      return null
+    }
+
+    const payload = (await response.json()) as {
+      summary?: DashboardSummary
+    }
+
+    return payload.summary ?? null
   }
 
   useEffect(() => {
@@ -1360,27 +1422,9 @@ function App() {
 
     const loadTickets = async () => {
       try {
-        const response = await fetch(apiUrl('/api/tickets'), {
-          credentials: 'include',
-        })
-
-        if (response.status === 401) {
-          if (!cancelled) {
-            setAuthSession(null)
-          }
-          return
-        }
-
-        if (!response.ok) {
-          return
-        }
-
-        const payload = (await response.json()) as {
-          tickets?: TicketRecord[]
-        }
-
-        if (!cancelled && Array.isArray(payload.tickets)) {
-          setTickets(payload.tickets)
+        const nextTickets = await fetchTickets()
+        if (!cancelled && Array.isArray(nextTickets)) {
+          setTickets(nextTickets)
         }
       } catch {
         // The app can continue from mock tickets if the API is unavailable.
@@ -1401,27 +1445,9 @@ function App() {
 
     const loadDashboardSummary = async () => {
       try {
-        const response = await fetch(apiUrl('/api/dashboard/summary'), {
-          credentials: 'include',
-        })
-
-        if (response.status === 401) {
-          if (!cancelled) {
-            setAuthSession(null)
-          }
-          return
-        }
-
-        if (!response.ok) {
-          return
-        }
-
-        const payload = (await response.json()) as {
-          summary?: DashboardSummary
-        }
-
-        if (!cancelled && payload.summary) {
-          setDashboardSummary(payload.summary)
+        const nextSummary = await fetchDashboardSummary()
+        if (!cancelled && nextSummary) {
+          setDashboardSummary(nextSummary)
         }
       } catch {
         // The app can continue with client-side fallback summary values.
@@ -2096,6 +2122,76 @@ function App() {
       )
     } finally {
       setTrendSeedPendingAction(null)
+    }
+  }
+
+  const submitTicketSeedAction = async () => {
+    setTicketSeedPending(true)
+    setTicketSeedError('')
+    setTicketSeedNotice('')
+
+    try {
+      const response = await fetch(apiUrl('/api/admin/tickets/seed'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          assignToStaff: ticketSeedAssignEnabled,
+          teamId: ticketSeedTeamId || undefined,
+        }),
+      })
+
+      if (response.status === 401) {
+        setAuthSession(null)
+        return
+      }
+
+      if (response.status === 403) {
+        setTicketSeedError('Administrator access is required to seed tickets.')
+        return
+      }
+
+      if (response.status === 400) {
+        const payload = (await response.json()) as { error?: string }
+        if (payload.error === 'organization_has_no_teams') {
+          setTicketSeedError('This organization has no teams. Add a team before seeding tickets.')
+        } else if (payload.error === 'team_not_found') {
+          setTicketSeedError('The selected team does not exist in this organization.')
+        } else if (payload.error === 'organization_has_no_categories') {
+          setTicketSeedError('The selected team has no categories. Add a category before seeding tickets.')
+        } else {
+          setTicketSeedError('Ticket seeding could not be started. Check the organization configuration.')
+        }
+        return
+      }
+
+      if (!response.ok) {
+        setTicketSeedError('Tickets could not be seeded. Please try again.')
+        return
+      }
+
+      const payload = (await response.json()) as { tickets?: unknown[] }
+      const createdCount = Array.isArray(payload.tickets) ? payload.tickets.length : 0
+      setTicketSeedNotice(`Created ${createdCount} sample tickets.`)
+
+      const nextTickets = await fetchTickets()
+      if (Array.isArray(nextTickets)) {
+        setTickets(nextTickets)
+      }
+      const nextSummary = await fetchDashboardSummary()
+      if (nextSummary) {
+        setDashboardSummary(nextSummary)
+      }
+      const nextTrends = await fetchDashboardTrends()
+      if (Array.isArray(nextTrends) && nextTrends.length > 0) {
+        setTrendPoints(nextTrends)
+      }
+    } catch {
+      setTicketSeedError('Tickets could not be seeded. Confirm the backend server is running.')
+    } finally {
+      setTicketSeedPending(false)
     }
   }
 
@@ -6594,6 +6690,70 @@ function App() {
               )}
             </div>
           )
+        case 'ticketSeeding':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              {currentUser.role !== 'Admin' && currentUser.role !== 'Super Admin' ? (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Administrator access is required to seed sample tickets.
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-[color:var(--text-muted)]">
+                    Generate 10 random tickets in the current organization for testing or demos. Tickets are created as Open and can be randomly assigned to staff.
+                  </p>
+                  {ticketSeedError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {ticketSeedError}
+                    </div>
+                  )}
+                  {ticketSeedNotice && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      {ticketSeedNotice}
+                    </div>
+                  )}
+                  <div className="surface-muted grid gap-3 p-4 md:grid-cols-[1fr_auto_auto] md:items-end">
+                    <label className="space-y-2">
+                      <div className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                        Target team
+                      </div>
+                      <select
+                        className="input-control"
+                        value={ticketSeedTeamId}
+                        onChange={(event) => setTicketSeedTeamId(event.target.value)}
+                      >
+                        <option value="">All teams in organization</option>
+                        {teams
+                          .filter((team) => team.organizationId === currentUser.organizationId)
+                          .map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center gap-3 md:pb-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={ticketSeedAssignEnabled}
+                        onChange={(event) => setTicketSeedAssignEnabled(event.target.checked)}
+                      />
+                      <span className="text-sm text-[color:var(--text)]">Randomly assign ~25% to staff</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={ticketSeedPending}
+                      onClick={() => void submitTicketSeedAction()}
+                    >
+                      {ticketSeedPending ? 'Seeding...' : 'Seed 10 Tickets'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )
         case 'categories':
           return (
             <div className="settings-accordion-content space-y-3">
@@ -7616,6 +7776,10 @@ function App() {
         title: 'Trend Seeding',
         description: 'Generate or clear chart-only trend history for the dashboard.',
       },
+      ticketSeeding: {
+        title: 'Ticket Seeding',
+        description: 'Create random sample tickets for testing and demos.',
+      },
       categories: {
         title: 'Categories',
         description: 'Add new categories and maintain team mappings.',
@@ -7971,6 +8135,11 @@ function App() {
             {!collapsed && id === 'unassigned' && unassignedCount > 0 && (
               <span className="ml-auto rounded-full bg-red-500 px-2 py-0.5 text-xs font-semibold text-white">
                 {unassignedCount}
+              </span>
+            )}
+            {!collapsed && id === 'my-tickets' && myTicketsCount > 0 && (
+              <span className="ml-auto rounded-full bg-[color:var(--accent)] px-2 py-0.5 text-xs font-semibold text-white">
+                {myTicketsCount}
               </span>
             )}
           </button>
