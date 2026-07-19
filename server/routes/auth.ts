@@ -5,6 +5,7 @@ import {
   createSessionToken,
   OAUTH_STATE_COOKIE_NAME,
   SESSION_COOKIE_NAME,
+  type SessionUser,
 } from '../auth.js'
 import { serverConfig } from '../config.js'
 import { requireAuth, requireAdmin } from '../middleware.js'
@@ -17,6 +18,8 @@ import {
 import {
   listUsers,
   getUserById,
+  getTeamById,
+  getOrganizationById,
 } from '../directory.js'
 
 export const authRouter = Router()
@@ -127,8 +130,51 @@ authRouter.get('/oidc/callback', async (req, res) => {
 // Session
 // ---------------------------------------------------------------------------
 
-authRouter.get('/me', requireAuth, (req, res) => {
-  res.json({ authenticated: true, user: req.user! })
+authRouter.get('/me', requireAuth, async (req, res) => {
+  const sessionUser = req.user!
+  const current = await getUserById(sessionUser.id)
+
+  if (current) {
+    const teamChanged = current.teamId !== sessionUser.teamId
+    const orgChanged = current.organizationId !== sessionUser.organizationId
+
+    if (
+      current.role !== sessionUser.role ||
+      current.name !== sessionUser.name ||
+      current.email !== sessionUser.email ||
+      teamChanged ||
+      orgChanged
+    ) {
+      const [team, organization] = await Promise.all([
+        teamChanged ? getTeamById(current.teamId) : null,
+        orgChanged ? getOrganizationById(current.organizationId) : null,
+      ])
+
+      const refreshedSessionUser: SessionUser = {
+        ...sessionUser,
+        name: current.name,
+        email: current.email,
+        role: current.role,
+        organizationId: current.organizationId,
+        organizationName: organization?.name ?? sessionUser.organizationName,
+        organizationCode: organization?.code ?? sessionUser.organizationCode,
+        organizationAccent: organization?.accent ?? sessionUser.organizationAccent,
+        teamId: current.teamId,
+        teamName: team?.name ?? sessionUser.teamName,
+        teamCode: team?.code ?? sessionUser.teamCode,
+        teamAccent: team?.accent ?? sessionUser.teamAccent,
+      }
+      res.cookie(
+        SESSION_COOKIE_NAME,
+        createSessionToken(refreshedSessionUser),
+        buildCookieOptions(7 * 24 * 60 * 60 * 1000),
+      )
+      res.json({ authenticated: true, user: refreshedSessionUser })
+      return
+    }
+  }
+
+  res.json({ authenticated: true, user: sessionUser })
 })
 
 authRouter.post('/logout', (_req, res) => {
