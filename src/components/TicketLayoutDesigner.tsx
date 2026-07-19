@@ -18,7 +18,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Plus, Trash2, Type, AlignLeft, ListChecks, Calendar, Hash, CheckSquare, X } from 'lucide-react'
+import { GripVertical, Plus, Trash2, Type, AlignLeft, ListChecks, Calendar, Hash, CheckSquare, X, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react'
 import type {
   BuiltInFieldKey,
   TicketFieldDefinition,
@@ -53,14 +53,17 @@ interface SortableSlotProps {
   slot: TicketLayoutSlot
   rowId: string
   index: number
+  slotCount: number
   onToggleWidth: () => void
   onRemove: () => void
+  onMoveLeft: () => void
+  onMoveRight: () => void
   isLocked: boolean
   label: string
   icon: typeof Type
 }
 
-function SortableSlot({ slot, onToggleWidth, onRemove, isLocked, label, icon }: SortableSlotProps) {
+function SortableSlot({ slot, onToggleWidth, onRemove, onMoveLeft, onMoveRight, slotCount, isLocked, label, icon }: SortableSlotProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `slot-${slot.fieldRef}`,
     data: { type: 'slot', fieldRef: slot.fieldRef, rowId: slot.fieldRef },
@@ -87,6 +90,26 @@ function SortableSlot({ slot, onToggleWidth, onRemove, isLocked, label, icon }: 
       )}
       <Icon className="h-4 w-4 shrink-0 text-[color:var(--text-muted)]" />
       <span className="flex-1 truncate text-sm">{label}</span>
+      {!isLocked && slotCount > 1 && (
+        <div className="flex items-center">
+          <button
+            type="button"
+            className="rounded p-1 text-[color:var(--text-muted)] hover:bg-black/[0.06] disabled:opacity-30"
+            onClick={onMoveLeft}
+            title="Move left"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            className="rounded p-1 text-[color:var(--text-muted)] hover:bg-black/[0.06] disabled:opacity-30"
+            onClick={onMoveRight}
+            title="Move right"
+          >
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       {!isLocked && (
         <>
           <button
@@ -114,11 +137,16 @@ function SortableSlot({ slot, onToggleWidth, onRemove, isLocked, label, icon }: 
 interface SortableRowProps {
   row: TicketLayoutRow
   index: number
+  rowCount: number
   customFieldDefs: TicketFieldDefinition[]
   isDropTarget: boolean
   paletteFields: { key: string; label: string; icon: typeof Type }[]
   onToggleSlotWidth: (slotIndex: number) => void
   onRemoveSlot: (slotIndex: number) => void
+  onMoveRowUp: () => void
+  onMoveRowDown: () => void
+  onMoveSlotLeft: (slotIndex: number) => void
+  onMoveSlotRight: (slotIndex: number) => void
   onRemoveRow: () => void
   onAddField: (fieldRef: string) => void
 }
@@ -126,11 +154,16 @@ interface SortableRowProps {
 function SortableRow({
   row,
   index,
+  rowCount,
   customFieldDefs,
   isDropTarget,
   paletteFields,
   onToggleSlotWidth,
   onRemoveSlot,
+  onMoveRowUp,
+  onMoveRowDown,
+  onMoveSlotLeft,
+  onMoveSlotRight,
   onRemoveRow,
   onAddField,
 }: SortableRowProps) {
@@ -170,6 +203,26 @@ function SortableRow({
             <GripVertical className="h-4 w-4" />
           </button>
           <span className="text-xs font-semibold uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Row {index + 1}</span>
+          {rowCount > 1 && (
+            <div className="ml-1 flex items-center">
+              <button
+                type="button"
+                className="rounded p-1 text-[color:var(--text-muted)] hover:bg-black/[0.06] disabled:opacity-30"
+                onClick={onMoveRowUp}
+                title="Move row up"
+              >
+                <ArrowUp className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                className="rounded p-1 text-[color:var(--text-muted)] hover:bg-black/[0.06] disabled:opacity-30"
+                onClick={onMoveRowDown}
+                title="Move row down"
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
         </div>
         <button type="button" className="text-rose-500 hover:text-rose-600" onClick={onRemoveRow} title="Delete row">
           <Trash2 className="h-4 w-4" />
@@ -188,11 +241,14 @@ function SortableRow({
                   slot={slot}
                   rowId={row.id}
                   index={slotIdx}
+                  slotCount={row.slots.length}
                   label={label}
                   icon={icon}
                   isLocked={lockedBuiltIns.includes(slot.fieldRef as BuiltInFieldKey)}
                   onToggleWidth={() => onToggleSlotWidth(slotIdx)}
                   onRemove={() => onRemoveSlot(slotIdx)}
+                  onMoveLeft={() => onMoveSlotLeft(slotIdx)}
+                  onMoveRight={() => onMoveSlotRight(slotIdx)}
                 />
               </div>
             )
@@ -381,6 +437,23 @@ export function TicketLayoutDesigner({ layout, customFieldDefs, onChange }: Tick
     onChange({ rows: ensureLockedFields(next) })
   }
 
+  const handleMoveRow = (rowIndex: number, direction: -1 | 1) => {
+    const newIndex = rowIndex + direction
+    if (newIndex < 0 || newIndex >= rows.length) return
+    onChange({ rows: arrayMove(rows, rowIndex, newIndex) })
+  }
+
+  const handleMoveSlot = (rowIndex: number, slotIndex: number, direction: -1 | 1) => {
+    const row = rows[rowIndex]
+    if (!row) return
+    const newIndex = slotIndex + direction
+    if (newIndex < 0 || newIndex >= row.slots.length) return
+    const next = rows.map((r, idx) =>
+      idx === rowIndex ? { ...r, slots: arrayMove(r.slots, slotIndex, newIndex) } : r,
+    )
+    onChange({ rows: next })
+  }
+
   const handleDragStart = (event: DragStartEvent) => {
     setActiveId(String(event.active.id))
     setActiveDropRowId(null)
@@ -504,11 +577,16 @@ export function TicketLayoutDesigner({ layout, customFieldDefs, onChange }: Tick
                   key={row.id}
                   row={row}
                   index={idx}
+                  rowCount={rows.length}
                   customFieldDefs={customFieldDefs}
                   isDropTarget={activeDropRowId === row.id}
                   paletteFields={paletteFields}
                   onToggleSlotWidth={(slotIdx) => handleToggleSlotWidth(idx, slotIdx)}
                   onRemoveSlot={(slotIdx) => handleRemoveSlot(idx, slotIdx)}
+                  onMoveRowUp={() => handleMoveRow(idx, -1)}
+                  onMoveRowDown={() => handleMoveRow(idx, 1)}
+                  onMoveSlotLeft={(slotIdx) => handleMoveSlot(idx, slotIdx, -1)}
+                  onMoveSlotRight={(slotIdx) => handleMoveSlot(idx, slotIdx, 1)}
                   onRemoveRow={() => handleRemoveRow(idx)}
                   onAddField={(fieldRef) => handleAddFieldToRow(idx, fieldRef)}
                 />
