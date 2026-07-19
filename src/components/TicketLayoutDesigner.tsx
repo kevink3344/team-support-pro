@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   type DragEndEvent,
@@ -351,9 +351,38 @@ export function TicketLayoutDesigner({ layout, customFieldDefs, onChange }: Tick
   const rowIdRef = useRef(0)
   const nextRowId = () => {
     rowIdRef.current += 1
-    return `row-${rowIdRef.current}`
+    return `row-${Date.now()}-${rowIdRef.current}`
   }
   const rows = useMemo(() => layout?.rows ?? [], [layout])
+
+  // Initialize the row ID counter from existing numeric IDs and repair any
+  // duplicate IDs that may have been introduced by earlier versions.
+  const processedRowsRef = useRef<TicketLayoutRow[] | null>(null)
+  useEffect(() => {
+    if (processedRowsRef.current === rows) return
+    processedRowsRef.current = rows
+
+    const maxNumericSuffix = rows.reduce((max, row) => {
+      const match = /^row-(\d+)$/.exec(row.id)
+      return match ? Math.max(max, Number(match[1])) : max
+    }, 0)
+    rowIdRef.current = maxNumericSuffix
+
+    const seen = new Set<string>()
+    let hasDuplicates = false
+    const dedupedRows = rows.map((row) => {
+      if (seen.has(row.id)) {
+        hasDuplicates = true
+        return { ...row, id: nextRowId() }
+      }
+      seen.add(row.id)
+      return row
+    })
+
+    if (hasDuplicates) {
+      onChange({ rows: dedupedRows })
+    }
+  }, [rows, onChange])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
