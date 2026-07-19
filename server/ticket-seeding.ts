@@ -210,6 +210,7 @@ export const seedRandomTickets = async (input: SeedRandomTicketsInput): Promise<
       {
         title: generateTitle(),
         description: generateDescription(),
+        status: 'Open',
         priority,
         teamId: team.id,
         categoryId: category.id,

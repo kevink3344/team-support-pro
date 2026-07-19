@@ -169,7 +169,7 @@ ticketsRouter.post('/public', async (req, res) => {
     }
 
     const ticket = await createTicket(
-      { title, description, priority: 'Medium', teamId, categoryId, assignedToId: null, requestorName, requestorEmail, location },
+      { title, description, status: 'Open', priority: 'Medium', teamId, categoryId, assignedToId: null, requestorName, requestorEmail, location },
       'Anonymous Request',
     )
 
