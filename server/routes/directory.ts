@@ -44,7 +44,8 @@ export const directoryRouter = Router()
 
 const directoryLoadHandler: RequestHandler = async (req, res) => {
   try {
-    const orgFilter = req.user!.organizationId
+    const user = req.user!
+    const orgFilter = user.role === 'Super Admin' ? undefined : user.organizationId
     const directory = await loadDirectoryData(orgFilter)
     res.json(directory)
   } catch (error) {
@@ -72,7 +73,9 @@ directoryRouter.get('/public', async (_req, res) => {
 
 directoryRouter.get('/organizations', requireAuth, async (req, res) => {
   try {
-    res.json({ organizations: await listOrganizations(req.user!.organizationId) })
+    const user = req.user!
+    const organizationId = user.role === 'Super Admin' ? undefined : user.organizationId
+    res.json({ organizations: await listOrganizations(organizationId) })
   } catch (error) {
     console.error('Loading organizations failed.', error)
     res.status(500).json({ error: 'organization_load_failed' })
