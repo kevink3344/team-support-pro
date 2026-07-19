@@ -93,6 +93,7 @@ ticketsRouter.post('/', requireAuth, async (req, res) => {
       {
         title: typeof req.body?.title === 'string' ? req.body.title : '',
         description: typeof req.body?.description === 'string' ? req.body.description : '',
+        status: typeof req.body?.status === 'string' ? req.body.status : 'Open',
         priority: typeof req.body?.priority === 'string' ? req.body.priority : '',
         teamId,
         categoryId: typeof req.body?.categoryId === 'string' ? req.body.categoryId : '',

@@ -8845,7 +8845,6 @@ function App() {
                   <LayoutTicketForm
                     layout={organizationTicketLayout}
                     customFieldDefs={createTicketFieldDefs}
-                    mode="create"
                     categories={categories}
                     users={users}
                     locations={locations}
@@ -9031,7 +9030,6 @@ function App() {
                       <LayoutTicketForm
                         layout={organizationTicketLayout}
                         customFieldDefs={detailCustomFieldDefs}
-                        mode="edit"
                         categories={categories}
                         users={users}
                         locations={locations}

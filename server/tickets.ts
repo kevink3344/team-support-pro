@@ -44,6 +44,7 @@ export interface CreateTicketInput {
   id?: string
   title: string
   description: string
+  status: string
   priority: string
   teamId: string
   categoryId: string
@@ -127,7 +128,7 @@ const isNonEmpty = (value: string) => value.trim().length > 0
 
 const validateCreateTicketInput = (input: CreateTicketInput) => {
   if (!isNonEmpty(input.title) || !isNonEmpty(input.description) || !isNonEmpty(input.teamId) || !isNonEmpty(input.categoryId) || !isNonEmpty(input.requestorName) || !isNonEmpty(input.requestorEmail)) return false
-  return ticketPriorityValues.has(input.priority)
+  return ticketStatusValues.has(input.status) && ticketPriorityValues.has(input.priority)
 }
 
 const validateUpdateTicketInput = (input: UpdateTicketInput) => {
@@ -291,8 +292,8 @@ export const createTicket = async (input: CreateTicketInput, actor: string): Pro
 
   const statements = [
     {
-      sql: `INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt) VALUES (?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?, 'New in queue', ?, ?)`,
-      args: [ticketId, input.title.trim(), input.description.trim(), input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', createdAt, createdAt],
+      sql: `INSERT INTO Tickets (Id, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel, CreatedAt, UpdatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'New in queue', ?, ?)`,
+      args: [ticketId, input.title.trim(), input.description.trim(), input.status, input.priority, input.teamId, input.categoryId, input.assignedToId, input.requestorName.trim(), input.requestorEmail.trim().toLowerCase(), input.location.trim() || 'Not specified', createdAt, createdAt],
     },
     {
       sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',

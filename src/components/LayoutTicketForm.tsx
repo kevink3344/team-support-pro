@@ -37,7 +37,6 @@ const defaultTicketLayout: TicketLayout = {
 interface LayoutTicketFormProps {
   layout: TicketLayout | null
   customFieldDefs: TicketFieldDefinition[]
-  mode: 'create' | 'edit'
   categories: Category[]
   users: User[]
   locations: Location[]
@@ -61,7 +60,6 @@ interface LayoutTicketFormProps {
 export function LayoutTicketForm({
   layout,
   customFieldDefs,
-  mode,
   categories,
   users,
   locations,
@@ -192,7 +190,7 @@ export function LayoutTicketForm({
           </label>
         )
       case 'status':
-        return mode === 'edit' ? (
+        return (
           <label className="field">
             <span className="field-label">Status</span>
             <select
@@ -205,7 +203,7 @@ export function LayoutTicketForm({
               ))}
             </select>
           </label>
-        ) : null
+        )
       default:
         return null
     }
