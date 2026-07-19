@@ -20,22 +20,38 @@ export interface DashboardSummaryRecord {
 
 const statusOrder = ['Open', 'In Progress', 'Pending', 'Resolved', 'Closed']
 
-export const getDashboardSummary = async (teamId: string): Promise<DashboardSummaryRecord> => {
+export const getDashboardSummary = async (
+  teamId: string,
+  organizationId: string,
+): Promise<DashboardSummaryRecord> => {
   const db = getDb()
 
   const statsRow = await dbGet(db, `
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN Status = 'Open' THEN 1 ELSE 0 END) AS open,
-      SUM(CASE WHEN Status = 'In Progress' THEN 1 ELSE 0 END) AS inProgress,
-      SUM(CASE WHEN Status = 'Pending' THEN 1 ELSE 0 END) AS pending,
-      SUM(CASE WHEN Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
-    FROM Tickets
-    WHERE TeamId = ?
-  `, [teamId])
+      SUM(CASE WHEN t.Status = 'Open' THEN 1 ELSE 0 END) AS open,
+      SUM(CASE WHEN t.Status = 'In Progress' THEN 1 ELSE 0 END) AS inProgress,
+      SUM(CASE WHEN t.Status = 'Pending' THEN 1 ELSE 0 END) AS pending,
+      SUM(CASE WHEN t.Priority = 'Critical' THEN 1 ELSE 0 END) AS critical
+    FROM Tickets t
+    INNER JOIN Teams tm ON tm.Id = t.TeamId
+    WHERE t.TeamId = ? AND tm.OrganizationId = ?
+  `, [teamId, organizationId])
 
-  const statusRows = await dbAll(db, `SELECT Status AS status, COUNT(*) AS count FROM Tickets GROUP BY Status`) as Array<{ status: unknown; count: unknown }>
-  const workloadRows = await dbAll(db, `SELECT TeamId AS teamId, COUNT(*) AS count FROM Tickets GROUP BY TeamId`) as Array<{ teamId: unknown; count: unknown }>
+  const statusRows = await dbAll(db, `
+    SELECT t.Status AS status, COUNT(*) AS count
+    FROM Tickets t
+    INNER JOIN Teams tm ON tm.Id = t.TeamId
+    WHERE tm.OrganizationId = ?
+    GROUP BY t.Status
+  `, [organizationId]) as Array<{ status: unknown; count: unknown }>
+  const workloadRows = await dbAll(db, `
+    SELECT t.TeamId AS teamId, COUNT(*) AS count
+    FROM Tickets t
+    INNER JOIN Teams tm ON tm.Id = t.TeamId
+    WHERE tm.OrganizationId = ?
+    GROUP BY t.TeamId
+  `, [organizationId]) as Array<{ teamId: unknown; count: unknown }>
 
   const statusMap = new Map(statusRows.map((row) => [String(row.status), Number(row.count)]))
 
