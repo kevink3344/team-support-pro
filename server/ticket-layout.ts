@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 
-import { getDb, dbAll, dbGet } from './db.js'
+import { getDb, dbAll, dbGet, dbRun } from './db.js'
 
 export type CustomFieldType = 'text' | 'select' | 'checkbox' | 'number' | 'date'
 
@@ -29,6 +29,14 @@ export interface TicketLayoutRow {
 
 export interface TicketLayout {
   rows: TicketLayoutRow[]
+}
+
+export interface TicketLayoutVersion {
+  id: string
+  organizationId: string
+  versionNumber: number
+  layout: TicketLayout
+  createdAt: string
 }
 
 const LOCKED_BUILT_INS: BuiltInFieldKey[] = ['title', 'requestorName', 'requestorEmail']
@@ -135,6 +143,27 @@ export const getTicketLayout = async (organizationId: string): Promise<TicketLay
   return layout
 }
 
+const createLayoutVersion = async (db: ReturnType<typeof getDb>, organizationId: string): Promise<number> => {
+  const row = await dbGet(db, 'SELECT LayoutJson FROM TicketLayouts WHERE OrganizationId = ?', [organizationId])
+  if (!row) return 0
+
+  const nextRow = await dbGet(
+    db,
+    'SELECT COALESCE(MAX(VersionNumber), 0) + 1 AS nextVersion FROM TicketLayoutVersions WHERE OrganizationId = ?',
+    [organizationId],
+  )
+  const versionNumber = Number(nextRow?.nextVersion ?? 1)
+  const versionId = `tlv-${crypto.randomUUID()}`
+
+  await db.execute({
+    sql: `INSERT INTO TicketLayoutVersions (Id, OrganizationId, VersionNumber, LayoutJson)
+          VALUES (?, ?, ?, ?)`,
+    args: [versionId, organizationId, versionNumber, String(row.LayoutJson)],
+  })
+
+  return versionNumber
+}
+
 export const saveTicketLayout = async (
   organizationId: string,
   layout: TicketLayout,
@@ -143,6 +172,8 @@ export const saveTicketLayout = async (
   const customFieldRows = await dbAll(db, 'SELECT Id AS id FROM TicketFieldDefinitions WHERE OrganizationId = ?', [organizationId])
   const customFieldIds = new Set(customFieldRows.map((r) => String(r.id)))
   const { layout: normalized, errors } = normalizeLayout(layout, customFieldIds)
+
+  await createLayoutVersion(db, organizationId)
 
   await db.execute({
     sql: `INSERT INTO TicketLayouts (Id, OrganizationId, LayoutJson)
@@ -153,4 +184,68 @@ export const saveTicketLayout = async (
   })
 
   return { layout: normalized, errors }
+}
+
+const mapLayoutVersion = (record: Record<string, unknown>): TicketLayoutVersion => {
+  const parsed = (() => {
+    try {
+      return JSON.parse(String(record.layoutJson))
+    } catch {
+      return { rows: [] }
+    }
+  })()
+  return {
+    id: String(record.id),
+    organizationId: String(record.organizationId),
+    versionNumber: Number(record.versionNumber),
+    layout: parsed as TicketLayout,
+    createdAt: new Date(String(record.createdAt)).toISOString(),
+  }
+}
+
+export const listTicketLayoutVersions = async (organizationId: string): Promise<TicketLayoutVersion[]> => {
+  const db = getDb()
+  const rows = await dbAll(
+    db,
+    'SELECT Id AS id, OrganizationId AS organizationId, VersionNumber AS versionNumber, LayoutJson AS layoutJson, CreatedAt AS createdAt FROM TicketLayoutVersions WHERE OrganizationId = ? ORDER BY VersionNumber DESC',
+    [organizationId],
+  ) as Array<Record<string, unknown>>
+  return rows.map(mapLayoutVersion)
+}
+
+export const revertTicketLayoutToVersion = async (
+  organizationId: string,
+  versionId: string,
+): Promise<TicketLayoutVersion | null> => {
+  const db = getDb()
+  const versionRow = await dbGet(
+    db,
+    'SELECT Id AS id, OrganizationId AS organizationId, VersionNumber AS versionNumber, LayoutJson AS layoutJson, CreatedAt AS createdAt FROM TicketLayoutVersions WHERE Id = ? AND OrganizationId = ?',
+    [versionId, organizationId],
+  ) as Record<string, unknown> | undefined
+  if (!versionRow) return null
+
+  const targetVersion = mapLayoutVersion(versionRow)
+
+  await createLayoutVersion(db, organizationId)
+
+  await db.execute({
+    sql: `INSERT INTO TicketLayouts (Id, OrganizationId, LayoutJson)
+          VALUES (?, ?, ?)
+          ON CONFLICT(OrganizationId) DO UPDATE SET
+            LayoutJson = excluded.LayoutJson, UpdatedAt = datetime('now')`,
+    args: [`layout-${organizationId}`, organizationId, JSON.stringify(targetVersion.layout)],
+  })
+
+  return targetVersion
+}
+
+export const deleteTicketLayoutVersion = async (organizationId: string, versionId: string): Promise<boolean> => {
+  const db = getDb()
+  const result = await dbRun(
+    db,
+    'DELETE FROM TicketLayoutVersions WHERE Id = ? AND OrganizationId = ?',
+    [versionId, organizationId],
+  )
+  return result.rowsAffected > 0
 }

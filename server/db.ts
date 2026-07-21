@@ -287,6 +287,15 @@ const SCHEMA_STATEMENTS = [
     UpdatedAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id)
   )`,
+  `CREATE TABLE IF NOT EXISTS TicketLayoutVersions (
+    Id TEXT PRIMARY KEY,
+    OrganizationId TEXT NOT NULL,
+    VersionNumber INTEGER NOT NULL,
+    LayoutJson TEXT NOT NULL,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id) ON DELETE CASCADE,
+    UNIQUE (OrganizationId, VersionNumber)
+  )`,
   `CREATE TABLE IF NOT EXISTS TicketCustomFieldValues (
     Id TEXT PRIMARY KEY,
     TicketId TEXT NOT NULL,
@@ -296,6 +305,34 @@ const SCHEMA_STATEMENTS = [
     Value TEXT NOT NULL,
     CreatedAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (TicketId) REFERENCES Tickets(Id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketVersions (
+    Id TEXT PRIMARY KEY,
+    TicketId TEXT NOT NULL,
+    VersionNumber INTEGER NOT NULL,
+    Title TEXT NOT NULL,
+    Description TEXT NOT NULL,
+    Status TEXT NOT NULL,
+    Priority TEXT NOT NULL,
+    TeamId TEXT NOT NULL,
+    CategoryId TEXT NOT NULL,
+    AssignedToId TEXT,
+    RequestorName TEXT NOT NULL,
+    RequestorEmail TEXT NOT NULL,
+    Location TEXT NOT NULL,
+    DueLabel TEXT NOT NULL,
+    CreatedAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (TicketId) REFERENCES Tickets(Id) ON DELETE CASCADE,
+    UNIQUE (TicketId, VersionNumber)
+  )`,
+  `CREATE TABLE IF NOT EXISTS TicketVersionCustomFieldValues (
+    Id TEXT PRIMARY KEY,
+    TicketVersionId TEXT NOT NULL,
+    FieldId TEXT NOT NULL,
+    FieldLabel TEXT NOT NULL,
+    FieldType TEXT NOT NULL,
+    Value TEXT NOT NULL,
+    FOREIGN KEY (TicketVersionId) REFERENCES TicketVersions(Id) ON DELETE CASCADE
   )`,
   `CREATE TABLE IF NOT EXISTS WebhookConfigs (
     Id TEXT PRIMARY KEY,

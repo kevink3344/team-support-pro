@@ -1,4 +1,5 @@
 ﻿import { useDeferredValue, useEffect, useMemo, useRef, useState, startTransition, type CSSProperties, type FormEvent } from 'react'
+import { arrayMove } from '@dnd-kit/sortable'
 import {
   AnimatePresence,
   motion,
@@ -90,6 +91,8 @@ import type {
 } from './types'
 import { LayoutTicketForm } from './components/LayoutTicketForm'
 import { TicketLayoutDesigner } from './components/TicketLayoutDesigner'
+import { TicketLayoutVersionHistory } from './components/TicketLayoutVersionHistory'
+import { TicketVersionHistory } from './components/TicketVersionHistory'
 import { PdfPreview } from './PdfPreview'
 import { ReportsPage } from './ReportsPage'
 import { RichTextEditor } from './RichTextEditor'
@@ -318,6 +321,49 @@ const mapSessionApiUser = (user: SessionApiUser): AuthSession => ({
   picture: user.picture,
 })
 
+const areTicketFieldDefsDirty = (
+  current: TicketFieldDefinition[],
+  lastSaved: TicketFieldDefinition[],
+): boolean => {
+  if (current.length !== lastSaved.length) return true
+  for (let i = 0; i < current.length; i += 1) {
+    const a = current[i]
+    const b = lastSaved[i]
+    if (
+      a.id !== b.id ||
+      a.label !== b.label ||
+      a.fieldType !== b.fieldType ||
+      a.isRequired !== b.isRequired ||
+      a.sortOrder !== b.sortOrder ||
+      a.options.length !== b.options.length ||
+      a.options.some((o, idx) => o !== b.options[idx])
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
+const areTicketLayoutsDirty = (
+  current: TicketLayout | null,
+  lastSaved: TicketLayout | null,
+): boolean => {
+  if (!current && !lastSaved) return false
+  if (!current || !lastSaved) return true
+  const a = current.rows
+  const b = lastSaved.rows
+  if (a.length !== b.length) return true
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].id !== b[i].id || a[i].slots.length !== b[i].slots.length) return true
+    for (let j = 0; j < a[i].slots.length; j += 1) {
+      if (a[i].slots[j].fieldRef !== b[i].slots[j].fieldRef || a[i].slots[j].width !== b[i].slots[j].width) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 const mergePersistedActivity = (
   currentTickets: TicketRecord[],
   persistedActivity: TicketActivityApiRecord[],
@@ -432,7 +478,7 @@ function App() {
   const [detailWidth, setDetailWidth] = useState(50)
   const [detailResizeActive, setDetailResizeActive] = useState(false)
   const [detailPinned, setDetailPinned] = useState(false)
-  const [detailTab, setDetailTab] = useState<'details' | 'activity' | 'attachments'>('details')
+  const [detailTab, setDetailTab] = useState<'details' | 'activity' | 'attachments' | 'versions'>('details')
   const [commentDraft, setCommentDraft] = useState('')
   const [commentError, setCommentError] = useState('')
   const [detailSaveError, setDetailSaveError] = useState('')
@@ -490,17 +536,19 @@ function App() {
   const [feedbackAddFieldOpen, setFeedbackAddFieldOpen] = useState(false)
   // Ticket Designer state
   const [ticketFieldDefs, setTicketFieldDefs] = useState<TicketFieldDefinition[]>([])
-  const [ticketFieldDefsPending, setTicketFieldDefsPending] = useState(false)
+  const [ticketFieldDefsPending] = useState(false)
   const [ticketFieldDefsError, setTicketFieldDefsError] = useState('')
   const [ticketFieldDefsNotice, setTicketFieldDefsNotice] = useState('')
-  const [ticketDesignerTab, setTicketDesignerTab] = useState<'fields' | 'layout'>('fields')
+  const [ticketDesignerTab, setTicketDesignerTab] = useState<'fields' | 'layout' | 'versions'>('fields')
   const [ticketDesignerAddField, setTicketDesignerAddField] = useState(false)
   const [ticketDesignerNewField, setTicketDesignerNewField] = useState<Partial<TicketFieldDefinition>>({})
   const [ticketDesignerNewFieldOptions, setTicketDesignerNewFieldOptions] = useState('')
   const [organizationTicketLayout, setOrganizationTicketLayout] = useState<TicketLayout | null>(null)
-  const [, setTicketLayoutPending] = useState(false)
+  const [ticketLayoutDraft, setTicketLayoutDraft] = useState<TicketLayout | null>(null)
+  const [lastSavedTicketLayout, setLastSavedTicketLayout] = useState<TicketLayout | null>(null)
   const [ticketLayoutError, setTicketLayoutError] = useState('')
   const [ticketLayoutNotice, setTicketLayoutNotice] = useState('')
+  const [lastSavedFieldDefs, setLastSavedFieldDefs] = useState<TicketFieldDefinition[]>([])
   const [createTicketFieldDefs, setCreateTicketFieldDefs] = useState<TicketFieldDefinition[]>([])
   const [newTicketCustomFields, setNewTicketCustomFields] = useState<Record<string, string>>({})
   const [detailCustomFieldDefs, setDetailCustomFieldDefs] = useState<TicketFieldDefinition[]>([])
@@ -5701,7 +5749,9 @@ function App() {
       const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), { credentials: 'include' })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
-      setTicketFieldDefs(data.fields ?? [])
+      const fields: TicketFieldDefinition[] = data.fields ?? []
+      setTicketFieldDefs(fields)
+      setLastSavedFieldDefs(fields)
     } catch {
       setTicketFieldDefsError('Failed to load ticket fields.')
     }
@@ -5714,30 +5764,6 @@ function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, currentUser.organizationId])
 
-  const saveTicketFieldDefs = async (fields: TicketFieldDefinition[]) => {
-    if (!currentUser.organizationId) return
-    setTicketFieldDefsPending(true)
-    setTicketFieldDefsError('')
-    setTicketFieldDefsNotice('')
-    try {
-      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fields }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      const data = await res.json()
-      setTicketFieldDefs(data.fields ?? [])
-      setTicketFieldDefsNotice('Saved.')
-      setTimeout(() => setTicketFieldDefsNotice(''), 2500)
-    } catch {
-      setTicketFieldDefsError('Failed to save ticket fields.')
-    } finally {
-      setTicketFieldDefsPending(false)
-    }
-  }
-
   const refreshTicketLayout = async () => {
     if (!currentUser.organizationId) return
     setTicketLayoutError('')
@@ -5745,39 +5771,43 @@ function App() {
       const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-layout`), { credentials: 'include' })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
-      setOrganizationTicketLayout(data.layout ?? null)
+      let layout: TicketLayout | null = data.layout ?? null
+      if (layout) {
+        const seen = new Set<string>()
+        let hasDuplicates = false
+        const dedupedRows = layout.rows.map((row) => {
+          if (seen.has(row.id)) {
+            hasDuplicates = true
+            return { ...row, id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
+          }
+          seen.add(row.id)
+          return row
+        })
+        if (hasDuplicates) {
+          layout = { rows: dedupedRows }
+        }
+      }
+      setOrganizationTicketLayout(layout)
+      setTicketLayoutDraft(layout)
+      setLastSavedTicketLayout(layout)
     } catch {
       setTicketLayoutError('Failed to load ticket layout.')
     }
   }
 
-  const saveTicketLayout = async (layout: TicketLayout) => {
-    if (!currentUser.organizationId) return
-    setTicketLayoutPending(true)
-    setTicketLayoutError('')
-    setTicketLayoutNotice('')
-    try {
-      const res = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-layout`), {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ layout }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-      const data = await res.json()
-      setOrganizationTicketLayout(data.layout ?? layout)
-      if (data.errors?.length) {
-        setTicketLayoutError(data.errors.join(' '))
-      } else {
-        setTicketLayoutNotice('Saved.')
-        setTimeout(() => setTicketLayoutNotice(''), 2500)
-      }
-    } catch {
-      setTicketLayoutError('Failed to save ticket layout.')
-    } finally {
-      setTicketLayoutPending(false)
+  const ticketDesignerIsDirty =
+    areTicketFieldDefsDirty(ticketFieldDefs, lastSavedFieldDefs) ||
+    areTicketLayoutsDirty(ticketLayoutDraft, lastSavedTicketLayout)
+
+  useEffect(() => {
+    if (!ticketDesignerIsDirty) return
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
     }
-  }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [ticketDesignerIsDirty])
 
   const renderTicketDesignerPage = () => {
     const FIELD_TYPES: { value: TicketFieldDefinition['fieldType']; label: string }[] = [
@@ -5787,6 +5817,10 @@ function App() {
       { value: 'number', label: 'Number' },
       { value: 'date', label: 'Date' },
     ]
+
+    const fieldsAreDirty = areTicketFieldDefsDirty(ticketFieldDefs, lastSavedFieldDefs)
+    const layoutIsDirty = areTicketLayoutsDirty(ticketLayoutDraft, lastSavedTicketLayout)
+    const isDirty = fieldsAreDirty || layoutIsDirty
 
     const handleAddField = () => {
       if (!ticketDesignerNewField.label?.trim()) return
@@ -5808,13 +5842,11 @@ function App() {
       setTicketDesignerAddField(false)
       setTicketDesignerNewField({})
       setTicketDesignerNewFieldOptions('')
-      saveTicketFieldDefs(updated)
     }
 
     const handleDeleteField = (id: string) => {
       const updated = ticketFieldDefs.filter((f) => f.id !== id)
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(updated)
     }
 
     const handleMoveField = (id: string, direction: -1 | 1) => {
@@ -5822,23 +5854,69 @@ function App() {
       if (idx < 0) return
       const newIdx = idx + direction
       if (newIdx < 0 || newIdx >= ticketFieldDefs.length) return
-      const updated = [...ticketFieldDefs]
-      const temp = updated[idx]
-      updated[idx] = updated[newIdx]
-      updated[newIdx] = temp
+      const reordered = arrayMove(ticketFieldDefs, idx, newIdx)
+      const updated = reordered.map((field, index) => ({ ...field, sortOrder: index }))
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(updated)
     }
 
     const handleToggleRequired = (id: string) => {
       const updated = ticketFieldDefs.map((f) => f.id === id ? { ...f, isRequired: !f.isRequired } : f)
       setTicketFieldDefs(updated)
-      saveTicketFieldDefs(updated)
     }
 
     const handleLayoutChange = (layout: TicketLayout) => {
+      setTicketLayoutDraft(layout)
+    }
+
+    const handleLayoutReverted = (layout: TicketLayout) => {
       setOrganizationTicketLayout(layout)
-      void saveTicketLayout(layout)
+      setTicketLayoutDraft(layout)
+      setLastSavedTicketLayout(layout)
+      setTicketLayoutNotice('Layout reverted.')
+      setTimeout(() => setTicketLayoutNotice(''), 2500)
+    }
+
+    const handleSaveTicketDesigner = async () => {
+      if (!currentUser.organizationId) return
+      setTicketFieldDefsError('')
+      setTicketLayoutError('')
+      setTicketFieldDefsNotice('')
+      setTicketLayoutNotice('')
+
+      try {
+        const fieldsRes = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fields: ticketFieldDefs }),
+        })
+        if (!fieldsRes.ok) throw new Error(await fieldsRes.text())
+        const fieldsData = await fieldsRes.json()
+        const savedFields: TicketFieldDefinition[] = fieldsData.fields ?? ticketFieldDefs
+        setTicketFieldDefs(savedFields)
+        setLastSavedFieldDefs(savedFields)
+
+        const layoutToSave = ticketLayoutDraft ?? lastSavedTicketLayout
+        if (layoutToSave) {
+          const layoutRes = await fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-layout`), {
+            method: 'PUT',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ layout: layoutToSave }),
+          })
+          if (!layoutRes.ok) throw new Error(await layoutRes.text())
+          const layoutData = await layoutRes.json()
+          const savedLayout: TicketLayout | null = layoutData.layout ?? layoutToSave
+          setOrganizationTicketLayout(savedLayout)
+          setTicketLayoutDraft(savedLayout)
+          setLastSavedTicketLayout(savedLayout)
+        }
+
+        setTicketLayoutNotice('Saved.')
+        setTimeout(() => setTicketLayoutNotice(''), 2500)
+      } catch {
+        setTicketLayoutError('Failed to save ticket designer changes.')
+      }
     }
 
     return (
@@ -5850,6 +5928,19 @@ function App() {
               <div className="text-sm text-[color:var(--text-muted)]">
                 Define custom fields and arrange the ticket form layout for your organization.
               </div>
+            </div>
+            <div className="flex items-center gap-3">
+              {isDirty && (
+                <span className="text-xs font-semibold text-amber-600">Unsaved changes</span>
+              )}
+              <button
+                type="button"
+                className="primary-button"
+                disabled={!isDirty}
+                onClick={() => void handleSaveTicketDesigner()}
+              >
+                Save
+              </button>
             </div>
           </div>
 
@@ -5880,6 +5971,14 @@ function App() {
               onClick={() => setTicketDesignerTab('layout')}
             >
               Layout
+            </button>
+            <button
+              type="button"
+              className="tab-link px-3 py-2 text-sm font-semibold"
+              data-active={ticketDesignerTab === 'versions'}
+              onClick={() => setTicketDesignerTab('versions')}
+            >
+              Versions
             </button>
           </div>
 
@@ -6049,18 +6148,27 @@ function App() {
             </>
           )}
 
-          {ticketDesignerTab === 'layout' && organizationTicketLayout && (
+          {ticketDesignerTab === 'layout' && ticketLayoutDraft && (
             <TicketLayoutDesigner
-              layout={organizationTicketLayout}
+              layout={ticketLayoutDraft}
               customFieldDefs={ticketFieldDefs}
               onChange={handleLayoutChange}
             />
           )}
 
-          {ticketDesignerTab === 'layout' && !organizationTicketLayout && (
+          {ticketDesignerTab === 'layout' && !ticketLayoutDraft && (
             <div className="rounded-[2px] border border-dashed border-[color:var(--border)] px-4 py-8 text-center text-sm text-[color:var(--text-muted)]">
               Loading layout…
             </div>
+          )}
+
+          {ticketDesignerTab === 'versions' && currentUser.organizationId && (
+            <TicketLayoutVersionHistory
+              organizationId={currentUser.organizationId}
+              customFieldDefs={ticketFieldDefs}
+              currentLayout={ticketLayoutDraft}
+              onLayoutReverted={handleLayoutReverted}
+            />
           )}
         </section>
       </div>
@@ -7926,11 +8034,11 @@ function App() {
       const showResolveAction = !isResolved
 
       return (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-start justify-end gap-2">
           {showAssignAction && (
             <button
               type="button"
-              className="secondary-button"
+              className="badge-button"
               disabled={disableAssign}
               onClick={() => requestQuickTicketAction(ticket, 'assign-to-me')}
             >
@@ -7940,7 +8048,7 @@ function App() {
           {showInProgressAction && (
             <button
               type="button"
-              className="secondary-button"
+              className="badge-button"
               disabled={disableInProgress}
               onClick={() => requestQuickTicketAction(ticket, 'mark-in-progress')}
             >
@@ -7950,7 +8058,7 @@ function App() {
           {showResolveAction && (
             <button
               type="button"
-              className="secondary-button"
+              className="badge-button"
               disabled={disableResolve}
               onClick={() => requestQuickTicketAction(ticket, 'mark-resolved')}
             >
@@ -8000,10 +8108,6 @@ function App() {
                             </span>
                           )}
                           </div>
-                          <div className="shrink-0 text-right text-xs text-[color:var(--text-muted)]">
-                            <div>{ticket.dueLabel}</div>
-                            <div>{formatDateTime(ticket.updatedAt)}</div>
-                          </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className={getStatusBadgeClass(ticket.status)}>{ticket.status}</span>
@@ -8017,11 +8121,19 @@ function App() {
                           {team?.name ?? 'Unknown team'}
                         </p>
                       </div>
+                      <div className="shrink-0 text-right">
+                        <div className="text-xs text-[color:var(--text-muted)]">
+                          <div>{ticket.dueLabel}</div>
+                          <div>{formatDateTime(ticket.updatedAt)}</div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap justify-end gap-2">
+                          {renderQuickActions(ticket)}
+                        </div>
+                      </div>
                     </div>
                   </button>
                   <div className="border-t border-[color:var(--border)] px-4 py-3 text-sm text-[color:var(--text-muted)]">
-                    <div className="mb-3">Assigned to {assignee?.name ?? 'Unassigned'}</div>
-                    {renderQuickActions(ticket)}
+                    Assigned to {assignee?.name ?? 'Unassigned'}
                   </div>
                 </div>
               )
@@ -9006,7 +9118,7 @@ function App() {
                   </div>
 
                   <div className="mt-4 flex items-center gap-6 border-b border-[color:var(--border)]">
-                    {(['details', 'activity', 'attachments'] as const).map((tab) => (
+                    {(['details', 'activity', 'attachments', 'versions'] as const).map((tab) => (
                       <button
                         key={tab}
                         type="button"
@@ -9018,7 +9130,9 @@ function App() {
                           ? 'Details'
                           : tab === 'activity'
                             ? 'Activity'
-                            : 'Attachments'}
+                            : tab === 'attachments'
+                              ? 'Attachments'
+                              : 'Versions'}
                       </button>
                     ))}
                   </div>
@@ -9158,6 +9272,39 @@ function App() {
                         </div>
                       </div>
                     </div>
+                  ) : detailTab === 'versions' ? (
+                    <TicketVersionHistory
+                      ticketId={selectedTicket.id}
+                      currentTicket={selectedTicket}
+                      currentUser={currentUser}
+                      layout={organizationTicketLayout}
+                      customFieldDefs={detailCustomFieldDefs}
+                      categories={categories}
+                      users={users}
+                      locations={locations}
+                      onTicketReverted={(ticket) => {
+                        setTickets((current) =>
+                          current.map((t) => (t.id === ticket.id ? ticket : t)),
+                        )
+                        setDetailDraft({
+                          teamId: ticket.teamId,
+                          title: ticket.title,
+                          description: ticket.description,
+                          status: ticket.status,
+                          priority: ticket.priority,
+                          categoryId: ticket.categoryId,
+                          assignedToId: ticket.assignedToId ?? '',
+                          requestorName: ticket.requestorName,
+                          requestorEmail: ticket.requestorEmail,
+                          location: ticket.location,
+                        })
+                        const updatedCustomValues: Record<string, string> = {}
+                        for (const cf of ticket.customFields ?? []) {
+                          updatedCustomValues[cf.fieldId] = cf.value
+                        }
+                        setDetailCustomFieldValues((prev) => ({ ...prev, ...updatedCustomValues }))
+                      }}
+                    />
                   ) : detailTab === 'activity' ? (
                     <div className="space-y-4">
                       <div className="surface-muted space-y-3 p-4">

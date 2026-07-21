@@ -76,6 +76,25 @@ export interface UpdateTicketInput {
   location: string
 }
 
+export interface TicketVersion {
+  id: string
+  ticketId: string
+  versionNumber: number
+  title: string
+  description: string
+  status: string
+  priority: string
+  teamId: string
+  categoryId: string
+  assignedToId: string | null
+  requestorName: string
+  requestorEmail: string
+  location: string
+  dueLabel: string
+  createdAt: string
+  customFields: TicketCustomFieldValue[]
+}
+
 const mapActivityRecord = (record: Record<string, unknown>): TicketActivityRecord => ({
   id: String(record.id),
   ticketId: String(record.ticketId),
@@ -201,6 +220,7 @@ export const updateTicket = async (ticketId: string, input: UpdateTicketInput, a
   const existing = await getTicketById(ticketId)
   if (!existing) return null
   const db = getDb()
+  await createTicketVersion(db, ticketId)
   const activityAt = new Date().toISOString()
   const changeMessages: string[] = []
 
@@ -305,6 +325,7 @@ export const createTicket = async (input: CreateTicketInput, actor: string): Pro
     })),
   ]
   await db.batch(statements, 'write')
+  await createTicketVersion(db, ticketId)
   return getTicketById(ticketId)
 }
 
@@ -384,4 +405,150 @@ export const upsertCustomFieldValues = async (
     })
   }
   await db.batch(statements as Array<{ sql: string; args: import('@libsql/client').InValue[] }>, 'write')
+}
+
+const getTicketVersionCustomFieldValues = async (db: Client, ticketVersionId: string): Promise<TicketCustomFieldValue[]> => {
+  const rows = await dbAll(db, 'SELECT Id AS id, TicketVersionId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketVersionCustomFieldValues WHERE TicketVersionId = ? ORDER BY rowid ASC', [ticketVersionId]) as Array<{ id: unknown; ticketId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
+  return rows.map((row) => ({ id: String(row.id), ticketId: String(row.ticketId), fieldId: String(row.fieldId), fieldLabel: String(row.fieldLabel), fieldType: String(row.fieldType), value: String(row.value) }))
+}
+
+const mapTicketVersion = (record: Record<string, unknown>): Omit<TicketVersion, 'customFields'> => ({
+  id: String(record.id),
+  ticketId: String(record.ticketId),
+  versionNumber: Number(record.versionNumber),
+  title: String(record.title),
+  description: String(record.description),
+  status: String(record.status),
+  priority: String(record.priority),
+  teamId: String(record.teamId),
+  categoryId: String(record.categoryId),
+  assignedToId: typeof record.assignedToId === 'string' ? record.assignedToId : null,
+  requestorName: String(record.requestorName),
+  requestorEmail: String(record.requestorEmail),
+  location: String(record.location),
+  dueLabel: String(record.dueLabel),
+  createdAt: new Date(String(record.createdAt)).toISOString(),
+})
+
+export const createTicketVersion = async (db: Client, ticketId: string): Promise<number> => {
+  const ticketRow = await dbGet(db, `SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel FROM Tickets WHERE Id = ?`, [ticketId])
+  if (!ticketRow) throw new Error('ticket_not_found')
+
+  const versionNumberRow = await dbGet(db, 'SELECT COALESCE(MAX(VersionNumber), 0) + 1 AS nextVersion FROM TicketVersions WHERE TicketId = ?', [ticketId])
+  const versionNumber = Number(versionNumberRow?.nextVersion ?? 1)
+  const versionId = `tv-${crypto.randomUUID()}`
+
+  const customFields = await getCustomFieldValues(db, ticketId)
+
+  const statements: Array<{ sql: string; args: import('@libsql/client').InValue[] }> = [
+    {
+      sql: `INSERT INTO TicketVersions (Id, TicketId, VersionNumber, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        versionId,
+        ticketId,
+        versionNumber,
+        String(ticketRow.title),
+        String(ticketRow.description),
+        String(ticketRow.status),
+        String(ticketRow.priority),
+        String(ticketRow.teamId),
+        String(ticketRow.categoryId),
+        typeof ticketRow.assignedToId === 'string' ? ticketRow.assignedToId : null,
+        String(ticketRow.requestorName),
+        String(ticketRow.requestorEmail),
+        String(ticketRow.location),
+        String(ticketRow.dueLabel),
+      ],
+    },
+    ...customFields.map((cf) => ({
+      sql: 'INSERT INTO TicketVersionCustomFieldValues (Id, TicketVersionId, FieldId, FieldLabel, FieldType, Value) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [`tvcfv-${crypto.randomUUID()}`, versionId, cf.fieldId, cf.fieldLabel, cf.fieldType, cf.value],
+    })),
+  ]
+
+  await db.batch(statements, 'write')
+  return versionNumber
+}
+
+export const listTicketVersions = async (ticketId: string): Promise<TicketVersion[]> => {
+  const db = getDb()
+  const rows = await dbAll(db, 'SELECT Id AS id, TicketId AS ticketId, VersionNumber AS versionNumber, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt FROM TicketVersions WHERE TicketId = ? ORDER BY VersionNumber DESC', [ticketId]) as Array<Record<string, unknown>>
+  const versions = rows.map(mapTicketVersion)
+
+  const customFieldsByVersion = new Map<string, TicketCustomFieldValue[]>()
+  if (versions.length) {
+    const versionIds = versions.map((v) => v.id)
+    const placeholders = versionIds.map(() => '?').join(',')
+    const cfRows = await dbAll(db, `SELECT Id AS id, TicketVersionId AS ticketVersionId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketVersionCustomFieldValues WHERE TicketVersionId IN (${placeholders}) ORDER BY rowid ASC`, versionIds) as Array<{ id: unknown; ticketVersionId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
+    for (const row of cfRows) {
+      const versionId = String(row.ticketVersionId)
+      const current = customFieldsByVersion.get(versionId) ?? []
+      current.push({ id: String(row.id), ticketId: String(row.ticketVersionId), fieldId: String(row.fieldId), fieldLabel: String(row.fieldLabel), fieldType: String(row.fieldType), value: String(row.value) })
+      customFieldsByVersion.set(versionId, current)
+    }
+  }
+
+  return versions.map((v) => ({ ...v, customFields: customFieldsByVersion.get(v.id) ?? [] }))
+}
+
+export const revertTicketToVersion = async (ticketId: string, versionId: string, actor: string): Promise<TicketRecord | null> => {
+  const db = getDb()
+
+  const versionRow = await dbGet(db, 'SELECT Id AS id, TicketId AS ticketId, VersionNumber AS versionNumber, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel FROM TicketVersions WHERE Id = ? AND TicketId = ?', [versionId, ticketId])
+  if (!versionRow) return null
+
+  const liveTicket = await getTicketById(ticketId)
+  if (!liveTicket) return null
+
+  const versionCustomFields = await getTicketVersionCustomFieldValues(db, String(versionRow.id))
+  const activityAt = new Date().toISOString()
+
+  const statements: Array<{ sql: string; args: import('@libsql/client').InValue[] }> = [
+    // Snapshot current live state before reverting
+    {
+      sql: `INSERT INTO TicketVersions (Id, TicketId, VersionNumber, Title, Description, Status, Priority, TeamId, CategoryId, AssignedToId, RequestorName, RequestorEmail, Location, DueLabel) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        `tv-${crypto.randomUUID()}`,
+        ticketId,
+        Number(versionRow.versionNumber) + 1,
+        liveTicket.title,
+        liveTicket.description,
+        liveTicket.status,
+        liveTicket.priority,
+        liveTicket.teamId,
+        liveTicket.categoryId,
+        liveTicket.assignedToId,
+        liveTicket.requestorName,
+        liveTicket.requestorEmail,
+        liveTicket.location,
+        liveTicket.dueLabel,
+      ],
+    },
+    // Restore ticket fields from target version
+    {
+      sql: 'UPDATE Tickets SET Title = ?, Description = ?, Status = ?, Priority = ?, TeamId = ?, CategoryId = ?, AssignedToId = ?, RequestorName = ?, RequestorEmail = ?, Location = ?, UpdatedAt = ?, ResolvedAt = ? WHERE Id = ?',
+      args: [String(versionRow.title), String(versionRow.description), String(versionRow.status), String(versionRow.priority), String(versionRow.teamId), String(versionRow.categoryId), typeof versionRow.assignedToId === 'string' ? versionRow.assignedToId : null, String(versionRow.requestorName), String(versionRow.requestorEmail), String(versionRow.location), activityAt, null, ticketId],
+    },
+    // Remove existing custom field values and restore from version
+    {
+      sql: 'DELETE FROM TicketCustomFieldValues WHERE TicketId = ?',
+      args: [ticketId],
+    },
+    ...versionCustomFields.map((cf) => ({
+      sql: 'INSERT INTO TicketCustomFieldValues (Id, TicketId, FieldId, FieldLabel, FieldType, Value) VALUES (?, ?, ?, ?, ?, ?)',
+      args: [`tcfv-${crypto.randomUUID()}`, ticketId, cf.fieldId, cf.fieldLabel, cf.fieldType, cf.value],
+    })),
+    {
+      sql: 'INSERT INTO TicketActivity (Id, TicketId, Actor, Message, ActivityAt) VALUES (?, ?, ?, ?, ?)',
+      args: [`activity-${crypto.randomUUID()}`, ticketId, actor, `Reverted ticket to version ${String(versionRow.versionNumber)}.`, activityAt],
+    },
+  ]
+
+  // Adjust the new version number for the pre-revert snapshot to be the actual next version
+  const nextVersionRow = await dbGet(db, 'SELECT COALESCE(MAX(VersionNumber), 0) + 1 AS nextVersion FROM TicketVersions WHERE TicketId = ?', [ticketId])
+  const snapshotVersionNumber = Number(nextVersionRow?.nextVersion ?? 1)
+  statements[0].args[2] = snapshotVersionNumber
+
+  await db.batch(statements, 'write')
+  return getTicketById(ticketId)
 }

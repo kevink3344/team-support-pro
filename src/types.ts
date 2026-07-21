@@ -78,6 +78,14 @@ export interface TicketLayout {
   rows: TicketLayoutRow[]
 }
 
+export interface TicketLayoutVersion {
+  id: string
+  organizationId: OrganizationId
+  versionNumber: number
+  layout: TicketLayout
+  createdAt: string
+}
+
 export interface TicketCustomFieldValue {
   id: string
   ticketId: TicketId
@@ -206,6 +214,25 @@ export interface Ticket {
   resolvedAt?: string | null
   activity: ActivityEntry[]
   customFields?: TicketCustomFieldValue[]
+}
+
+export interface TicketVersion {
+  id: string
+  ticketId: TicketId
+  versionNumber: number
+  title: string
+  description: string
+  status: TicketStatus
+  priority: TicketPriority
+  teamId: TeamId
+  categoryId: CategoryId
+  assignedToId: UserId | null
+  requestorName: string
+  requestorEmail: string
+  location: string
+  dueLabel: string
+  createdAt: string
+  customFields: TicketCustomFieldValue[]
 }
 
 export interface TrendPoint {

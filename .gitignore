@@ -17,9 +17,11 @@ dist-ssr
 .local-auth-accounts.json
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea
+
+# Documentation / plans (do not push)
+docs/
 .DS_Store
 *.suo
 *.ntvs*

@@ -7,7 +7,9 @@ import {
   deleteTicket,
   getTicketById,
   listTicketActivity,
+  listTicketVersions,
   listTickets,
+  revertTicketToVersion,
   ticketBelongsToTeam,
   updateTicket,
   listTicketWatchers,
@@ -521,6 +523,56 @@ ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res
 
   await removeTicketWatcher(ticketId, targetUserId)
   res.json({ watchers: await listTicketWatchers(ticketId) })
+})
+
+// ---------------------------------------------------------------------------
+// Versions
+// ---------------------------------------------------------------------------
+
+ticketsRouter.get('/:ticketId/versions', requireAuth, async (req, res) => {
+  const user = req.user!
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+
+  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
+  try {
+    const versions = await listTicketVersions(ticketId)
+    res.json({ versions })
+  } catch (error) {
+    console.error('Loading ticket versions failed.', error)
+    res.status(500).json({ error: 'ticket_versions_load_failed' })
+  }
+})
+
+ticketsRouter.post('/:ticketId/versions/:versionId/revert', requireAdmin, async (req, res) => {
+  const user = req.user!
+  const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
+  const versionId = typeof req.params.versionId === 'string' ? req.params.versionId : ''
+
+  if (!ticketId || !versionId) {
+    res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+    res.status(403).json({ error: 'cross_team_ticket_revert_forbidden' })
+    return
+  }
+
+  try {
+    const ticket = await revertTicketToVersion(ticketId, versionId, user.name)
+    if (!ticket) {
+      res.status(404).json({ error: 'ticket_version_not_found' })
+      return
+    }
+    res.json({ ticket })
+  } catch (error) {
+    console.error('Reverting ticket failed.', error)
+    res.status(500).json({ error: 'ticket_revert_failed' })
+  }
 })
 
 // ---------------------------------------------------------------------------

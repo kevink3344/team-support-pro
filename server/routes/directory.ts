@@ -34,7 +34,14 @@ import {
   saveTicketFieldDefinitions,
   type TicketFieldDefinition,
 } from '../ticket-designer.js'
-import { getTicketLayout, saveTicketLayout, type TicketLayout } from '../ticket-layout.js'
+import {
+  getTicketLayout,
+  saveTicketLayout,
+  listTicketLayoutVersions,
+  revertTicketLayoutToVersion,
+  deleteTicketLayoutVersion,
+  type TicketLayout,
+} from '../ticket-layout.js'
 
 export const directoryRouter = Router()
 
@@ -266,8 +273,51 @@ directoryRouter.put('/organizations/:organizationId/ticket-layout', requireAdmin
     res.status(400).json({ error: 'invalid_ticket_layout_payload' })
     return
   }
-  const result = await saveTicketLayout(String(req.params.organizationId), req.body.layout as TicketLayout)
-  res.json(result)
+  try {
+    const result = await saveTicketLayout(String(req.params.organizationId), req.body.layout as TicketLayout)
+    res.json(result)
+  } catch (error) {
+    console.error('Saving ticket layout failed.', error)
+    res.status(500).json({ error: 'ticket_layout_save_failed' })
+  }
+})
+
+directoryRouter.get('/organizations/:organizationId/ticket-layout/versions', requireAdmin, async (req, res) => {
+  try {
+    const versions = await listTicketLayoutVersions(String(req.params.organizationId))
+    res.json({ versions })
+  } catch (error) {
+    console.error('Loading ticket layout versions failed.', error)
+    res.status(500).json({ error: 'ticket_layout_versions_load_failed' })
+  }
+})
+
+directoryRouter.post('/organizations/:organizationId/ticket-layout/versions/:versionId/revert', requireAdmin, async (req, res) => {
+  try {
+    const version = await revertTicketLayoutToVersion(String(req.params.organizationId), String(req.params.versionId))
+    if (!version) {
+      res.status(404).json({ error: 'ticket_layout_version_not_found' })
+      return
+    }
+    res.json({ version })
+  } catch (error) {
+    console.error('Reverting ticket layout failed.', error)
+    res.status(500).json({ error: 'ticket_layout_revert_failed' })
+  }
+})
+
+directoryRouter.delete('/organizations/:organizationId/ticket-layout/versions/:versionId', requireAdmin, async (req, res) => {
+  try {
+    const deleted = await deleteTicketLayoutVersion(String(req.params.organizationId), String(req.params.versionId))
+    if (!deleted) {
+      res.status(404).json({ error: 'ticket_layout_version_not_found' })
+      return
+    }
+    res.status(204).end()
+  } catch (error) {
+    console.error('Deleting ticket layout version failed.', error)
+    res.status(500).json({ error: 'ticket_layout_version_delete_failed' })
+  }
 })
 
 // ---------------------------------------------------------------------------
