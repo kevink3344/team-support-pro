@@ -9166,8 +9166,8 @@ function App() {
                         }
                       />
 
-                      {/* Watchers */}
-                      {(() => {
+                      {/* Watchers — hidden for first release; flip to true to restore */}
+                      {false && (() => {
                         const orgUsers = users.filter(
                           (u) => u.organizationId === currentUser.organizationId,
                         )
