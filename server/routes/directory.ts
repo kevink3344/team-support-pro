@@ -434,6 +434,7 @@ directoryRouter.post('/users', requireAdmin, async (req, res) => {
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
       role: req.body?.role === 'Admin' ? 'Admin' : req.body?.role === 'Super Admin' ? 'Super Admin' : 'Staff',
+      canViewAllOrgTickets: req.body?.canViewAllOrgTickets === true,
     })
 
     if (!createdUser) {
@@ -458,6 +459,7 @@ directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
       organizationId: typeof req.body?.organizationId === 'string' ? req.body.organizationId : '',
       teamId: typeof req.body?.teamId === 'string' ? req.body.teamId : '',
       role: req.body?.role === 'Admin' ? 'Admin' : req.body?.role === 'Super Admin' ? 'Super Admin' : 'Staff',
+      canViewAllOrgTickets: req.body?.canViewAllOrgTickets === true,
     })
 
     if (!updatedUser) {
@@ -484,6 +486,7 @@ directoryRouter.patch('/users/:userId', requireAdmin, async (req, res) => {
         teamName: updatedTeam?.name ?? user.teamName,
         teamCode: updatedTeam?.code ?? user.teamCode,
         teamAccent: updatedTeam?.accent ?? user.teamAccent,
+        canViewAllOrgTickets: updatedUser.canViewAllOrgTickets,
       }
 
       res.cookie(

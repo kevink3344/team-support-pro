@@ -35,6 +35,7 @@ export const readTestApiKeyUserFromRequest = (req: express.Request): SessionUser
     teamName: serverConfig.fallbackTeam.name,
     teamCode: serverConfig.fallbackTeam.code,
     teamAccent: serverConfig.fallbackTeam.accent,
+    canViewAllOrgTickets: false,
   }
 }
 

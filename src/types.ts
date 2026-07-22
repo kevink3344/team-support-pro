@@ -151,6 +151,7 @@ export interface User {
   organizationId: OrganizationId
   teamId: TeamId
   role: 'Admin' | 'Super Admin' | 'Staff'
+  canViewAllOrgTickets?: boolean
 }
 
 export interface AuthSession {
@@ -164,6 +165,7 @@ export interface AuthSession {
   organizationCode?: string
   organizationAccent?: string
   teamId?: string
+  canViewAllOrgTickets?: boolean
   picture?: string
 }
 

@@ -21,6 +21,7 @@ export interface SessionUser {
   teamName: string
   teamCode: string
   teamAccent: string
+  canViewAllOrgTickets: boolean
   picture?: string
 }
 
@@ -37,12 +38,26 @@ export const createOAuthState = () => crypto.randomBytes(24).toString('hex')
 export const createSessionToken = (
   user: SessionUser,
   expiresIn: SignOptions['expiresIn'] = '7d',
-) =>
-  jwt.sign(user, serverConfig.jwtSecret, {
+) => {
+  // If `user` originated from a previously-decoded JWT (e.g. a session refresh
+  // that spreads `req.user`), it will carry reserved claims such as `exp`/`iat`.
+  // jsonwebtoken throws if those are present alongside the `expiresIn` option,
+  // so strip them before re-signing.
+  const { exp, iat, nbf, iss, aud, jti, ...payload } = user as SessionUser & {
+    exp?: unknown
+    iat?: unknown
+    nbf?: unknown
+    iss?: unknown
+    aud?: unknown
+    jti?: unknown
+  }
+
+  return jwt.sign(payload, serverConfig.jwtSecret, {
     expiresIn,
     issuer: 'teamsupportpro',
     audience: 'teamsupportpro-web',
   })
+}
 
 export const readSessionToken = (token: string) =>
   jwt.verify(token, serverConfig.jwtSecret, {

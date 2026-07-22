@@ -19,7 +19,8 @@ export const resolveAuthenticatedUser = async (input: AuthInput): Promise<Sessio
       COALESCE(o.AccentColor, ?, ?) AS organizationAccent,
       COALESCE(t.Id, u.TeamId) AS teamId, COALESCE(t.Name, 'IT Support') AS teamName,
       COALESCE(t.Code, 'IT') AS teamCode, COALESCE(t.AccentColor, '#0078d4') AS teamAccent,
-      COALESCE(u.Role, 'Staff') AS role
+      COALESCE(u.Role, 'Staff') AS role,
+      COALESCE(u.CanViewAllOrgTickets, 0) AS canViewAllOrgTickets
     FROM Users u
     LEFT JOIN Teams t ON t.Id = u.TeamId
     LEFT JOIN Organizations o ON o.Id = COALESCE(t.OrganizationId, u.OrganizationId)
@@ -49,6 +50,7 @@ export const resolveAuthenticatedUser = async (input: AuthInput): Promise<Sessio
       teamName: String(row.teamName),
       teamCode: String(row.teamCode),
       teamAccent: String(row.teamAccent),
+      canViewAllOrgTickets: Number(row.canViewAllOrgTickets) === 1,
     }
   }
 
@@ -65,5 +67,6 @@ export const resolveAuthenticatedUser = async (input: AuthInput): Promise<Sessio
     teamName: serverConfig.fallbackTeam.name,
     teamCode: serverConfig.fallbackTeam.code,
     teamAccent: serverConfig.fallbackTeam.accent,
+    canViewAllOrgTickets: false,
   }
 }

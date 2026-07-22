@@ -269,6 +269,7 @@ const createMockSessionUser = (session: AuthSession): User => ({
   organizationId: session.organizationId ?? initialOrganizations[0]?.id ?? '',
   teamId: session.teamId ?? initialTeams[0]?.id ?? '',
   role: session.role ?? 'Staff',
+  canViewAllOrgTickets: session.canViewAllOrgTickets ?? false,
 })
 
 interface SessionApiUser {
@@ -282,6 +283,7 @@ interface SessionApiUser {
   organizationCode?: string
   organizationAccent?: string
   teamId?: string
+  canViewAllOrgTickets?: boolean
   picture?: string
 }
 
@@ -318,6 +320,7 @@ const mapSessionApiUser = (user: SessionApiUser): AuthSession => ({
   organizationCode: user.organizationCode,
   organizationAccent: user.organizationAccent,
   teamId: user.teamId,
+  canViewAllOrgTickets: user.canViewAllOrgTickets,
   picture: user.picture,
 })
 
@@ -632,6 +635,7 @@ function App() {
     organizationId: initialOrganizations[0]?.id ?? '',
     teamId: initialTeams[0]?.id ?? '',
     role: 'Staff' as User['role'],
+    canViewAllOrgTickets: false,
   })
   const [userFormPending, setUserFormPending] = useState(false)
   const [userSavePendingIds, setUserSavePendingIds] = useState<string[]>([])
@@ -731,6 +735,18 @@ function App() {
   const currentTeamCategories = availableCategories.filter(
     (category) => category.teamId === currentUser.teamId,
   )
+  const canViewAllOrgTickets = Boolean(currentUser.canViewAllOrgTickets)
+  const organizationTeams = useMemo(
+    () => availableTeams.filter((team) => team.organizationId === currentUser.organizationId),
+    [availableTeams, currentUser.organizationId],
+  )
+  const isTicketInScope = (ticket: { teamId: string }) => {
+    if (canViewAllOrgTickets) {
+      const team = availableTeams.find((t) => t.id === ticket.teamId)
+      return team?.organizationId === currentUser.organizationId
+    }
+    return ticket.teamId === currentUser.teamId
+  }
   const currentTeamMembers = useMemo(
     () =>
       availableUsers.some((user) => user.id === currentUser.id)
@@ -765,17 +781,16 @@ function App() {
   const unassignedCount = useMemo(
     () =>
       tickets.filter(
-        (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
+        (ticket) => isTicketInScope(ticket) && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
       ).length,
-    [tickets, currentUser.teamId, availableUsers],
+    [tickets, currentUser.teamId, canViewAllOrgTickets, currentUser.organizationId, availableTeams, availableUsers],
   )
   const myTicketsCount = useMemo(
     () =>
       tickets.filter(
-        (ticket) =>
-          ticket.teamId === currentUser.teamId && ticket.assignedToId === currentUser.id,
+        (ticket) => ticket.assignedToId === currentUser.id,
       ).length,
-    [tickets, currentUser.teamId, currentUser.id],
+    [tickets, currentUser.id],
   )
   const activePalette = isThemeConfig(themeConfig)
     ? themeConfig[themeMode]
@@ -1325,17 +1340,22 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (currentTeamCategories.length === 0) {
-      return
-    }
-
-    const validIds = new Set(currentTeamCategories.map((c) => c.id))
-    setNewTicketForm((current) =>
-      validIds.has(current.categoryId)
-        ? current
-        : { ...current, categoryId: currentTeamCategories[0].id, teamId: currentTeam?.id ?? '' },
-    )
-  }, [currentTeamCategories, currentTeam?.id])
+    setNewTicketForm((current) => {
+      const formTeamId = current.teamId || currentTeam?.id || ''
+      if (!formTeamId) {
+        return current
+      }
+      const formTeamCategories = categories.filter((category) => category.teamId === formTeamId)
+      if (formTeamCategories.length === 0) {
+        return current.teamId === formTeamId ? current : { ...current, teamId: formTeamId }
+      }
+      const validIds = new Set(formTeamCategories.map((c) => c.id))
+      if (current.teamId === formTeamId && validIds.has(current.categoryId)) {
+        return current
+      }
+      return { ...current, teamId: formTeamId, categoryId: formTeamCategories[0].id }
+    })
+  }, [categories, currentTeam?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -1895,20 +1915,20 @@ function App() {
     switch (activeView) {
       case 'unassigned':
         return tickets.filter(
-          (ticket) => ticket.teamId === currentUser.teamId && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
+          (ticket) => isTicketInScope(ticket) && (!ticket.assignedToId || !getUserById(ticket.assignedToId)),
         )
       case 'my-tickets':
         return tickets.filter(
           (ticket) =>
-            ticket.teamId === currentUser.teamId &&
+            isTicketInScope(ticket) &&
             ticket.assignedToId === currentUser.id,
         )
       case 'team-tickets':
-        return tickets.filter((ticket) => ticket.teamId === currentUser.teamId)
+        return tickets.filter((ticket) => isTicketInScope(ticket))
       case 'dashboard':
-        return tickets.filter((ticket) => ticket.teamId === currentUser.teamId)
+        return tickets.filter((ticket) => isTicketInScope(ticket))
       default:
-        return tickets.filter((ticket) => ticket.teamId === currentUser.teamId)
+        return tickets.filter((ticket) => isTicketInScope(ticket))
     }
   }
 
@@ -1946,7 +1966,7 @@ function App() {
   const unreadNotifications = visibleNotificationItems.filter((item) => !readNotificationIdSet.has(item.id))
   const unreadNotificationCount = unreadNotifications.length
   const notificationPreviewItems = visibleNotificationItems.slice(0, 3)
-  const currentTeamTickets = tickets.filter((ticket) => ticket.teamId === currentUser.teamId)
+  const currentTeamTickets = tickets.filter((ticket) => isTicketInScope(ticket))
 
   const fallbackDashboardStats = {
     total: currentTeamTickets.length,
@@ -2519,6 +2539,8 @@ function App() {
       return
     }
 
+    const isReassigningTeam = detailDraft.teamId !== selectedTicket.teamId
+
     setDetailSavePending(true)
     setDetailSaveError('')
 
@@ -2551,6 +2573,13 @@ function App() {
       }
 
       if (!response.ok) {
+        if (response.status === 403) {
+          const errorPayload = (await response.json().catch(() => null)) as { error?: string } | null
+          if (errorPayload?.error === 'cross_org_team_reassign_forbidden') {
+            setDetailSaveError('You are not allowed to reassign this ticket to that team.')
+            return
+          }
+        }
         setDetailSaveError('Ticket changes could not be saved to SQL Server.')
         return
       }
@@ -2569,6 +2598,10 @@ function App() {
           ticket.id === payload.ticket?.id ? payload.ticket : ticket,
         ),
       )
+      if (isReassigningTeam) {
+        const newTeamName = getTeamById(payload.ticket.teamId)?.name ?? 'the selected team'
+        showQuickActionToast(`Ticket successfully reassigned to ${newTeamName}.`, 'success')
+      }
       // Sync editable custom field values from freshly-saved ticket
       const refreshed = payload.ticket
       if (refreshed) {
@@ -3657,7 +3690,7 @@ function App() {
           title: newTicketForm.title.trim(),
           description: newTicketForm.description.trim(),
           priority: newTicketForm.priority,
-          teamId: currentUser.teamId,
+          teamId: newTicketForm.teamId || currentUser.teamId,
           categoryId: newTicketForm.categoryId,
           assignedToId: newTicketForm.assignedToId || null,
           requestorName: newTicketForm.requestorName.trim(),
@@ -4126,6 +4159,7 @@ function App() {
           organizationId: userForm.organizationId,
           teamId: userForm.teamId,
           role: userForm.role,
+          canViewAllOrgTickets: userForm.canViewAllOrgTickets,
         }),
       })
 
@@ -4161,6 +4195,7 @@ function App() {
         organizationId: currentUser.organizationId,
         teamId: currentUser.teamId,
         role: 'Staff',
+        canViewAllOrgTickets: false,
       })
       setUserDirectoryNotice('User added successfully.')
       await refreshAuthSession()
@@ -4173,15 +4208,15 @@ function App() {
 
   const updateUser = (
     userId: string,
-    field: 'name' | 'email' | 'organizationId' | 'teamId' | 'role',
-    value: string,
+    field: 'name' | 'email' | 'organizationId' | 'teamId' | 'role' | 'canViewAllOrgTickets',
+    value: string | boolean,
   ) => {
     setUsers((current) =>
       current.map((user) =>
         user.id === userId
           ? {
               ...user,
-              [field]: field === 'email' ? value.toLowerCase() : value,
+              [field]: field === 'email' ? String(value).toLowerCase() : value,
             }
           : user,
       ),
@@ -4296,7 +4331,7 @@ function App() {
   }> = [
     {
       id: 'metric-total',
-      label: 'Team Tickets',
+      label: canViewAllOrgTickets ? 'Org Tickets' : 'Team Tickets',
       value: dashboardStats.total,
       accent: 'bg-blue-50 text-sky-700',
       icon: Ticket,
@@ -4351,7 +4386,9 @@ function App() {
     activeView === 'notifications'
       ? 'Notifications'
       : activeView === 'team-tickets'
-        ? `Team Tickets - ${currentTeam.name}`
+        ? canViewAllOrgTickets
+          ? 'All Organization Tickets'
+          : `Team Tickets - ${currentTeam.name}`
       : activeView === 'manage-organizations'
         ? 'Organizations'
       : activeView === 'manage-users'
@@ -4847,6 +4884,7 @@ function App() {
     updateUser(manageUsersEditDraft.id, 'organizationId', manageUsersEditDraft.organizationId)
     updateUser(manageUsersEditDraft.id, 'teamId', manageUsersEditDraft.teamId)
     updateUser(manageUsersEditDraft.id, 'role', manageUsersEditDraft.role)
+    updateUser(manageUsersEditDraft.id, 'canViewAllOrgTickets', Boolean(manageUsersEditDraft.canViewAllOrgTickets))
     await persistUser(manageUsersEditDraft)
   }
 
@@ -4953,6 +4991,24 @@ function App() {
                 {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                 <option value="Staff">Staff</option>
               </select>
+            </label>
+            <label className="col-span-full flex items-start gap-2 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-3 py-2.5">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={Boolean(manageUsersEditDraft.canViewAllOrgTickets)}
+                onChange={(event) =>
+                  setManageUsersEditDraft((current) =>
+                    current ? { ...current, canViewAllOrgTickets: event.target.checked } : current,
+                  )
+                }
+              />
+              <span>
+                <span className="block text-sm font-medium text-[color:var(--text)]">See all organization tickets</span>
+                <span className="block text-xs text-[color:var(--text-muted)]">
+                  When enabled, this user can view and edit tickets for every team in their organization, create tickets for any team, and reassign tickets between teams.
+                </span>
+              </span>
             </label>
           </div>
         </div>
@@ -5310,6 +5366,22 @@ function App() {
                     <option value="Staff">Staff</option>
                   </select>
                 </label>
+                <label className="flex items-start gap-2 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={userForm.canViewAllOrgTickets}
+                    onChange={(event) =>
+                      setUserForm((current) => ({ ...current, canViewAllOrgTickets: event.target.checked }))
+                    }
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-[color:var(--text)]">See all organization tickets</span>
+                    <span className="block text-xs text-[color:var(--text-muted)]">
+                      Grants view/edit access to every team's tickets, cross-team ticket creation, and reassignment.
+                    </span>
+                  </span>
+                </label>
                 <button type="button" className="primary-button mt-2 w-full justify-center" onClick={addUser}>
                   {userFormPending ? 'Adding...' : 'Add User'}
                 </button>
@@ -5325,6 +5397,7 @@ function App() {
                         <th className="px-4 py-3 font-semibold">Organization</th>
                         <th className="px-4 py-3 font-semibold">Team</th>
                         <th className="px-4 py-3 font-semibold">Role</th>
+                        <th className="px-4 py-3 font-semibold">Org tickets</th>
                         <th className="px-4 py-3 text-right font-semibold">Edit</th>
                       </tr>
                     </thead>
@@ -5344,6 +5417,7 @@ function App() {
                             <td className="px-4 py-3 text-[color:var(--text-muted)]">{organizationName}</td>
                             <td className="px-4 py-3 text-[color:var(--text-muted)]">{teamName}</td>
                             <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.role}</td>
+                            <td className="px-4 py-3 text-[color:var(--text-muted)]">{user.canViewAllOrgTickets ? 'Yes' : 'No'}</td>
                             <td className="px-4 py-3 text-right">
                               <button
                                 type="button"
@@ -6265,6 +6339,22 @@ function App() {
                       {superAdminEnabled && <option value="Super Admin">Super Admin</option>}
                       <option value="Staff">Staff</option>
                     </select>
+                  </label>
+                  <label className="flex items-start gap-2 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={userForm.canViewAllOrgTickets}
+                      onChange={(event) =>
+                        setUserForm((current) => ({ ...current, canViewAllOrgTickets: event.target.checked }))
+                      }
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-[color:var(--text)]">See all organization tickets</span>
+                      <span className="block text-xs text-[color:var(--text-muted)]">
+                        Grants view/edit access to every team's tickets, cross-team ticket creation, and reassignment.
+                      </span>
+                    </span>
                   </label>
                   <button type="button" className="primary-button w-full justify-center" onClick={addUser}>
                     {userFormPending ? 'Adding...' : 'Add User'}
@@ -8790,6 +8880,8 @@ function App() {
                       ? `${users.length} users across ${teams.length} teams`
                     : activeView === 'ticket-designer'
                       ? 'Configure custom fields per team'
+                    : canViewAllOrgTickets
+                      ? `${visibleTickets.length} tickets across your organization`
                     : `${visibleTickets.length} tickets in ${currentTeam.name}`}
                 </div>
               </div>
@@ -8944,11 +9036,13 @@ function App() {
                   <div className="mb-4">
                     <div className="text-xl font-semibold">New Support Ticket</div>
                     <div className="text-sm text-[color:var(--text-muted)]">
-                      Categories and assignees are restricted to {currentTeam.name}.
+                      {canViewAllOrgTickets
+                        ? 'Choose any team in your organization. Categories and assignees are restricted to the selected team.'
+                        : `Categories and assignees are restricted to ${currentTeam.name}.`}
                     </div>
                   </div>
 
-                  {currentTeamCategories.length === 0 && (
+                  {currentTeamCategories.length === 0 && !canViewAllOrgTickets && (
                     <div className="mb-4 rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                       No categories are configured for {currentTeam.name}. An administrator must add at least one category in Settings before tickets can be created.
                     </div>
@@ -8961,11 +9055,23 @@ function App() {
                     users={users}
                     locations={locations}
                     values={newTicketForm}
-                    onChange={(patch) => setNewTicketForm((current) => ({ ...current, ...patch }))}
+                    onChange={(patch) =>
+                      setNewTicketForm((current) => {
+                        const next = { ...current, ...patch }
+                        if (patch.teamId && patch.teamId !== current.teamId) {
+                          const firstCategory = categories.find((c) => c.teamId === patch.teamId)
+                          next.categoryId = firstCategory?.id ?? ''
+                          next.assignedToId = ''
+                        }
+                        return next
+                      })
+                    }
                     customValues={newTicketCustomFields}
                     onCustomChange={(fieldId, value) =>
                       setNewTicketCustomFields((prev) => ({ ...prev, [fieldId]: value }))
                     }
+                    teamOptions={organizationTeams}
+                    canChangeTeam={canViewAllOrgTickets}
                   />
 
                   <div className="mt-4 flex items-center justify-end gap-3">
@@ -9164,6 +9270,8 @@ function App() {
                         onCustomChange={(fieldId, value) =>
                           setDetailCustomFieldValues((prev) => ({ ...prev, [fieldId]: value }))
                         }
+                        teamOptions={organizationTeams}
+                        canChangeTeam={canViewAllOrgTickets}
                       />
 
                       {/* Watchers — hidden for first release; flip to true to restore */}

@@ -10,13 +10,14 @@ import {
   listTicketVersions,
   listTickets,
   revertTicketToVersion,
-  ticketBelongsToTeam,
   updateTicket,
   listTicketWatchers,
   addTicketWatcher,
   removeTicketWatcher,
   listWatchedTicketIds,
   upsertCustomFieldValues,
+  userCanAccessTicket,
+  userCanUseTeam,
 } from '../tickets.js'
 import { seedRandomTickets } from '../ticket-seeding.js'
 import {
@@ -55,7 +56,9 @@ ticketsRouter.get('/', requireAuth, async (req, res) => {
   const user = req.user!
 
   try {
-    const tickets = await listTickets(user.teamId)
+    const tickets = await listTickets(
+      user.canViewAllOrgTickets ? { organizationId: user.organizationId } : { teamId: user.teamId },
+    )
     res.json({ tickets })
   } catch (error) {
     console.error('Loading tickets failed.', error)
@@ -67,7 +70,9 @@ ticketsRouter.get('/activity', requireAuth, async (req, res) => {
   const user = req.user!
 
   try {
-    const tickets = await listTickets(user.teamId)
+    const tickets = await listTickets(
+      user.canViewAllOrgTickets ? { organizationId: user.organizationId } : { teamId: user.teamId },
+    )
     const ticketIds = new Set(tickets.map((t) => t.id))
     const activity = (await listTicketActivity()).filter((e) => ticketIds.has(e.ticketId))
     res.json({ activity })
@@ -85,7 +90,7 @@ ticketsRouter.post('/', requireAuth, async (req, res) => {
   const user = req.user!
 
   const teamId = typeof req.body?.teamId === 'string' ? req.body.teamId : ''
-  if (!teamId || teamId !== user.teamId) {
+  if (!teamId || !(await userCanUseTeam(teamId, user))) {
     res.status(403).json({ error: 'cross_team_ticket_create_forbidden' })
     return
   }
@@ -195,7 +200,7 @@ ticketsRouter.get('/:ticketId', requireAuth, async (req, res) => {
   const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -218,20 +223,15 @@ ticketsRouter.patch('/:ticketId', requireAuth, async (req, res) => {
     return
   }
 
-  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!(await userCanAccessTicket(ticketId, user))) {
     res.status(403).json({ error: 'cross_team_ticket_update_forbidden' })
     return
   }
 
-  const db = getDb()
   const newTeamId = typeof req.body?.teamId === 'string' && req.body.teamId.trim() ? req.body.teamId.trim() : user.teamId
-  if (newTeamId !== user.teamId) {
-    const targetTeamResult = await db.execute({ sql: 'SELECT OrganizationId FROM Teams WHERE Id = ?', args: [newTeamId] })
-    const targetTeam = targetTeamResult.rows[0] as { OrganizationId?: unknown } | undefined
-    if (!targetTeam || String(targetTeam.OrganizationId) !== user.organizationId) {
-      res.status(403).json({ error: 'cross_org_team_reassign_forbidden' })
-      return
-    }
+  if (!(await userCanUseTeam(newTeamId, user))) {
+    res.status(403).json({ error: 'cross_org_team_reassign_forbidden' })
+    return
   }
 
   try {
@@ -308,7 +308,7 @@ ticketsRouter.delete('/:ticketId', requireAuth, async (req, res) => {
     return
   }
 
-  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!(await userCanAccessTicket(ticketId, user))) {
     res.status(403).json({ error: 'cross_team_ticket_delete_forbidden' })
     return
   }
@@ -340,7 +340,7 @@ ticketsRouter.post('/:ticketId/comments', requireAuth, async (req, res) => {
     return
   }
 
-  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!(await userCanAccessTicket(ticketId, user))) {
     res.status(403).json({ error: 'cross_team_ticket_comment_forbidden' })
     return
   }
@@ -362,7 +362,7 @@ ticketsRouter.get('/:ticketId/attachments', requireAuth, async (req, res) => {
   const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -380,7 +380,7 @@ ticketsRouter.post('/:ticketId/attachments', attachmentUpload.single('file'), re
   const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -419,7 +419,7 @@ ticketsRouter.get('/:ticketId/attachments/:attachmentId', requireAuth, async (re
   const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
   const disposition = req.query.disposition === 'inline' ? 'inline' : 'attachment'
 
-  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !attachmentId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'attachment_not_found' })
     return
   }
@@ -446,7 +446,7 @@ ticketsRouter.delete('/:ticketId/attachments/:attachmentId', requireAuth, async 
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
   const attachmentId = typeof req.params.attachmentId === 'string' ? req.params.attachmentId : ''
 
-  if (!ticketId || !attachmentId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !attachmentId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'attachment_not_found' })
     return
   }
@@ -474,10 +474,11 @@ ticketsRouter.get('/watchers/my-tickets', requireAuth, async (req, res) => {
 })
 
 ticketsRouter.get('/:ticketId/watchers', requireAuth, async (req, res) => {
+  const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
-  if (!ticketId) {
-    res.status(400).json({ error: 'invalid_ticket_id' })
+  if (!ticketId || !(await userCanAccessTicket(ticketId, user))) {
+    res.status(404).json({ error: 'ticket_not_found' })
     return
   }
   res.json({ watchers: await listTicketWatchers(ticketId) })
@@ -490,6 +491,11 @@ ticketsRouter.post('/:ticketId/watchers', requireAuth, async (req, res) => {
 
   if (!ticketId || !targetUserId) {
     res.status(400).json({ error: 'invalid_params' })
+    return
+  }
+
+  if (!(await userCanAccessTicket(ticketId, user))) {
+    res.status(404).json({ error: 'ticket_not_found' })
     return
   }
 
@@ -516,6 +522,11 @@ ticketsRouter.delete('/:ticketId/watchers/:userId', requireAuth, async (req, res
     return
   }
 
+  if (!(await userCanAccessTicket(ticketId, user))) {
+    res.status(404).json({ error: 'ticket_not_found' })
+    return
+  }
+
   if (targetUserId !== user.id && !isAdminUser(user)) {
     res.status(403).json({ error: 'remove_watcher_forbidden' })
     return
@@ -533,7 +544,7 @@ ticketsRouter.get('/:ticketId/versions', requireAuth, async (req, res) => {
   const user = req.user!
   const ticketId = typeof req.params.ticketId === 'string' ? req.params.ticketId : ''
 
-  if (!ticketId || !(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!ticketId || !(await userCanAccessTicket(ticketId, user))) {
     res.status(404).json({ error: 'ticket_not_found' })
     return
   }
@@ -557,7 +568,7 @@ ticketsRouter.post('/:ticketId/versions/:versionId/revert', requireAdmin, async 
     return
   }
 
-  if (!(await ticketBelongsToTeam(ticketId, user.teamId))) {
+  if (!(await userCanAccessTicket(ticketId, user))) {
     res.status(403).json({ error: 'cross_team_ticket_revert_forbidden' })
     return
   }

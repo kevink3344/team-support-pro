@@ -2,6 +2,7 @@ import type {
   BuiltInFieldKey,
   Category,
   Location,
+  Team,
   TicketFieldDefinition,
   TicketLayout,
   TicketPriority,
@@ -55,6 +56,10 @@ interface LayoutTicketFormProps {
   onChange: (patch: Partial<LayoutTicketFormProps['values']>) => void
   customValues: Record<string, string>
   onCustomChange: (fieldId: string, value: string) => void
+  /** Teams the current user is allowed to pick from when reassigning/creating for another team. */
+  teamOptions?: Team[]
+  /** Show the team selector (typically only for users with org-wide ticket access). */
+  canChangeTeam?: boolean
 }
 
 export function LayoutTicketForm({
@@ -67,6 +72,8 @@ export function LayoutTicketForm({
   onChange,
   customValues,
   onCustomChange,
+  teamOptions,
+  canChangeTeam,
 }: LayoutTicketFormProps) {
   const customFieldMap = new Map(customFieldDefs.map((d) => [d.id, d]))
 
@@ -262,6 +269,22 @@ export function LayoutTicketForm({
 
   return (
     <div className="space-y-4">
+      {canChangeTeam && teamOptions && teamOptions.length > 0 && (
+        <label className="field">
+          <span className="field-label">Team</span>
+          <select
+            className="input-control"
+            value={values.teamId}
+            onChange={(e) => onChange({ teamId: e.target.value })}
+          >
+            {teamOptions.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {rows.map((row) =>
         row.slots.length === 0 ? null : (
           <div key={row.id} className="grid gap-4 md:grid-cols-2">

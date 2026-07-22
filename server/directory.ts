@@ -32,6 +32,7 @@ export interface DirectoryUser {
   organizationId: string
   teamId: string
   role: 'Admin' | 'Super Admin' | 'Staff'
+  canViewAllOrgTickets: boolean
 }
 
 export interface DirectoryOrganizationInput {
@@ -63,6 +64,7 @@ export interface DirectoryUserInput {
   organizationId: string
   teamId: string
   role: 'Admin' | 'Super Admin' | 'Staff'
+  canViewAllOrgTickets?: boolean
 }
 
 const normalizeRole = (value: unknown): 'Admin' | 'Super Admin' | 'Staff' => {
@@ -101,6 +103,7 @@ const normalizeUser = (record: Record<string, unknown>): DirectoryUser => ({
   organizationId: String(record.organizationId),
   teamId: String(record.teamId),
   role: normalizeRole(record.role),
+  canViewAllOrgTickets: Number(record.canViewAllOrgTickets) === 1,
 })
 
 const validString = (value: string) => value.trim().length > 0
@@ -244,14 +247,14 @@ export const deleteCategory = async (categoryId: string): Promise<boolean> => {
 export const listUsers = async (organizationId?: string): Promise<DirectoryUser[]> => {
   const db = getDb()
   const rows = organizationId
-    ? await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users WHERE OrganizationId = ? ORDER BY Name ASC', [organizationId])
-    : await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users ORDER BY Name ASC')
+    ? await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role, CanViewAllOrgTickets AS canViewAllOrgTickets FROM Users WHERE OrganizationId = ? ORDER BY Name ASC', [organizationId])
+    : await dbAll(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role, CanViewAllOrgTickets AS canViewAllOrgTickets FROM Users ORDER BY Name ASC')
   return rows.map(normalizeUser)
 }
 
 export const getUserById = async (userId: string): Promise<DirectoryUser | null> => {
   const db = getDb()
-  const row = await dbGet(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role FROM Users WHERE Id = ?', [userId])
+  const row = await dbGet(db, 'SELECT Id AS id, Name AS name, Email AS email, OrganizationId AS organizationId, TeamId AS teamId, Role AS role, CanViewAllOrgTickets AS canViewAllOrgTickets FROM Users WHERE Id = ?', [userId])
   return row ? normalizeUser(row) : null
 }
 
@@ -262,7 +265,7 @@ export const createUser = async (input: DirectoryUserInput): Promise<DirectoryUs
   if (!await organizationExists(organizationId) || !await teamBelongsToOrganization(teamId, organizationId)) return null
   const userId = defaultUserId(input)
   const db = getDb()
-  await dbRun(db, 'INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role) VALUES (?, ?, ?, ?, ?, ?, ?)', [userId, input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role])
+  await dbRun(db, 'INSERT INTO Users (Id, Name, DisplayName, Email, OrganizationId, TeamId, Role, CanViewAllOrgTickets) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [userId, input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role, input.canViewAllOrgTickets ? 1 : 0])
   return getUserById(userId)
 }
 
@@ -272,7 +275,7 @@ export const updateUser = async (userId: string, input: DirectoryUserInput): Pro
   const teamId = input.teamId.trim()
   if (!await organizationExists(organizationId) || !await teamBelongsToOrganization(teamId, organizationId)) return null
   const db = getDb()
-  await dbRun(db, "UPDATE Users SET Name = ?, DisplayName = ?, Email = ?, OrganizationId = ?, TeamId = ?, Role = ?, UpdatedAt = datetime('now') WHERE Id = ?", [input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role, userId])
+  await dbRun(db, "UPDATE Users SET Name = ?, DisplayName = ?, Email = ?, OrganizationId = ?, TeamId = ?, Role = ?, CanViewAllOrgTickets = ?, UpdatedAt = datetime('now') WHERE Id = ?", [input.name.trim(), input.name.trim(), input.email.trim().toLowerCase(), organizationId, teamId, input.role, input.canViewAllOrgTickets ? 1 : 0, userId])
   return getUserById(userId)
 }
 

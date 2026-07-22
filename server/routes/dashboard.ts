@@ -25,7 +25,7 @@ dashboardRouter.get('/summary', requireAuth, async (req, res) => {
   const user = req.user!
 
   try {
-    const summary = await getDashboardSummary(user.teamId, user.organizationId)
+    const summary = await getDashboardSummary(user.canViewAllOrgTickets ? null : user.teamId, user.organizationId)
     res.json({ summary })
   } catch (error) {
     console.error('Loading dashboard summary failed.', error)

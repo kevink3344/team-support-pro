@@ -161,22 +161,75 @@ export const ticketBelongsToTeam = async (ticketId: string, teamId: string) => {
   return !!row
 }
 
+/** Ticket is on a team that belongs to the given organization. */
+export const ticketBelongsToOrganization = async (ticketId: string, organizationId: string) => {
+  const db = getDb()
+  const row = await dbGet(
+    db,
+    'SELECT 1 AS allowed FROM Tickets t JOIN Teams tm ON tm.Id = t.TeamId WHERE t.Id = ? AND tm.OrganizationId = ?',
+    [ticketId, organizationId],
+  )
+  return !!row
+}
+
+export interface TicketScopeUser {
+  teamId: string
+  organizationId: string
+  canViewAllOrgTickets: boolean
+}
+
+/**
+ * User may access the ticket if it belongs to their own team, or — when the
+ * user has org-wide access — any team within their organization.
+ */
+export const userCanAccessTicket = async (ticketId: string, user: TicketScopeUser): Promise<boolean> => {
+  if (user.canViewAllOrgTickets) return ticketBelongsToOrganization(ticketId, user.organizationId)
+  return ticketBelongsToTeam(ticketId, user.teamId)
+}
+
+/**
+ * User may create/update tickets for teamId if it is their own team, or —
+ * when the user has org-wide access — any team within their organization.
+ */
+export const userCanUseTeam = async (teamId: string, user: TicketScopeUser): Promise<boolean> => {
+  if (teamId === user.teamId) return true
+  if (!user.canViewAllOrgTickets) return false
+  const db = getDb()
+  const row = await dbGet(db, 'SELECT 1 AS allowed FROM Teams WHERE Id = ? AND OrganizationId = ?', [teamId, user.organizationId])
+  return !!row
+}
+
 export const listTicketActivity = async (): Promise<TicketActivityRecord[]> => {
   const db = getDb()
   const rows = await dbAll(db, 'SELECT Id AS id, TicketId AS ticketId, Actor AS actor, Message AS message, ActivityAt AS activityAt FROM TicketActivity')
   return rows.map(mapActivityRecord)
 }
 
-export const listTickets = async (teamId?: string): Promise<TicketRecord[]> => {
+export interface TicketListScope {
+  teamId?: string
+  organizationId?: string
+}
+
+export const listTickets = async (scope: string | TicketListScope | undefined): Promise<TicketRecord[]> => {
+  const normalizedScope: TicketListScope = typeof scope === 'string' ? { teamId: scope } : scope ?? {}
+  const { teamId, organizationId } = normalizedScope
+
   const db = getDb()
-  const ticketSql = `SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets${teamId ? ' WHERE TeamId = ?' : ''} ORDER BY UpdatedAt DESC, CreatedAt DESC`
-  const ticketRows = await dbAll(db, ticketSql, teamId ? [teamId] : [])
+  const whereSql = organizationId
+    ? ' WHERE TeamId IN (SELECT Id FROM Teams WHERE OrganizationId = ?)'
+    : teamId
+      ? ' WHERE TeamId = ?'
+      : ''
+  const whereArgs = organizationId ? [organizationId] : teamId ? [teamId] : []
+
+  const ticketSql = `SELECT Id AS id, Title AS title, Description AS description, Status AS status, Priority AS priority, TeamId AS teamId, CategoryId AS categoryId, AssignedToId AS assignedToId, RequestorName AS requestorName, RequestorEmail AS requestorEmail, Location AS location, DueLabel AS dueLabel, CreatedAt AS createdAt, UpdatedAt AS updatedAt, ResolvedAt AS resolvedAt, (SELECT COUNT(1) FROM TicketAttachments ta WHERE ta.TicketId = Tickets.Id AND ta.IsDeleted = 0) AS attachmentCount FROM Tickets${whereSql} ORDER BY UpdatedAt DESC, CreatedAt DESC`
+  const ticketRows = await dbAll(db, ticketSql, whereArgs)
   const tickets = ticketRows.map(mapTicketRecord)
   const allActivity = await listTicketActivity()
   const ticketIds = new Set(tickets.map((t) => t.id))
 
-  const cfSql = `SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId IN (SELECT Id FROM Tickets${teamId ? ' WHERE TeamId = ?' : ''}) ORDER BY rowid ASC`
-  const cfRows = await dbAll(db, cfSql, teamId ? [teamId] : []) as Array<{ id: unknown; ticketId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
+  const cfSql = `SELECT Id AS id, TicketId AS ticketId, FieldId AS fieldId, FieldLabel AS fieldLabel, FieldType AS fieldType, Value AS value FROM TicketCustomFieldValues WHERE TicketId IN (SELECT Id FROM Tickets${whereSql}) ORDER BY rowid ASC`
+  const cfRows = await dbAll(db, cfSql, whereArgs) as Array<{ id: unknown; ticketId: unknown; fieldId: unknown; fieldLabel: unknown; fieldType: unknown; value: unknown }>
 
   const customFieldsByTicket = new Map<string, TicketCustomFieldValue[]>()
   for (const row of cfRows) {

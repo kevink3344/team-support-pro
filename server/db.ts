@@ -152,6 +152,7 @@ const SCHEMA_STATEMENTS = [
     OrganizationId TEXT NOT NULL,
     TeamId TEXT NOT NULL,
     Role TEXT NOT NULL DEFAULT 'Staff',
+    CanViewAllOrgTickets INTEGER NOT NULL DEFAULT 0,
     CreatedAt TEXT DEFAULT (datetime('now')),
     UpdatedAt TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (OrganizationId) REFERENCES Organizations(Id),
@@ -363,6 +364,7 @@ const MIGRATION_STATEMENTS = [
   `ALTER TABLE Tickets ADD COLUMN RequestorEmail TEXT NOT NULL DEFAULT ''`,
   `ALTER TABLE Tickets ADD COLUMN Location TEXT NOT NULL DEFAULT 'Not specified'`,
   `ALTER TABLE TicketFieldDefinitions ADD COLUMN OrganizationId TEXT`,
+  `ALTER TABLE Users ADD COLUMN CanViewAllOrgTickets INTEGER NOT NULL DEFAULT 0`,
 ]
 
 const recreateTicketFieldDefinitionsWithoutTeamId = async (db: Client): Promise<void> => {

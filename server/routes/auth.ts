@@ -137,13 +137,15 @@ authRouter.get('/me', requireAuth, async (req, res) => {
   if (current) {
     const teamChanged = current.teamId !== sessionUser.teamId
     const orgChanged = current.organizationId !== sessionUser.organizationId
+    const orgAccessChanged = current.canViewAllOrgTickets !== sessionUser.canViewAllOrgTickets
 
     if (
       current.role !== sessionUser.role ||
       current.name !== sessionUser.name ||
       current.email !== sessionUser.email ||
       teamChanged ||
-      orgChanged
+      orgChanged ||
+      orgAccessChanged
     ) {
       const [team, organization] = await Promise.all([
         teamChanged ? getTeamById(current.teamId) : null,
@@ -163,6 +165,7 @@ authRouter.get('/me', requireAuth, async (req, res) => {
         teamName: team?.name ?? sessionUser.teamName,
         teamCode: team?.code ?? sessionUser.teamCode,
         teamAccent: team?.accent ?? sessionUser.teamAccent,
+        canViewAllOrgTickets: current.canViewAllOrgTickets,
       }
       res.cookie(
         SESSION_COOKIE_NAME,
