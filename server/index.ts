@@ -13,13 +13,20 @@ import { resolveAnonymousPageConfig, normalizeAnonymousPagePath } from './anonym
 import { listOrganizations } from './directory.js'
 import { upsertLocalAccountPersisted } from './local-auth.js'
 import { getDb, initDb, dbAll } from './db.js'
-import { readRapidIdentityEnabled, readAboutPageHtml } from './app-settings.js'
+import {
+  readRapidIdentityEnabled,
+  readAboutPageHtml,
+  readLoginMode,
+  readMaintenanceMessage,
+  getLoginModeEnvOverride,
+} from './app-settings.js'
 import { requireAuth } from './middleware.js'
 import { listUsers } from './directory.js'
 import { listLocations } from './locations.js'
 
 // Route modules
 import { settingsRouter } from './routes/settings.js'
+import { settingsTabsRouter } from './routes/settings-tabs.js'
 import { webhooksRouter } from './routes/webhooks.js'
 import { feedbackRouter } from './routes/feedback.js'
 import { anonymousPagesRouter } from './routes/anonymous-pages.js'
@@ -107,13 +114,30 @@ app.get('/api/health', (_req, res) => {
 })
 
 app.get('/api/public/auth-settings', async (_req, res) => {
+  const [rapidIdentityEnabled, loginMode, maintenanceMessage] = await Promise.all([
+    readRapidIdentityEnabled(),
+    readLoginMode(),
+    readMaintenanceMessage(),
+  ])
   res.json({
-    rapidIdentityEnabled: await readRapidIdentityEnabled(),
+    rapidIdentityEnabled,
     superAdminEnabled: serverConfig.superAdminEnabled,
+    loginMode,
+    maintenanceMessage,
+    loginModeOverride: getLoginModeEnvOverride(),
+  })
+})
+
+app.get('/api/info', async (_req, res) => {
+  res.json({
+    version: '2.0.1',
+    loginModeOverride: getLoginModeEnvOverride(),
+    loginMode: await readLoginMode(),
   })
 })
 
 app.get('/api/public/test-login-users', async (_req, res) => {
+
   try {
     const directory = await import('./directory.js')
     const [organizations, teams, users, categories] = await Promise.all([
@@ -148,6 +172,7 @@ app.get('/api/public/test-login-users', async (_req, res) => {
 // ---------------------------------------------------------------------------
 
 app.use('/api/settings', settingsRouter)
+app.use('/api/settings', settingsTabsRouter)
 app.use('/api/settings', webhooksRouter)
 app.get('/api/about', requireAuth, async (_req, res) => {
   res.json({ html: await readAboutPageHtml() })

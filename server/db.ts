@@ -354,6 +354,24 @@ const SCHEMA_STATEMENTS = [
     CreatedAt TEXT DEFAULT (datetime('now')),
     UpdatedAt TEXT DEFAULT (datetime('now'))
   )`,
+  `CREATE TABLE IF NOT EXISTS settings_tabs (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    visible_to TEXT NOT NULL DEFAULT 'all' CHECK(visible_to IN ('all', 'super_admin')),
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS settings_tab_sections (
+    id TEXT PRIMARY KEY,
+    tab_id TEXT NOT NULL,
+    section_key TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (tab_id) REFERENCES settings_tabs(id) ON DELETE CASCADE,
+    UNIQUE (tab_id, section_key)
+  )`,
 ]
 
 const MIGRATION_STATEMENTS = [
@@ -630,6 +648,68 @@ const seedLocations = async (db: Client): Promise<void> => {
   }
 }
 
+const seedSettingsTabs = async (db: Client): Promise<void> => {
+  const countRow = await db.execute('SELECT COUNT(1) AS cnt FROM settings_tabs')
+  if (Number(countRow.rows[0]?.cnt ?? 0) > 0) return
+
+  const { randomUUID } = await import('node:crypto')
+  const now = new Date().toISOString()
+
+  const tabs = [
+    { name: 'General', slug: 'general', sort_order: 0, visible_to: 'all' },
+    { name: 'Configuration', slug: 'configuration', sort_order: 1, visible_to: 'all' },
+    { name: 'Storage', slug: 'storage', sort_order: 2, visible_to: 'all' },
+    { name: 'Private', slug: 'private', sort_order: 3, visible_to: 'super_admin' },
+  ]
+
+  for (const tab of tabs) {
+    const tabId = randomUUID()
+    await db.execute({
+      sql: `INSERT INTO settings_tabs (id, name, slug, sort_order, visible_to, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [tabId, tab.name, tab.slug, tab.sort_order, tab.visible_to, now, now],
+    })
+  }
+
+  // Seed default section assignments
+  const tabRows = await dbAll(db, 'SELECT id, slug FROM settings_tabs ORDER BY sort_order')
+  const tabMap: Record<string, string> = {}
+  for (const row of tabRows) {
+    tabMap[String(row.slug)] = String(row.id)
+  }
+
+  const defaultAssignments: Record<string, string[]> = {
+    general: [
+      'appearance', 'loginMode', 'manageOrganizations', 'manageUsers',
+      'manageTeams', 'aboutPage',
+    ],
+    configuration: [
+      'authentication', 'categories', 'locations', 'powerBi',
+      'trendSeeding', 'ticketSeeding',
+    ],
+    storage: [
+      'email', 'feedbackForm', 'webhooks',
+    ],
+    private: [
+      'anonymousPages',
+    ],
+  }
+
+  for (const [slug, sections] of Object.entries(defaultAssignments)) {
+    const tabId = tabMap[slug]
+    if (!tabId) continue
+    for (let i = 0; i < sections.length; i++) {
+      await db.execute({
+        sql: `INSERT OR IGNORE INTO settings_tab_sections (id, tab_id, section_key, sort_order, created_at)
+              VALUES (?, ?, ?, ?, ?)`,
+        args: [randomUUID(), tabId, sections[i], i, now],
+      })
+    }
+  }
+
+  console.log('Settings tabs seeded with 4 default tabs and section assignments.')
+}
+
 export const initDb = async (): Promise<void> => {
   if (serverConfig.db.mode === 'sqlserver') {
     // SQL Server database is managed externally; skip SQLite schema/seed init
@@ -654,4 +734,6 @@ export const initDb = async (): Promise<void> => {
   await backfillDefaultLayouts(db)
 
   await seedLocations(db)
+
+  await seedSettingsTabs(db)
 }

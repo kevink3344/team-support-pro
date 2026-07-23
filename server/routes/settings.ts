@@ -10,6 +10,14 @@ import {
   writePowerBiReportUrl,
   readAboutPageHtml,
   writeAboutPageHtml,
+  normalizeLoginMode,
+  getLoginModeEnvOverride,
+  readLoginMode,
+  readStoredLoginMode,
+  writeLoginMode,
+  readMaintenanceMessage,
+  writeMaintenanceMessage,
+  type LoginMode,
 } from '../app-settings.js'
 import {
   listLocations,
@@ -38,8 +46,69 @@ settingsRouter.patch('/auth', requireSuperAdmin, async (req, res) => {
 })
 
 // ---------------------------------------------------------------------------
+// Login mode settings
+// ---------------------------------------------------------------------------
+
+settingsRouter.get('/login-mode', requireAdmin, async (_req, res) => {
+  const [loginMode, storedLoginMode, maintenanceMessage] = await Promise.all([
+    readLoginMode(),
+    readStoredLoginMode(),
+    readMaintenanceMessage(),
+  ])
+  res.json({
+    loginMode,
+    storedLoginMode,
+    loginModeOverride: getLoginModeEnvOverride(),
+    maintenanceMessage,
+  })
+})
+
+settingsRouter.patch('/login-mode', requireAdmin, async (req, res) => {
+  const hasLoginMode = req.body?.loginMode !== undefined
+  const hasMaintenanceMessage = req.body?.maintenanceMessage !== undefined
+
+  if (!hasLoginMode && !hasMaintenanceMessage) {
+    res.status(400).json({ error: 'invalid_login_mode_payload' })
+    return
+  }
+
+  if (hasLoginMode) {
+    const nextMode = normalizeLoginMode(req.body.loginMode)
+    const raw = String(req.body.loginMode ?? '')
+      .trim()
+      .toLowerCase()
+    if (raw !== 'select' && raw !== 'password' && raw !== 'maintenance') {
+      res.status(400).json({ error: 'invalid_login_mode', allowed: ['select', 'password', 'maintenance'] as LoginMode[] })
+      return
+    }
+    await writeLoginMode(nextMode)
+  }
+
+  if (hasMaintenanceMessage) {
+    if (typeof req.body.maintenanceMessage !== 'string') {
+      res.status(400).json({ error: 'invalid_maintenance_message' })
+      return
+    }
+    await writeMaintenanceMessage(req.body.maintenanceMessage)
+  }
+
+  const [loginMode, storedLoginMode, maintenanceMessage] = await Promise.all([
+    readLoginMode(),
+    readStoredLoginMode(),
+    readMaintenanceMessage(),
+  ])
+  res.json({
+    loginMode,
+    storedLoginMode,
+    loginModeOverride: getLoginModeEnvOverride(),
+    maintenanceMessage,
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Email settings
 // ---------------------------------------------------------------------------
+
 
 settingsRouter.get('/email', requireSuperAdmin, async (_req, res) => {
   const { resendApiKey, from, replyTo, gmailUser, gmailAppPassword, pollIntervalMs } = serverConfig.email

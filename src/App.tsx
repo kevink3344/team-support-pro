@@ -82,6 +82,7 @@ import type {
   TicketFieldDefinition,
   TicketLayout,
   TicketPriority,
+  SettingsTab,
   TicketStatus,
   TicketWatcher,
   TrendPoint,
@@ -112,6 +113,7 @@ import { STORAGE_KEYS, statusOptions, navItems, adminNavItems, teamIcons } from 
 type SettingsAccordionSection =
   | 'appearance'
   | 'authentication'
+  | 'loginMode'
   | 'anonymousPages'
   | 'manageOrganizations'
   | 'manageUsers'
@@ -138,6 +140,36 @@ type SettingsAccordionState = Record<SettingsAccordionSection, boolean>
 
 type QuickTicketAction = 'assign-to-me' | 'mark-in-progress' | 'mark-resolved'
 
+type LoginMode = 'select' | 'password' | 'maintenance'
+
+const LOGIN_MODE_OPTIONS: Array<{ value: LoginMode; label: string; description: string }> = [
+  {
+    value: 'select',
+    label: 'Select User (Test)',
+    description: 'Organization and user dropdowns — sign in without a password.',
+  },
+  {
+    value: 'password',
+    label: 'Password (Production)',
+    description: 'Email and password form for production environments.',
+  },
+  {
+    value: 'maintenance',
+    label: 'System Maintenance',
+    description: 'Hide login forms and show a maintenance message. Admins can bypass with ?admin=1.',
+  },
+]
+
+const normalizeClientLoginMode = (value: unknown): LoginMode => {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'password' || normalized === 'maintenance' || normalized === 'select') {
+    return normalized
+  }
+  return 'select'
+}
+
 type QuickActionConfirmationState = {
   ticketId: string
   ticketTitle: string
@@ -152,6 +184,7 @@ type QuickActionToastState = {
 const defaultSettingsAccordionOrder: SettingsAccordionSection[] = [
   'appearance',
   'authentication',
+  'loginMode',
   'anonymousPages',
   'manageOrganizations',
   'manageUsers',
@@ -173,10 +206,24 @@ const normalizeSettingsAccordionOrder = (storedOrder: string[] | null | undefine
     (section): section is SettingsAccordionSection => validSections.has(section as SettingsAccordionSection),
   )
 
-  return [
-    ...sanitized,
-    ...defaultSettingsAccordionOrder.filter((section) => !sanitized.includes(section)),
-  ]
+  const missing = defaultSettingsAccordionOrder.filter((section) => !sanitized.includes(section))
+  const next = [...sanitized]
+
+  // Prefer placing newly added sections near their default neighbors instead of dumping them at the end.
+  for (const section of missing) {
+    const defaultIndex = defaultSettingsAccordionOrder.indexOf(section)
+    const preferredBefore = defaultSettingsAccordionOrder
+      .slice(0, defaultIndex)
+      .reverse()
+      .find((candidate) => next.includes(candidate))
+    if (preferredBefore) {
+      next.splice(next.indexOf(preferredBefore) + 1, 0, section)
+    } else {
+      next.push(section)
+    }
+  }
+
+  return next
 }
 
 const isValidHttpUrl = (value: string) => {
@@ -438,6 +485,9 @@ function App() {
   const settingsAccordionOrderStorageKey = authSession
     ? `${STORAGE_KEYS.settingsAccordionOrder}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.settingsAccordionOrder
+  const [settingsTabs, setSettingsTabs] = useState<SettingsTab[]>([])
+  const [settingsTabsLoading, setSettingsTabsLoading] = useState(false)
+  const [activeSettingsTabId, setActiveSettingsTabId] = useState<string>('')
   const notificationArchivedIdsStorageKey = authSession
     ? `${STORAGE_KEYS.notificationsArchivedIds}:${authSession.email.toLowerCase()}`
     : STORAGE_KEYS.notificationsArchivedIds
@@ -496,6 +546,28 @@ function App() {
   const [superAdminEnabled, setSuperAdminEnabled] = useState(false)
   const [authSettingsPending, setAuthSettingsPending] = useState(false)
   const [authSettingsError, setAuthSettingsError] = useState('')
+  const [loginMode, setLoginMode] = useState<LoginMode | null>(null)
+  const [loginModeOverride, setLoginModeOverride] = useState<LoginMode | null>(null)
+  const [loginModeSaving, setLoginModeSaving] = useState(false)
+  const [loginModeError, setLoginModeError] = useState('')
+  const [loginModeSaved, setLoginModeSaved] = useState(false)
+  const [maintenanceMessage, setMaintenanceMessage] = useState(
+    'TeamSupportPro is currently undergoing system maintenance. Please try again later.',
+  )
+  const [maintenanceMessageDraft, setMaintenanceMessageDraft] = useState(
+    'TeamSupportPro is currently undergoing system maintenance. Please try again later.',
+  )
+  const [maintenanceMessageSaving, setMaintenanceMessageSaving] = useState(false)
+  const [maintenanceMessageError, setMaintenanceMessageError] = useState('')
+  const [maintenanceMessageSaved, setMaintenanceMessageSaved] = useState(false)
+  const [passwordLoginEmail, setPasswordLoginEmail] = useState('')
+  const [passwordLoginPassword, setPasswordLoginPassword] = useState('')
+  const [passwordLoginPending, setPasswordLoginPending] = useState(false)
+  const [passwordLoginError, setPasswordLoginError] = useState('')
+  const [passwordRememberMe, setPasswordRememberMe] = useState(false)
+  const loginAdminOverride =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('admin') === '1'
   const [emailNotificationsEnabled, setEmailNotificationsEnabled] = useState(false)
   const [emailSettingsPending, setEmailSettingsPending] = useState(false)
   const [emailSettingsError, setEmailSettingsError] = useState('')
@@ -583,6 +655,7 @@ function App() {
   const [settingsAccordions, setSettingsAccordions] = useState<SettingsAccordionState>({
     appearance: false,
     authentication: false,
+    loginMode: false,
     anonymousPages: false,
     manageOrganizations: false,
     manageUsers: false,
@@ -951,6 +1024,23 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (activeView === 'settings') {
+      setSettingsTabsLoading(true)
+      fetch(apiUrl('/api/settings/tabs'), { credentials: 'include' })
+        .then((res) => res.ok ? res.json() : { tabs: [] })
+        .then((data: { tabs?: SettingsTab[] }) => {
+          const tabs = data.tabs ?? []
+          setSettingsTabs(tabs)
+          if (tabs.length > 0 && !activeSettingsTabId) {
+            setActiveSettingsTabId(tabs[0].id)
+          }
+        })
+        .catch(() => setSettingsTabs([]))
+        .finally(() => setSettingsTabsLoading(false))
+    }
+  }, [activeView])
+
+  useEffect(() => {
     if (activeView === 'new-ticket' && currentUser.organizationId) {
       fetch(apiUrl(`/api/organizations/${encodeURIComponent(currentUser.organizationId)}/ticket-fields`), { credentials: 'include' })
         .then((res) => res.ok ? res.json() : { fields: [] })
@@ -1074,6 +1164,9 @@ function App() {
         const payload = (await response.json()) as {
           rapidIdentityEnabled?: boolean
           superAdminEnabled?: boolean
+          loginMode?: string
+          maintenanceMessage?: string
+          loginModeOverride?: string | null
         }
 
         if (!cancelled && typeof payload.rapidIdentityEnabled === 'boolean') {
@@ -1081,6 +1174,20 @@ function App() {
         }
         if (!cancelled && typeof payload.superAdminEnabled === 'boolean') {
           setSuperAdminEnabled(payload.superAdminEnabled)
+        }
+        if (!cancelled) {
+          const mode = normalizeClientLoginMode(payload.loginMode)
+          setLoginMode(mode)
+          if (typeof payload.maintenanceMessage === 'string' && payload.maintenanceMessage.trim()) {
+            setMaintenanceMessage(payload.maintenanceMessage)
+            setMaintenanceMessageDraft(payload.maintenanceMessage)
+          }
+          const overrideRaw = payload.loginModeOverride
+          if (overrideRaw === 'select' || overrideRaw === 'password' || overrideRaw === 'maintenance') {
+            setLoginModeOverride(overrideRaw)
+          } else {
+            setLoginModeOverride(null)
+          }
         }
       } catch {
         // Keep default visibility if auth settings cannot be loaded.
@@ -1155,6 +1262,10 @@ function App() {
       setPowerBiSettingsNotice('')
       setAboutPageError('')
       setAboutPageNotice('')
+      setLoginModeError('')
+      setLoginModeSaved(false)
+      setMaintenanceMessageError('')
+      setMaintenanceMessageSaved(false)
       return
     }
 
@@ -1272,6 +1383,35 @@ function App() {
 
     void loadAboutPageSettings()
 
+    const loadLoginModeSettings = async () => {
+      try {
+        const response = await fetch(apiUrl('/api/settings/login-mode'), { credentials: 'include' })
+        if (!response.ok || cancelled) return
+        const payload = (await response.json()) as {
+          loginMode?: string
+          loginModeOverride?: string | null
+          maintenanceMessage?: string
+        }
+        if (cancelled) return
+        const mode = normalizeClientLoginMode(payload.loginMode)
+        setLoginMode(mode)
+        if (typeof payload.maintenanceMessage === 'string' && payload.maintenanceMessage.trim()) {
+          setMaintenanceMessage(payload.maintenanceMessage)
+          setMaintenanceMessageDraft(payload.maintenanceMessage)
+        }
+        const overrideRaw = payload.loginModeOverride
+        if (overrideRaw === 'select' || overrideRaw === 'password' || overrideRaw === 'maintenance') {
+          setLoginModeOverride(overrideRaw)
+        } else {
+          setLoginModeOverride(null)
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+
+    void loadLoginModeSettings()
+
     if (authSession?.organizationId) {
       void loadFeedbackSettings(authSession.organizationId)
     }
@@ -1318,6 +1458,16 @@ function App() {
       setLoginOrgId(matchedUser.organizationId)
     }
   }, [availableUsers, localLoginEmail, loginOrgId])
+
+  useEffect(() => {
+    // Initialize password login email from remembered cookie once
+    const remembered = readCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)
+    if (remembered && !passwordLoginEmail) {
+      setPasswordLoginEmail(remembered)
+      setPasswordRememberMe(true)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -2974,6 +3124,165 @@ function App() {
       setAuthSettingsError('Authentication setting could not be updated. Confirm the backend server is running.')
     } finally {
       setAuthSettingsPending(false)
+    }
+  }
+
+  const handleLoginModeToggle = async (nextMode: LoginMode) => {
+    if (loginModeOverride) return
+    const prev = loginMode ?? 'select'
+    setLoginMode(nextMode)
+    setLoginModeSaving(true)
+    setLoginModeError('')
+    setLoginModeSaved(false)
+    try {
+      const response = await fetch(apiUrl('/api/settings/login-mode'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ loginMode: nextMode }),
+      })
+      if (response.status === 401) {
+        setAuthSession(null)
+        setLoginMode(prev)
+        setLoginModeError('Your session expired. Please sign in again.')
+        return
+      }
+      if (response.status === 403) {
+        setLoginMode(prev)
+        setLoginModeError('Only admins can update login mode.')
+        return
+      }
+      if (!response.ok) {
+        setLoginMode(prev)
+        setLoginModeError('Login mode could not be updated.')
+        return
+      }
+      const payload = (await response.json()) as {
+        loginMode?: string
+        loginModeOverride?: string | null
+        maintenanceMessage?: string
+      }
+      setLoginMode(normalizeClientLoginMode(payload.loginMode))
+      const overrideRaw = payload.loginModeOverride
+      if (overrideRaw === 'select' || overrideRaw === 'password' || overrideRaw === 'maintenance') {
+        setLoginModeOverride(overrideRaw)
+      } else {
+        setLoginModeOverride(null)
+      }
+      if (typeof payload.maintenanceMessage === 'string' && payload.maintenanceMessage.trim()) {
+        setMaintenanceMessage(payload.maintenanceMessage)
+        setMaintenanceMessageDraft(payload.maintenanceMessage)
+      }
+      setLoginModeSaved(true)
+    } catch {
+      setLoginMode(prev)
+      setLoginModeError('Login mode could not be updated. Confirm the backend server is running.')
+    } finally {
+      setLoginModeSaving(false)
+    }
+  }
+
+  const saveMaintenanceMessage = async () => {
+    const nextMessage = maintenanceMessageDraft
+    const prev = maintenanceMessage
+    setMaintenanceMessage(nextMessage)
+    setMaintenanceMessageSaving(true)
+    setMaintenanceMessageError('')
+    setMaintenanceMessageSaved(false)
+    try {
+      const response = await fetch(apiUrl('/api/settings/login-mode'), {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maintenanceMessage: nextMessage }),
+      })
+      if (response.status === 401) {
+        setAuthSession(null)
+        setMaintenanceMessage(prev)
+        setMaintenanceMessageDraft(prev)
+        setMaintenanceMessageError('Your session expired. Please sign in again.')
+        return
+      }
+      if (response.status === 403) {
+        setMaintenanceMessage(prev)
+        setMaintenanceMessageDraft(prev)
+        setMaintenanceMessageError('Only admins can update the maintenance message.')
+        return
+      }
+      if (!response.ok) {
+        setMaintenanceMessage(prev)
+        setMaintenanceMessageDraft(prev)
+        setMaintenanceMessageError('Maintenance message could not be saved.')
+        return
+      }
+      const payload = (await response.json()) as { maintenanceMessage?: string }
+      const saved =
+        typeof payload.maintenanceMessage === 'string' && payload.maintenanceMessage.trim()
+          ? payload.maintenanceMessage
+          : nextMessage
+      setMaintenanceMessage(saved)
+      setMaintenanceMessageDraft(saved)
+      setMaintenanceMessageSaved(true)
+    } catch {
+      setMaintenanceMessage(prev)
+      setMaintenanceMessageDraft(prev)
+      setMaintenanceMessageError('Maintenance message could not be saved. Confirm the backend server is running.')
+    } finally {
+      setMaintenanceMessageSaving(false)
+    }
+  }
+
+  const handlePasswordLogin = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const email = passwordLoginEmail.trim().toLowerCase()
+    const password = passwordLoginPassword
+    if (!email || !email.includes('@') || !password) {
+      setPasswordLoginError('Enter both email and password.')
+      return
+    }
+    setPasswordLoginPending(true)
+    setPasswordLoginError('')
+    setLocalAuthError('')
+    setAuthError('')
+    try {
+      const response = await fetch(apiUrl('/api/auth/local/login'), {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, rememberMe: passwordRememberMe }),
+      })
+      if (response.status === 401 || response.status === 400) {
+        setPasswordLoginError('Invalid email or password.')
+        return
+      }
+      if (!response.ok) {
+        setPasswordLoginError('Sign-in failed. Please try again.')
+        return
+      }
+      const payload = (await response.json()) as {
+        authenticated?: boolean
+        user?: SessionApiUser
+      }
+      if (!payload.authenticated || !payload.user) {
+        setPasswordLoginError('Sign-in could not create a persistent session.')
+        return
+      }
+      setAuthSession(mapSessionApiUser(payload.user))
+      setPasswordLoginPassword('')
+      setPasswordLoginError('')
+      setBackendAvailable(true)
+      if (passwordRememberMe) {
+        setCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE, email, 30)
+      } else {
+        clearCookieValue(REMEMBER_LOGIN_EMAIL_COOKIE)
+      }
+    } catch {
+      setBackendAvailable(false)
+      setPasswordLoginError(
+        'Sign-in failed because the backend server is unavailable. Start it with npm run dev or npm run start:server, then try again.',
+      )
+    } finally {
+      setPasswordLoginPending(false)
     }
   }
 
@@ -6526,6 +6835,8 @@ function App() {
         case 'authentication':
           return (
             <div className="settings-accordion-content space-y-3">
+              {currentUser.role === 'Super Admin' && (
+              <>
               <div className="text-sm text-[color:var(--text-muted)]">
                 Control whether users can see and use Rapid Identity Sign-In on the login page.
               </div>
@@ -6555,6 +6866,101 @@ function App() {
               {authSettingsError && (
                 <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                   {authSettingsError}
+                </div>
+              )}
+              </>
+              )}
+              {currentUser.role !== 'Super Admin' && (
+                <div className="text-sm text-[color:var(--text-muted)]">
+                  Rapid Identity visibility is managed by Super Admins. Use the Login Mode section below to control the public sign-in page.
+                </div>
+              )}
+            </div>
+          )
+        case 'loginMode':
+          return (
+            <div className="settings-accordion-content space-y-3">
+              <div className="text-sm text-[color:var(--text-muted)]">
+                Controls what the public login page shows. Applies app-wide for every organization.
+              </div>
+
+              {loginModeOverride && (
+                <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  Login mode is locked by the <span className="font-mono">LOGIN_MODE</span> environment variable
+                  ({loginModeOverride}). Remove or change that env var to unlock this toggle.
+                </div>
+              )}
+
+              <div className="grid gap-2 sm:grid-cols-3">
+                {LOGIN_MODE_OPTIONS.map((option) => {
+                  const isActive = (loginMode ?? 'select') === option.value
+                  const locked = Boolean(loginModeOverride) || loginModeSaving
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      disabled={locked}
+                      onClick={() => void handleLoginModeToggle(option.value)}
+                      className={`rounded-[2px] border px-3 py-3 text-left transition ${
+                        isActive
+                          ? 'border-[color:var(--accent)] bg-[color:var(--panel-bg)] ring-1 ring-[color:var(--accent)]'
+                          : 'border-[color:var(--border)] hover:bg-[color:var(--panel-bg)]'
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <div className="text-sm font-semibold text-[color:var(--text)]">{option.label}</div>
+                      <div className="mt-1 text-xs text-[color:var(--text-muted)]">{option.description}</div>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {loginModeSaving && (
+                <div className="text-xs text-[color:var(--text-muted)]">Saving login mode...</div>
+              )}
+              {loginModeSaved && !loginModeError && (
+                <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  Login mode saved.
+                </div>
+              )}
+              {loginModeError && (
+                <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  {loginModeError}
+                </div>
+              )}
+
+              {(loginMode ?? 'select') === 'maintenance' && (
+                <div className="space-y-2 rounded-[2px] border border-[color:var(--border)] p-3">
+                  <label className="field">
+                    <span className="field-label">Maintenance message</span>
+                    <textarea
+                      className="input-control min-h-24"
+                      value={maintenanceMessageDraft}
+                      disabled={Boolean(loginModeOverride) || maintenanceMessageSaving}
+                      onChange={(event) => {
+                        setMaintenanceMessageDraft(event.target.value)
+                        setMaintenanceMessageSaved(false)
+                        setMaintenanceMessageError('')
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={Boolean(loginModeOverride) || maintenanceMessageSaving}
+                    onClick={() => void saveMaintenanceMessage()}
+                  >
+                    {maintenanceMessageSaving ? 'Saving...' : 'Save Message'}
+                  </button>
+                  {maintenanceMessageSaved && !maintenanceMessageError && (
+                    <div className="rounded-[2px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                      Maintenance message saved.
+                    </div>
+                  )}
+                  {maintenanceMessageError && (
+                    <div className="rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {maintenanceMessageError}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -7954,6 +8360,10 @@ function App() {
         title: 'Authentication',
         description: 'Configure available login methods.',
       },
+      loginMode: {
+        title: 'Login Mode',
+        description: 'Choose select-user, password, or system maintenance for the public sign-in page.',
+      },
       anonymousPages: {
         title: 'Anonymous Pages',
         description: 'Map anonymous page files to organizations and control public intake routing.',
@@ -8077,7 +8487,287 @@ function App() {
     'email',
   ]
 
+  const [manageTabsDialog, setManageTabsDialog] = useState<false | 'create' | 'edit'>(false)
+  const [manageTabDraft, setManageTabDraft] = useState<{ id?: string; name: string; slug: string; visible_to: 'all' | 'super_admin' }>({ name: '', slug: '', visible_to: 'all' })
+  const [manageTabsSaving, setManageTabsSaving] = useState(false)
+  const [manageTabsError, setManageTabsError] = useState('')
+  const [editTabDropdownOpen, setEditTabDropdownOpen] = useState(false)
+  const editTabDropdownRef = useRef<HTMLDivElement | null>(null)
+
   const renderAdminSettingsPage = () => {
+    // Use server-side tabs if loaded; otherwise fall back to the old flat accordion
+    if (settingsTabs.length > 0) {
+      const activeTab = settingsTabs.find((t) => t.id === activeSettingsTabId)
+      const activeSectionKeys = activeTab?.sections?.map((s) => s.section_key as SettingsAccordionSection) ?? []
+
+      const openCreateTab = () => {
+        setManageTabDraft({ name: '', slug: '', visible_to: 'all' })
+        setManageTabsDialog('create')
+        setManageTabsError('')
+      }
+
+      const openEditTab = (tab: typeof settingsTabs[0]) => {
+        setManageTabDraft({ id: tab.id, name: tab.name, slug: tab.slug, visible_to: tab.visible_to })
+        setManageTabsDialog('edit')
+        setManageTabsError('')
+      }
+
+      const saveTab = async () => {
+        if (!manageTabDraft.name.trim() || !manageTabDraft.slug.trim()) return
+        setManageTabsSaving(true)
+        setManageTabsError('')
+        try {
+          if (manageTabsDialog === 'create') {
+            const res = await fetch(apiUrl('/api/settings/tabs'), {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: manageTabDraft.name.trim(), slug: manageTabDraft.slug.trim(), visible_to: manageTabDraft.visible_to }),
+            })
+            if (!res.ok) {
+              const err = await res.json()
+              setManageTabsError(err.error ?? 'Failed to create tab')
+              return
+            }
+            const data = await res.json()
+            setSettingsTabs(data.tabs ?? [])
+            if (data.tab) setActiveSettingsTabId(data.tab.id)
+          } else if (manageTabsDialog === 'edit' && manageTabDraft.id) {
+            const res = await fetch(apiUrl(`/api/settings/tabs/${manageTabDraft.id}`), {
+              method: 'PATCH',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: manageTabDraft.name.trim(), visible_to: manageTabDraft.visible_to }),
+            })
+            if (!res.ok) {
+              const err = await res.json()
+              setManageTabsError(err.error ?? 'Failed to update tab')
+              return
+            }
+            const data = await res.json()
+            setSettingsTabs(data.tabs ?? [])
+          }
+          setManageTabsDialog(false)
+        } catch {
+          setManageTabsError('Request failed')
+        } finally {
+          setManageTabsSaving(false)
+        }
+      }
+
+      const deleteTab = async (tabId: string) => {
+        if (!confirm('Delete this tab? Its sections will be reassigned to the first available tab.')) return
+        setManageTabsSaving(true)
+        try {
+          const res = await fetch(apiUrl(`/api/settings/tabs/${tabId}`), {
+            method: 'DELETE',
+            credentials: 'include',
+          })
+          if (!res.ok) return
+          const data = await res.json()
+          setSettingsTabs(data.tabs ?? [])
+          if (activeSettingsTabId === tabId && data.tabs?.length > 0) {
+            setActiveSettingsTabId(data.tabs[0].id)
+          }
+        } catch {
+          // non-fatal
+        } finally {
+          setManageTabsSaving(false)
+        }
+      }
+
+      return (
+        <div className="space-y-4">
+          <section className="surface p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-xl font-semibold">Administrator Settings</div>
+                <div className="text-sm text-[color:var(--text-muted)]">
+                  Click a tab below to switch between setting categories.
+                </div>
+              </div>
+              <div className="rounded-[2px] border border-[color:var(--border)] px-3 py-2 text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+                {currentUser.role}
+              </div>
+            </div>
+          </section>
+
+          {/* Tab bar */}
+          <div className="flex flex-wrap items-center gap-1 border-b border-[color:var(--border)] pb-2">
+            {settingsTabs.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className="rounded-[2px] px-3 py-1.5 text-sm font-semibold transition-colors"
+                data-active={activeSettingsTabId === tab.id}
+                onClick={() => setActiveSettingsTabId(tab.id)}
+                style={{
+                  backgroundColor: activeSettingsTabId === tab.id ? 'var(--accent)' : 'var(--panel-bg)',
+                  color: activeSettingsTabId === tab.id ? '#fff' : 'var(--text)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {tab.name}
+                {tab.visible_to === 'super_admin' && (
+                  <span className="ml-1.5 rounded-[2px] bg-white/20 px-1 text-[10px] uppercase leading-4">SA</span>
+                )}
+              </button>
+            ))}
+            {currentUser.role === 'Super Admin' && (
+              <>
+                <button
+                  type="button"
+                  className="secondary-button flex items-center gap-1 px-2 py-1.5 text-xs"
+                  onClick={openCreateTab}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New Tab
+                </button>
+                <div className="relative" ref={editTabDropdownRef}>
+                  <button
+                    type="button"
+                    className="secondary-button flex items-center gap-1 px-2 py-1.5 text-xs"
+                    onClick={() => setEditTabDropdownOpen(!editTabDropdownOpen)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit Tab
+                  </button>
+                  {editTabDropdownOpen && (
+                    <>
+                      <button
+                        type="button"
+                        className="fixed inset-0 z-30"
+                        onClick={() => setEditTabDropdownOpen(false)}
+                      />
+                      <div className="absolute left-0 top-full z-40 mt-1 min-w-48 rounded-[2px] border border-[color:var(--border)] bg-[color:var(--panel-bg)] py-1 shadow-lg">
+                        {settingsTabs.map((tab) => (
+                          <div key={tab.id} className="flex items-center justify-between px-3 py-1.5 hover:bg-[color:var(--card-bg)]">
+                            <button
+                              type="button"
+                              className="flex-1 text-left text-sm text-[color:var(--text)]"
+                              onClick={() => { openEditTab(tab); setEditTabDropdownOpen(false) }}
+                            >
+                              {tab.name}
+                              {tab.visible_to === 'super_admin' && (
+                                <span className="ml-1.5 rounded-[2px] bg-amber-100 px-1 text-[10px] uppercase leading-4 text-amber-700">SA</span>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              className="ml-2 text-rose-400 hover:text-rose-600"
+                              title={`Delete ${tab.name}`}
+                              onClick={() => { setEditTabDropdownOpen(false); deleteTab(tab.id) }}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Active tab's sections */}
+          {activeSectionKeys.length > 0 ? (
+            activeSectionKeys.map((section) => renderSettingsAccordionSection(section))
+          ) : (
+            <div className="surface flex min-h-32 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
+              This tab has no settings sections. Drag sections here or add new sections through the API.
+            </div>
+          )}
+
+          {/* Create/Edit Tab Dialog */}
+          {manageTabsDialog && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-40 bg-slate-950/40"
+                onClick={() => setManageTabsDialog(false)}
+              />
+              <div
+                role="dialog"
+                aria-modal={true}
+                aria-labelledby="manage-tab-title"
+                className="surface fixed left-1/2 top-1/2 z-50 w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 p-6 shadow-[0_24px_64px_rgba(13,47,79,0.22)]"
+              >
+                <h2 id="manage-tab-title" className="mb-1 text-base font-semibold text-[color:var(--text)]">
+                  {manageTabsDialog === 'create' ? 'Create New Tab' : 'Edit Tab'}
+                </h2>
+                <p className="mb-4 text-sm text-[color:var(--text-muted)]">
+                  {manageTabsDialog === 'create'
+                    ? 'Create a new settings tab to organize sections.'
+                    : 'Update the tab name or visibility.'}
+                </p>
+                {manageTabsError && (
+                  <div className="mb-3 rounded-[2px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                    {manageTabsError}
+                  </div>
+                )}
+                <div className="space-y-3">
+                  <label className="block space-y-1">
+                    <span className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Tab Name</span>
+                    <input
+                      className="input-control w-full"
+                      value={manageTabDraft.name}
+                      onChange={(e) => setManageTabDraft((p) => ({ ...p, name: e.target.value, slug: manageTabsDialog === 'create' ? e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') : p.slug }))}
+                      placeholder="e.g. Integrations"
+                      disabled={manageTabsSaving}
+                    />
+                  </label>
+                  {manageTabsDialog === 'create' && (
+                    <label className="block space-y-1">
+                      <span className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Slug</span>
+                      <input
+                        className="input-control w-full font-mono"
+                        value={manageTabDraft.slug}
+                        onChange={(e) => setManageTabDraft((p) => ({ ...p, slug: e.target.value }))}
+                        placeholder="integrations"
+                        disabled={manageTabsSaving}
+                      />
+                    </label>
+                  )}
+                  <label className="block space-y-1">
+                    <span className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">Visible to</span>
+                    <select
+                      className="input-control w-full"
+                      value={manageTabDraft.visible_to}
+                      onChange={(e) => setManageTabDraft((p) => ({ ...p, visible_to: e.target.value as 'all' | 'super_admin' }))}
+                      disabled={manageTabsSaving}
+                    >
+                      <option value="all">All (Admin & Super Admin)</option>
+                      <option value="super_admin">Super Admin only</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => setManageTabsDialog(false)}
+                    disabled={manageTabsSaving}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={() => void saveTab()}
+                    disabled={manageTabsSaving || !manageTabDraft.name.trim() || !manageTabDraft.slug.trim()}
+                  >
+                    {manageTabsSaving ? 'Saving...' : manageTabsDialog === 'create' ? 'Create Tab' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )
+    }
+
+    // Fallback: classic accordion view when no tabs are loaded
     const visibleSections = currentUser.role === 'Super Admin'
       ? settingsAccordionOrder
       : settingsAccordionOrder.filter((section) => !SUPER_ADMIN_ONLY_SECTIONS.includes(section))
@@ -8469,7 +9159,11 @@ function App() {
                   </div>
                   <h2 className="text-2xl font-semibold">SIGN IN</h2>
                   <p className="mt-2 text-sm leading-6 text-[color:var(--text-muted)]">
-                    Select a test user from the directory and create a session without entering email or password.
+                    {(loginMode === 'maintenance' && !loginAdminOverride)
+                      ? 'The system is temporarily unavailable for sign-in.'
+                      : (loginMode === 'password' || (loginMode === 'maintenance' && loginAdminOverride))
+                        ? 'Sign in with your email and password.'
+                        : 'Select a test user from the directory and create a session without entering email or password.'}
                   </p>
                 </div>
 
@@ -8480,6 +9174,14 @@ function App() {
                     </div>
                   )}
 
+                  {loginMode === 'maintenance' && !loginAdminOverride && (
+                    <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      <div className="mb-1 font-semibold">System Maintenance</div>
+                      <div className="whitespace-pre-wrap">{maintenanceMessage}</div>
+                    </div>
+                  )}
+
+                  {(loginMode === 'select' || loginMode === null) && (
                   <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handleLocalLogin}>
                     <div className="space-y-3">
                       <label className="field">
@@ -8541,8 +9243,61 @@ function App() {
                       </button>
                     </div>
                   </form>
+                  )}
 
-                  {availableUsers.length === 0 && (
+                  {(loginMode === 'password' || loginMode === null || (loginMode === 'maintenance' && loginAdminOverride)) && (
+                    <form className="rounded-[2px] border border-[color:var(--border)] p-4" onSubmit={handlePasswordLogin}>
+                      <div className="space-y-3">
+                        {loginMode === 'maintenance' && loginAdminOverride && (
+                          <div className="rounded-[2px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                            Admin bypass active via <span className="font-mono">?admin=1</span>.
+                          </div>
+                        )}
+                        <label className="field">
+                          <span className="field-label">Email</span>
+                          <input
+                            type="email"
+                            className="input-control"
+                            autoComplete="username"
+                            value={passwordLoginEmail}
+                            onChange={(event) => setPasswordLoginEmail(event.target.value)}
+                            disabled={passwordLoginPending}
+                            placeholder="you@example.com"
+                          />
+                        </label>
+                        <label className="field">
+                          <span className="field-label">Password</span>
+                          <input
+                            type="password"
+                            className="input-control"
+                            autoComplete="current-password"
+                            value={passwordLoginPassword}
+                            onChange={(event) => setPasswordLoginPassword(event.target.value)}
+                            disabled={passwordLoginPending}
+                            placeholder="Password"
+                          />
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-[color:var(--text-muted)]">
+                          <input
+                            type="checkbox"
+                            checked={passwordRememberMe}
+                            onChange={(event) => setPasswordRememberMe(event.target.checked)}
+                            disabled={passwordLoginPending}
+                          />
+                          Remember me
+                        </label>
+                        <button
+                          type="submit"
+                          className="primary-button w-full"
+                          disabled={passwordLoginPending}
+                        >
+                          {passwordLoginPending ? 'Signing in...' : 'SIGN IN'}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {(loginMode === 'select' || loginMode === null) && availableUsers.length === 0 && (
                     <div className="rounded-[2px] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                       No test users are available from the directory yet.
                     </div>
@@ -8558,6 +9313,12 @@ function App() {
                 {localAuthError && (
                   <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
                     {localAuthError}
+                  </div>
+                )}
+
+                {passwordLoginError && (
+                  <div className="rounded-[2px] border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                    {passwordLoginError}
                   </div>
                 )}
 

@@ -359,3 +359,23 @@ export interface FeedbackResponseSummary {
   submittedAt: string
   answers: Array<{ fieldId: string; fieldLabel: string; fieldType: string; value: string }>
 }
+
+// ---------------------------------------------------------------------------
+// Settings Tabs
+// ---------------------------------------------------------------------------
+
+export interface SettingsTab {
+  id: string
+  name: string
+  slug: string
+  sort_order: number
+  visible_to: 'all' | 'super_admin'
+  sections: SettingsTabSection[]
+}
+
+export interface SettingsTabSection {
+  id: string
+  tab_id: string
+  section_key: string
+  sort_order: number
+}
