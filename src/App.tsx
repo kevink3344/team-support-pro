@@ -8671,7 +8671,11 @@ function App() {
           </div>
 
           {/* Active tab's sections */}
-          {activeSectionKeys.length > 0 ? (
+          {settingsTabsLoading ? (
+            <div className="surface flex min-h-32 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
+              Loading settings tabs…
+            </div>
+          ) : activeSectionKeys.length > 0 ? (
             activeSectionKeys.map((section) => renderSettingsAccordionSection(section))
           ) : (
             <div className="surface flex min-h-32 items-center justify-center p-8 text-sm text-[color:var(--text-muted)]">
