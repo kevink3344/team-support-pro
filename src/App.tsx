@@ -2558,6 +2558,71 @@ function App() {
     setSettingsDragOverSection(null)
   }
 
+  // Move a settings section into (or within) a server-managed settings tab, persisting the
+  // new ordering via PUT /api/settings/tabs/:tabId/sections. When `beforeSection` is omitted,
+  // the section is appended to the end of the target tab.
+  const moveSettingsSection = async (
+    section: SettingsAccordionSection,
+    targetTabId: string,
+    beforeSection?: SettingsAccordionSection,
+  ) => {
+    const sourceTab = settingsTabs.find((tab) => tab.sections.some((s) => s.section_key === section))
+    const targetTab = settingsTabs.find((tab) => tab.id === targetTabId)
+    if (!sourceTab || !targetTab) {
+      return
+    }
+
+    try {
+      if (sourceTab.id === targetTab.id) {
+        const currentKeys = sourceTab.sections.map((s) => s.section_key)
+        const withoutDragged = currentKeys.filter((k) => k !== section)
+        const insertIndex = beforeSection ? withoutDragged.indexOf(beforeSection) : withoutDragged.length
+        const nextKeys = [...withoutDragged]
+        nextKeys.splice(insertIndex === -1 ? nextKeys.length : insertIndex, 0, section)
+
+        if (nextKeys.join('|') === currentKeys.join('|')) {
+          return
+        }
+
+        const res = await fetch(apiUrl(`/api/settings/tabs/${targetTab.id}/sections`), {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sectionKeys: nextKeys }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setSettingsTabs(data.tabs ?? [])
+        }
+        return
+      }
+
+      const sourceKeys = sourceTab.sections.map((s) => s.section_key).filter((k) => k !== section)
+      const targetKeys = targetTab.sections.map((s) => s.section_key)
+      const insertIndex = beforeSection ? targetKeys.indexOf(beforeSection) : targetKeys.length
+      targetKeys.splice(insertIndex === -1 ? targetKeys.length : insertIndex, 0, section)
+
+      await fetch(apiUrl(`/api/settings/tabs/${sourceTab.id}/sections`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKeys: sourceKeys }),
+      })
+      const res = await fetch(apiUrl(`/api/settings/tabs/${targetTab.id}/sections`), {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKeys: targetKeys }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSettingsTabs(data.tabs ?? [])
+      }
+    } catch {
+      // non-fatal; UI simply keeps the previous ordering
+    }
+  }
+
   const signOut = async () => {
     try {
       await fetch(apiUrl('/api/auth/logout'), {
@@ -8438,7 +8503,11 @@ function App() {
         onDrop={(event) => {
           event.preventDefault()
           if (draggedSettingsSection) {
-            reorderSettingsAccordions(draggedSettingsSection, section)
+            if (settingsTabs.length > 0 && activeSettingsTabId) {
+              void moveSettingsSection(draggedSettingsSection, activeSettingsTabId, section)
+            } else {
+              reorderSettingsAccordions(draggedSettingsSection, section)
+            }
           }
           endSettingsAccordionDrag()
         }}
@@ -8598,9 +8667,23 @@ function App() {
               <button
                 key={tab.id}
                 type="button"
-                className="rounded-[2px] px-3 py-1.5 text-sm font-semibold transition-colors"
+                className="settings-tab-button rounded-[2px] px-3 py-1.5 text-sm font-semibold transition-colors"
                 data-active={activeSettingsTabId === tab.id}
+                data-drag-over={Boolean(draggedSettingsSection) && activeSettingsTabId !== tab.id}
                 onClick={() => setActiveSettingsTabId(tab.id)}
+                onDragOver={(event) => {
+                  if (!draggedSettingsSection) {
+                    return
+                  }
+                  event.preventDefault()
+                }}
+                onDrop={(event) => {
+                  event.preventDefault()
+                  if (draggedSettingsSection) {
+                    void moveSettingsSection(draggedSettingsSection, tab.id)
+                  }
+                  endSettingsAccordionDrag()
+                }}
                 style={{
                   backgroundColor: activeSettingsTabId === tab.id ? 'var(--accent)' : 'var(--panel-bg)',
                   color: activeSettingsTabId === tab.id ? '#fff' : 'var(--text)',

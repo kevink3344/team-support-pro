@@ -407,6 +407,10 @@ button {
   transform: translateY(-1px);
 }
 
+.settings-tab-button[data-drag-over='true'] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 65%, var(--border));
+}
+
 .settings-accordion-header {
   display: flex;
   align-items: center;
